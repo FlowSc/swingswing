@@ -1,0 +1,17 @@
+.venv/
+.venv-*/
+node_modules/
+__pycache__/
+*.pyc
+*.tsbuildinfo
+.DS_Store
+output/
+dist/
+build/
+*.app/
+*.zip
+*.spec
+kis_config.local.env
+.env
+.env.*
+!.env.example

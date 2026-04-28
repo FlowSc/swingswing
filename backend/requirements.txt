@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+httpx
+pydantic-settings
+cryptography
+apscheduler
+python-dateutil
+finance-datareader
+pandas
+openpyxl

@@ -1,0 +1,7 @@
+finance-datareader
+pandas
+openpyxl
+pyinstaller
+requests
+supabase
+apscheduler
