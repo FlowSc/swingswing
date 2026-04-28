@@ -23,4 +23,6 @@ class BrokerStatusOut(BaseModel):
     configured: bool
     mode: str | None = None
     account_no: str | None = None
+    account_product_code: str | None = None
+    telegram_chat_id: str | None = None
     enabled: bool = False

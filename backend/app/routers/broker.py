@@ -17,6 +17,8 @@ async def broker_status(user: CurrentUser = Depends(get_current_user)) -> Broker
         configured=True,
         mode=row.get("mode"),
         account_no=row.get("kis_account_no"),
+        account_product_code=row.get("kis_account_product_code"),
+        telegram_chat_id=row.get("telegram_chat_id"),
         enabled=row.get("enabled", False),
     )
 

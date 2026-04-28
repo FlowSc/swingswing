@@ -29,8 +29,17 @@ export type BrokerPayload = {
   telegram_chat_id?: string;
 };
 
+export type BrokerStatus = {
+  configured: boolean;
+  enabled: boolean;
+  mode?: "paper" | "live";
+  account_no?: string;
+  account_product_code?: string;
+  telegram_chat_id?: string;
+};
+
 export const api = {
-  getBrokerStatus: (session: Session) => request<{ configured: boolean; enabled?: boolean; mode?: string }>("/broker/kis/status", session),
+  getBrokerStatus: (session: Session) => request<BrokerStatus>("/broker/kis/status", session),
   saveBroker: (session: Session, payload: BrokerPayload) =>
     request("/broker/kis", session, { method: "POST", body: JSON.stringify(payload) }),
   setBotEnabled: (session: Session, enabled: boolean) =>
