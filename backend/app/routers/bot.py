@@ -4,7 +4,7 @@ from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
 from app.schemas.bot import BotControlIn, BotControlOut, WatchTickIn
 from app.services.broker_credentials import get_decrypted_broker_credentials, set_bot_enabled
-from app.services.scan_worker import queue_admin_scan
+from app.services.scan_worker import queue_admin_scan, scan_worker_status, start_scan_worker
 from app.services.supabase_rest import SupabaseRest
 from app.services.watcher import run_watch_tick_for_user
 
@@ -29,6 +29,7 @@ async def scan(
     if (user.email or "").lower() != settings.scan_admin_email.lower():
         raise HTTPException(status_code=403, detail="Only scan admin can run signal scans")
     scan_run = await queue_admin_scan()
+    start_scan_worker()
     scan_run_id = scan_run["id"]
     return {"queued": True, "scan_run_id": scan_run_id, "message": "Signal scan started. Results will be saved to shared_signals."}
 
@@ -37,6 +38,11 @@ async def scan(
 async def latest_scan_run(user: CurrentUser = Depends(get_current_user)) -> dict | None:
     rows = await SupabaseRest().select("scan_runs", order="created_at.desc", limit=1)
     return rows[0] if rows else None
+
+
+@router.get("/scan-worker/status")
+async def get_scan_worker_status(user: CurrentUser = Depends(get_current_user)) -> dict:
+    return scan_worker_status()
 
 
 @router.post("/watch-tick")

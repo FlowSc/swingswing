@@ -23,6 +23,7 @@ logging.getLogger("app").setLevel(logging.INFO)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    print(f"SCAN_WORKER_BOOT scheduler_enabled={settings.scheduler_enabled}", flush=True)
     logging.getLogger(__name__).warning("Application startup: scheduler_enabled=%s", settings.scheduler_enabled)
     start_scan_worker()
     if settings.scheduler_enabled:

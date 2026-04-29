@@ -20,6 +20,16 @@ def _now_iso() -> str:
     return datetime.now(ZoneInfo(get_settings().timezone)).isoformat()
 
 
+def scan_worker_status() -> dict:
+    return {
+        "task_exists": _worker_task is not None,
+        "running": _worker_task is not None and not _worker_task.done(),
+        "done": _worker_task.done() if _worker_task else None,
+        "cancelled": _worker_task.cancelled() if _worker_task else None,
+        "exception": str(_worker_task.exception()) if _worker_task and _worker_task.done() and not _worker_task.cancelled() else None,
+    }
+
+
 async def queue_admin_scan() -> dict:
     settings = get_settings()
     logger.warning("Queueing admin signal scan: admin_email=%s", settings.scan_admin_email)
@@ -117,7 +127,19 @@ def start_scan_worker() -> None:
         return
     _stop_event = asyncio.Event()
     _worker_task = asyncio.create_task(_worker_loop(_stop_event))
+    _worker_task.add_done_callback(_log_worker_done)
     logger.warning("Scan worker task created")
+
+
+def _log_worker_done(task: asyncio.Task) -> None:
+    if task.cancelled():
+        logger.warning("Scan worker task cancelled")
+        return
+    error = task.exception()
+    if error:
+        logger.exception("Scan worker task crashed", exc_info=error)
+    else:
+        logger.warning("Scan worker task stopped")
 
 
 async def stop_scan_worker() -> None:
