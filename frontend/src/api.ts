@@ -106,7 +106,7 @@ export const api = {
   getKisAccount: (session: Session) => request<KisAccount>("/broker/kis/account", session),
   setAutoTradingEnabled: (session: Session, enabled: boolean) =>
     request("/bot/control", session, { method: "POST", body: JSON.stringify({ enabled }) }),
-  scan: (session: Session) => request<{ trade_date: string; signals: number; saved: number }>("/bot/scan", session, { method: "POST" }),
+  scan: (session: Session) => request<{ queued: boolean; message: string }>("/bot/scan", session, { method: "POST" }),
   watchTick: (session: Session, payload: { test_mode: boolean; dry_run: boolean }) =>
     request("/bot/watch-tick", session, { method: "POST", body: JSON.stringify(payload) }),
   todaySignals: (session: Session) => request<Array<Record<string, unknown>>>("/signals/today", session),

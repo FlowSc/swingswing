@@ -24,6 +24,14 @@ class SupabaseRest:
             "prefer": "return=representation",
         }
 
+    @staticmethod
+    def _raise_for_status(response: httpx.Response) -> None:
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            body = response.text[:1000]
+            raise RuntimeError(f"Supabase HTTP error {response.status_code}: {body}") from exc
+
     async def get_user(self, access_token: str) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.get(
@@ -33,7 +41,7 @@ class SupabaseRest:
                     "authorization": f"Bearer {access_token}",
                 },
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return response.json()
 
     async def find_user_by_email(self, email: str) -> dict[str, Any] | None:
@@ -46,7 +54,7 @@ class SupabaseRest:
                 },
                 params={"page": 1, "per_page": 1000},
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             payload = response.json()
         users = payload.get("users", payload if isinstance(payload, list) else [])
         target = email.lower()
@@ -63,7 +71,7 @@ class SupabaseRest:
                 headers={**self._headers(), "prefer": "resolution=merge-duplicates,return=representation"},
                 json=payload,
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return response.json()
 
     async def insert(self, table: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -73,7 +81,7 @@ class SupabaseRest:
                 headers=self._headers(),
                 json=payload,
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return response.json()
 
     async def select(
@@ -101,7 +109,7 @@ class SupabaseRest:
                 headers=self._headers(),
                 params=params,
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return response.json()
 
     async def patch(
@@ -118,5 +126,5 @@ class SupabaseRest:
                 params=filters,
                 json=payload,
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             return response.json()

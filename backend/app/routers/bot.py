@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
@@ -9,6 +11,15 @@ from app.services.watcher import run_watch_tick_for_user
 
 
 router = APIRouter(prefix="/bot", tags=["bot"])
+logger = logging.getLogger(__name__)
+
+
+async def run_scan_background(user_id: str, telegram_chat_id: str | None) -> None:
+    try:
+        result = await scan_and_store_for_user(user_id, telegram_chat_id)
+        logger.info("Signal scan completed: %s", result)
+    except Exception:
+        logger.exception("Signal scan failed")
 
 
 @router.post("/control", response_model=BotControlOut)
@@ -21,13 +32,17 @@ async def control_bot(
 
 
 @router.post("/scan")
-async def scan(user: CurrentUser = Depends(get_current_user)) -> dict:
+async def scan(
+    background_tasks: BackgroundTasks,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
     settings = get_settings()
     if (user.email or "").lower() != settings.scan_admin_email.lower():
         raise HTTPException(status_code=403, detail="Only scan admin can run signal scans")
     credentials = await get_broker_credentials(user.id)
     telegram_chat_id = credentials.get("telegram_chat_id") if credentials else None
-    return await scan_and_store_for_user(user.id, telegram_chat_id)
+    background_tasks.add_task(run_scan_background, user.id, telegram_chat_id)
+    return {"queued": True, "message": "Signal scan started. Results will be saved to shared_signals."}
 
 
 @router.post("/watch-tick")
