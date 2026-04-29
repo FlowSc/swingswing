@@ -573,6 +573,24 @@ th {
   gap: 12px;
 }
 
+.naver-link {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  justify-content: center;
+  padding: 11px 15px;
+  border-radius: 999px;
+  background: #03c75a;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.naver-link:hover {
+  transform: translateY(-1px);
+}
+
 .detail-section {
   padding: 16px;
   border: 1px solid var(--line);

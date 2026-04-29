@@ -828,8 +828,13 @@ function DetailOverlay({ detail, onClose }: { detail: DetailSelection; onClose: 
 
 function SignalDetail({ row }: { row: Record<string, unknown> }) {
   const raw = asRecord(row.raw);
+  const code = String(row.code || "").padStart(6, "0");
+  const naverUrl = `https://stock.naver.com/domestic/stock/${code}/price`;
   return (
     <div className="detail-grid">
+      <a className="naver-link" href={naverUrl} target="_blank" rel="noreferrer">
+        네이버 증권으로 가기
+      </a>
       <DetailSection title="매매 계획" items={[
         ["매수가", row.entry],
         ["손절가", row.stop_loss],
