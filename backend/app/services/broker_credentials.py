@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import HTTPException
 
 from app.core.config import get_settings
@@ -28,11 +30,50 @@ def _public_account(row: dict) -> dict:
 
 
 def _decrypt_account(row: dict) -> dict:
-    return {
+    decrypted = {
         **row,
         "kis_app_key": decrypt_secret(row["kis_app_key_enc"]),
         "kis_app_secret": decrypt_secret(row["kis_app_secret_enc"]),
     }
+    if row.get("access_token_enc"):
+        try:
+            decrypted["access_token"] = decrypt_secret(row["access_token_enc"])
+        except Exception:
+            decrypted["access_token"] = None
+    if row.get("access_token_expires_at"):
+        decrypted["access_token_expires_at"] = row["access_token_expires_at"]
+    return decrypted
+
+
+async def clear_broker_access_token(account_id: str | None) -> None:
+    if not account_id:
+        return
+    try:
+        await SupabaseRest().patch(
+            ACCOUNTS_TABLE,
+            filters={"id": f"eq.{account_id}"},
+            payload={"access_token_enc": None, "access_token_expires_at": None},
+        )
+    except RuntimeError:
+        # The deployment may run before the SQL migration is applied. Do not block credential saves.
+        return
+
+
+async def update_broker_access_token(account_id: str | None, access_token: str, expires_at: datetime) -> bool:
+    if not account_id:
+        return False
+    try:
+        await SupabaseRest().patch(
+            ACCOUNTS_TABLE,
+            filters={"id": f"eq.{account_id}"},
+            payload={
+                "access_token_enc": encrypt_secret(access_token),
+                "access_token_expires_at": expires_at.isoformat(),
+            },
+        )
+        return True
+    except RuntimeError:
+        return False
 
 
 async def save_broker_credentials(user_id: str, payload: BrokerCredentialIn) -> dict:
@@ -54,6 +95,7 @@ async def save_broker_credentials(user_id: str, payload: BrokerCredentialIn) -> 
     rest = SupabaseRest()
     await rest.patch(ACCOUNTS_TABLE, filters={"user_id": f"eq.{user_id}"}, payload={"is_active": False})
     rows = await rest.upsert(ACCOUNTS_TABLE, record, on_conflict="user_id,mode")
+    await clear_broker_access_token(rows[0].get("id"))
     return _public_account(rows[0])
 
 

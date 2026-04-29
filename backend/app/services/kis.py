@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from datetime import datetime, timedelta
+from typing import Any, Awaitable, Callable
+from zoneinfo import ZoneInfo
 
 import httpx
+
+from app.core.config import get_settings
 
 
 PAPER_BASE_URL = "https://openapivts.koreainvestment.com:29443"
 LIVE_BASE_URL = "https://openapi.koreainvestment.com:9443"
+TOKEN_REFRESH_BUFFER = timedelta(minutes=5)
 
 TR_ID = {
     "paper": {
@@ -32,6 +37,9 @@ class KisConfig:
     mode: str = "paper"
     enable_orders: bool = True
     allow_live_orders: bool = False
+    access_token: str | None = None
+    access_token_expires_at: datetime | str | None = None
+    on_token_issued: Callable[[str, datetime], Awaitable[None]] | None = None
 
     @property
     def base_url(self) -> str:
@@ -41,7 +49,13 @@ class KisConfig:
 class KisClient:
     def __init__(self, config: KisConfig):
         self.config = config
-        self._access_token: str | None = None
+        self._access_token: str | None = config.access_token
+        self._access_token_expires_at = parse_kis_datetime(config.access_token_expires_at)
+
+    def _token_valid(self) -> bool:
+        if not self._access_token or not self._access_token_expires_at:
+            return False
+        return self._access_token_expires_at > now_kst() + TOKEN_REFRESH_BUFFER
 
     async def _request(
         self,
@@ -79,11 +93,15 @@ class KisClient:
         token = data.get("access_token")
         if not token:
             raise RuntimeError("KIS token response did not include access_token.")
+        expires_at = token_expires_at(data)
         self._access_token = token
+        self._access_token_expires_at = expires_at
+        if self.config.on_token_issued:
+            await self.config.on_token_issued(token, expires_at)
         return token
 
     async def access_token(self) -> str:
-        if not self._access_token:
+        if not self._token_valid():
             return await self.issue_access_token()
         return self._access_token
 
@@ -183,6 +201,11 @@ def client_from_credentials(
     enable_orders: bool = True,
     allow_live_orders: bool = False,
 ) -> KisClient:
+    async def persist_access_token(access_token: str, expires_at: datetime) -> None:
+        from app.services.broker_credentials import update_broker_access_token
+
+        await update_broker_access_token(credentials.get("id"), access_token, expires_at)
+
     return KisClient(
         KisConfig(
             app_key=credentials["kis_app_key"],
@@ -192,8 +215,45 @@ def client_from_credentials(
             mode=credentials.get("mode") or "paper",
             enable_orders=enable_orders,
             allow_live_orders=allow_live_orders,
+            access_token=credentials.get("access_token"),
+            access_token_expires_at=credentials.get("access_token_expires_at"),
+            on_token_issued=persist_access_token if credentials.get("id") else None,
         )
     )
+
+
+def now_kst() -> datetime:
+    return datetime.now(ZoneInfo(get_settings().timezone))
+
+
+def parse_kis_datetime(value: datetime | str | None) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = value.replace(" ", "T")
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=ZoneInfo(get_settings().timezone))
+    return parsed.astimezone(ZoneInfo(get_settings().timezone))
+
+
+def token_expires_at(payload: dict[str, Any]) -> datetime:
+    explicit = parse_kis_datetime(payload.get("access_token_token_expired"))
+    if explicit:
+        return explicit
+    expires_in = payload.get("expires_in")
+    try:
+        seconds = int(float(str(expires_in)))
+    except (TypeError, ValueError):
+        seconds = 23 * 60 * 60
+    return now_kst() + timedelta(seconds=max(60, seconds))
 
 
 def parse_current_price(payload: dict[str, Any]) -> int:

@@ -123,7 +123,7 @@ async def test_kis_connection(user: CurrentUser = Depends(get_current_user)) -> 
     mode = credentials.get("mode") or "paper"
 
     try:
-        token = await client.issue_access_token()
+        token = await client.access_token()
         quote = await client.get_current_price("005930")
         quote_price = parse_current_price(quote)
         balance = await client.get_balance()
