@@ -99,11 +99,25 @@ export type ScanRun = {
   id: number;
   status: "running" | "completed" | "failed";
   trade_date?: string;
-  signals_count: number;
-  shared_saved: number;
+  signals_count?: number;
+  shared_saved?: number;
   error?: string;
   created_at: string;
   finished_at?: string;
+  result?: {
+    offset?: number;
+    total?: number;
+    candidates?: unknown[];
+    done?: boolean;
+  };
+};
+
+export type ScanStartResult = {
+  queued: boolean;
+  scan_run_id: number;
+  offset: number;
+  total: number;
+  message: string;
 };
 
 export const api = {
@@ -117,7 +131,8 @@ export const api = {
   getKisAccount: (session: Session) => request<KisAccount>("/broker/kis/account", session),
   setAutoTradingEnabled: (session: Session, enabled: boolean) =>
     request("/bot/control", session, { method: "POST", body: JSON.stringify({ enabled }) }),
-  scan: (session: Session) => request<{ queued: boolean; scan_run_id: number; message: string }>("/bot/scan", session, { method: "POST" }),
+  scan: (session: Session) => request<ScanStartResult>("/bot/scan", session, { method: "POST" }),
+  scanStep: (session: Session, scanRunId: number) => request<ScanRun>(`/bot/scan-runs/${scanRunId}/step`, session, { method: "POST" }),
   latestScanRun: (session: Session) => request<ScanRun | null>("/bot/scan-runs/latest", session),
   watchTick: (session: Session, payload: { test_mode: boolean; dry_run: boolean }) =>
     request("/bot/watch-tick", session, { method: "POST", body: JSON.stringify(payload) }),

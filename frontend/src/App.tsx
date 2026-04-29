@@ -207,9 +207,9 @@ function Dashboard({ session }: { session: Session }) {
     setPending("scan");
     setStatus({ type: "info", message: "스캔 요청 중..." });
     try {
-      const queued = await api.scan(session);
-      setStatus({ type: "info", message: `스캔 시작됨. 작업 ID: ${queued.scan_run_id}` });
-      await pollScanRun(queued.scan_run_id);
+      const started = await api.scan(session);
+      setStatus({ type: "info", message: `스캔 시작: 0/${started.total}개 처리` });
+      await runScanSteps(started.scan_run_id);
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -217,22 +217,23 @@ function Dashboard({ session }: { session: Session }) {
     }
   }
 
-  async function pollScanRun(scanRunId: number) {
-    for (let index = 0; index < 120; index += 1) {
-      await delay(5000);
-      const latest = await api.latestScanRun(session);
-      if (!latest || latest.id !== scanRunId) continue;
-      if (latest.status === "completed") {
-        setStatus({ type: "info", message: `스캔 완료: ${latest.trade_date || "-"} / 후보 ${latest.signals_count}개 / 저장 ${latest.shared_saved}개` });
+  async function runScanSteps(scanRunId: number) {
+    for (let index = 0; index < 20; index += 1) {
+      const current = await api.scanStep(session, scanRunId);
+      const offset = current.result?.offset || 0;
+      const total = current.result?.total || 0;
+      const candidates = current.result?.candidates?.length || current.signals_count || 0;
+      if (current.status === "completed") {
+        setStatus({ type: "info", message: `스캔 완료: ${current.trade_date || "-"} / 후보 ${current.signals_count || 0}개 / 저장 ${current.shared_saved || 0}개` });
         await refresh();
         return;
       }
-      if (latest.status === "failed") {
-        throw new Error(latest.error || "스캔 실패");
+      if (current.status === "failed") {
+        throw new Error(current.error || "스캔 실패");
       }
-      setStatus({ type: "info", message: `스캔 진행 중... 작업 ID: ${scanRunId}` });
+      setStatus({ type: "info", message: `스캔 진행: ${offset}/${total}개 처리 / 현재 후보 ${candidates}개` });
     }
-    setStatus({ type: "info", message: "스캔이 아직 진행 중입니다. 잠시 후 날짜별 시그널을 새로고침하세요." });
+    setStatus({ type: "info", message: "스캔 step 제한에 도달했습니다. 다시 버튼을 누르면 이어서 처리하지 않고 새 스캔이 시작됩니다." });
   }
 
   async function refresh() {
@@ -410,7 +411,7 @@ function Dashboard({ session }: { session: Session }) {
           </button>
           {isScanAdmin ? (
             <button disabled={pending !== null} onClick={startScan}>
-              {pending === "scan" ? "스캔 중... 1분 정도 걸림" : "오늘 시그널 스캔"}
+              {pending === "scan" ? "스캔 중... 100개씩 처리" : "오늘 시그널 스캔"}
             </button>
           ) : (
             <p className="command-copy">스캔 실행은 관리자만 가능하고, 사용자는 생성된 오늘 시그널만 조회합니다.</p>
@@ -828,8 +829,4 @@ function formatDateTime(value: unknown) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
-}
-
-function delay(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

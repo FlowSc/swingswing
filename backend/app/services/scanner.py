@@ -15,6 +15,7 @@ from app.services.telegram import send_telegram_message
 
 logger = logging.getLogger(__name__)
 TOP_N = 30
+SCAN_CHUNK_SIZE = 100
 MIN_VOLUME_20D = 20000
 MIN_PRICE = 1000
 MIN_TRADING_VALUE_20D = 300_000_000
@@ -278,36 +279,7 @@ def load_scan_universe() -> pd.DataFrame:
     return universe
 
 
-def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
-    base_date = today or datetime.now(ZoneInfo(get_settings().timezone)).date()
-    logger.warning("Signal scan universe load started: date=%s", base_date.isoformat())
-    universe = load_scan_universe()
-    logger.warning("Signal scan market filter started")
-    market_ok = kospi_market_filter_ok(base_date)
-    logger.warning("Signal scan market filter completed: market_ok=%s", market_ok)
-    start = (datetime.combine(base_date, datetime.min.time()) - timedelta(days=420)).strftime("%Y-%m-%d")
-    results: list[dict] = []
-
-    total = len(universe)
-    for index, (_, row) in enumerate(universe.iterrows(), start=1):
-        try:
-            if index == 1 or index % 50 == 0:
-                logger.warning("Signal scan progress: %s/%s candidates=%s", index, total, len(results))
-            raw = fdr.DataReader(row["Code"], start=start)
-            result = score_swing_setup(
-                raw,
-                row["Code"],
-                row["Name"],
-                market_filter_ok=market_ok,
-                universe=row["Universe"],
-            )
-            if result:
-                results.append(result)
-        except Exception:
-            logger.debug("Signal scan skipped code=%s", row.get("Code"), exc_info=True)
-            continue
-
-    logger.warning("Signal scan scoring completed: scanned=%s candidates=%s", total, len(results))
+def sort_top_signals(results: list[dict]) -> list[dict]:
     results.sort(
         key=lambda item: (
             item.get("Score", 0),
@@ -318,6 +290,108 @@ def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
         reverse=True,
     )
     return results[:TOP_N]
+
+
+def prepare_chunked_scan_state_sync(today: date | None = None) -> dict:
+    base_date = today or datetime.now(ZoneInfo(get_settings().timezone)).date()
+    logger.warning("Signal scan universe load started: date=%s", base_date.isoformat())
+    universe = load_scan_universe()
+    logger.warning("Signal scan market filter started")
+    market_ok = kospi_market_filter_ok(base_date)
+    logger.warning("Signal scan market filter completed: market_ok=%s", market_ok)
+    start = (datetime.combine(base_date, datetime.min.time()) - timedelta(days=420)).strftime("%Y-%m-%d")
+    return {
+        "trade_date": base_date.isoformat(),
+        "universe": universe.to_dict("records"),
+        "market_ok": market_ok,
+        "start": start,
+        "offset": 0,
+        "total": len(universe),
+        "candidates": [],
+        "done": False,
+    }
+
+
+async def prepare_chunked_scan_state(today: date | None = None) -> dict:
+    return await asyncio.to_thread(prepare_chunked_scan_state_sync, today)
+
+
+def process_scan_chunk_sync(state: dict, chunk_size: int = SCAN_CHUNK_SIZE) -> dict:
+    universe = state.get("universe") or []
+    offset = int(state.get("offset") or 0)
+    total = len(universe)
+    end = min(offset + chunk_size, total)
+    results: list[dict] = list(state.get("candidates") or [])
+
+    logger.warning("Signal scan chunk started: %s-%s/%s candidates=%s", offset + 1, end, total, len(results))
+    for index, row in enumerate(universe[offset:end], start=offset + 1):
+        try:
+            if index == offset + 1 or index % 25 == 0:
+                logger.warning("Signal scan chunk progress: %s/%s candidates=%s", index, total, len(results))
+            raw = fdr.DataReader(row["Code"], start=state["start"])
+            result = score_swing_setup(
+                raw,
+                row["Code"],
+                row["Name"],
+                market_filter_ok=bool(state["market_ok"]),
+                universe=row["Universe"],
+            )
+            if result:
+                results.append(result)
+        except Exception:
+            logger.debug("Signal scan skipped code=%s", row.get("Code"), exc_info=True)
+            continue
+
+    done = end >= total
+    next_state = {
+        **state,
+        "offset": end,
+        "total": total,
+        "candidates": results,
+        "done": done,
+    }
+    logger.warning("Signal scan chunk completed: offset=%s/%s candidates=%s done=%s", end, total, len(results), done)
+    return next_state
+
+
+async def process_scan_chunk(state: dict, chunk_size: int = SCAN_CHUNK_SIZE) -> dict:
+    return await asyncio.to_thread(process_scan_chunk_sync, state, chunk_size)
+
+
+async def finalize_chunked_scan(user_id: str, state: dict, telegram_chat_id: str | None = None) -> dict:
+    trade_date = date.fromisoformat(state["trade_date"])
+    signals = sort_top_signals(list(state.get("candidates") or []))
+    saved = await save_user_signals(user_id, signals, trade_date)
+    shared_saved = await save_shared_signals(signals, trade_date)
+    await send_telegram_message(telegram_chat_id, format_top_signals_message(signals, trade_date))
+    return {"trade_date": trade_date.isoformat(), "signals": len(signals), "saved": saved, "shared_saved": shared_saved}
+
+
+def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
+    state = prepare_chunked_scan_state_sync(today)
+    results: list[dict] = []
+
+    total = len(state["universe"])
+    for index, row in enumerate(state["universe"], start=1):
+        try:
+            if index == 1 or index % 50 == 0:
+                logger.warning("Signal scan progress: %s/%s candidates=%s", index, total, len(results))
+            raw = fdr.DataReader(row["Code"], start=state["start"])
+            result = score_swing_setup(
+                raw,
+                row["Code"],
+                row["Name"],
+                market_filter_ok=bool(state["market_ok"]),
+                universe=row["Universe"],
+            )
+            if result:
+                results.append(result)
+        except Exception:
+            logger.debug("Signal scan skipped code=%s", row.get("Code"), exc_info=True)
+            continue
+
+    logger.warning("Signal scan scoring completed: scanned=%s candidates=%s", total, len(results))
+    return sort_top_signals(results)
 
 
 async def scan_kospi_signals(today: date | None = None) -> list[dict]:
