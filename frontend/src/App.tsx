@@ -880,15 +880,22 @@ function SignalDetail({ row }: { row: Record<string, unknown> }) {
         ["BB 폭", raw["BBWidth(%)"]],
         ["BB 확장", raw["BBExpansion(%)"]],
         ["거래량 배율", raw.VolumeSpikeRatio],
+        ["거래대금 배율", raw.TradingValueSpikeRatio],
+        ["상대강도 20D", `${formatCell(raw["RelativeStrength_20D(%)"])}%`],
       ]} />
       <DetailSection title="리스크/시장" items={[
         ["손절폭", `${formatCell(raw["StopPct"] ?? raw.StopPct)}%`],
         ["리스크", `${formatCell(raw.RiskPct)}%`],
+        ["ATR", raw.ATR14],
+        ["ATR 비율", `${formatCell(raw["ATR(%)"])}%`],
+        ["갭", `${formatCell(raw["Gap(%)"])}%`],
+        ["윗꼬리 비율", raw.UpperShadowRatio],
         ["20일 거래대금", raw.TradingValue20D],
         ["시장 필터", raw.MarketFilter],
         ["유니버스", raw.Universe],
         ["5일 수익률", `${formatCell(raw["Ret_5D(%)"])}%`],
         ["20일 수익률", `${formatCell(raw["Ret_20D(%)"])}%`],
+        ["시장 20일 수익률", `${formatCell(raw["MarketRet_20D(%)"])}%`],
       ]} />
     </div>
   );

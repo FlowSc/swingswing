@@ -30,6 +30,12 @@ MIN_BB_WIDTH_EXPANSION_HARD_PCT = 0.0
 MIN_VOLUME_RATIO_HARD = 1.0
 MIN_VOLUME_SPIKE_RATIO = 1.2
 STRONG_VOLUME_SPIKE_RATIO = 1.5
+MIN_TRADING_VALUE_SPIKE_RATIO = 1.2
+GAP_UP_PENALTY_PCT = 5.0
+UPPER_SHADOW_PENALTY_RATIO = 0.5
+MIN_ATR_PCT_BONUS = 2.0
+MAX_ATR_PCT_BONUS = 12.0
+MIN_RELATIVE_STRENGTH_20D = 3.0
 MAX_DAYS_AFTER_ICHIMOKU_CROSS = 5
 HOLD_MIN_DAYS = 3
 HOLD_PREFERRED_DAYS = 7
@@ -63,6 +69,8 @@ def prepare_frame(df: pd.DataFrame) -> pd.DataFrame:
     frame["Vol20"] = frame["Volume"].rolling(20).mean()
     frame["Vol5"] = frame["Volume"].rolling(5).mean()
     frame["VolPrev5"] = frame["Volume"].shift(1).rolling(5).mean()
+    frame["TradingValue"] = frame["Close"] * frame["Volume"]
+    frame["TradingValue20"] = frame["TradingValue"].rolling(20).mean()
     frame["Tenkan"] = (frame["High"].rolling(9).max() + frame["Low"].rolling(9).min()) / 2
     frame["Kijun"] = (frame["High"].rolling(26).max() + frame["Low"].rolling(26).min()) / 2
     frame["TenkanPrev"] = frame["Tenkan"].shift(1)
@@ -78,6 +86,8 @@ def prepare_frame(df: pd.DataFrame) -> pd.DataFrame:
     frame["Low52W"] = frame["Low"].rolling(252).min()
     candle_range = (frame["High"] - frame["Low"]).replace(0, pd.NA)
     frame["BodyRatioPct"] = (frame["Close"] - frame["Open"]).abs() / candle_range * 100
+    frame["UpperShadowRatio"] = (frame["High"] - frame[["Open", "Close"]].max(axis=1)) / candle_range
+    frame["GapPct"] = (frame["Open"] / frame["Close"].shift(1) - 1) * 100
     prev_close = frame["Close"].shift(1)
     true_range = pd.concat(
         [
@@ -98,6 +108,7 @@ def score_swing_setup(
     *,
     market_filter_ok: bool,
     universe: str,
+    market_ret_20d: float = 0.0,
 ) -> dict | None:
     if frame is None or len(frame) < 260:
         return None
@@ -123,6 +134,8 @@ def score_swing_setup(
     ret_20d = float(last["Ret_20D"])
     vol20 = float(last["Vol20"])
     vol_prev5 = float(last["VolPrev5"])
+    trading_value = float(last["TradingValue"])
+    trading_value20 = float(last["TradingValue20"])
     atr14 = float(last["ATR14"])
     prev_close = float(prev["Close"])
     ma20_prev5 = float(last["MA20_prev5"])
@@ -134,6 +147,8 @@ def score_swing_setup(
     bb_expansion = float(last["BBExpansionPct"])
     low_52w = float(last["Low52W"])
     body_ratio = float(last["BodyRatioPct"])
+    upper_shadow_ratio = float(last["UpperShadowRatio"])
+    gap_pct = float(last["GapPct"])
 
     if ma20 <= 0 or ma60 <= 0 or vol20 <= 0 or vol_prev5 <= 0 or kijun <= 0 or low_52w <= 0:
         return None
@@ -143,6 +158,9 @@ def score_swing_setup(
     if trading_value_20d < MIN_TRADING_VALUE_20D:
         return None
 
+    atr_pct = atr14 / close * 100
+    relative_strength_20d = ret_20d - market_ret_20d
+    trading_value_spike_ratio = trading_value / trading_value20 if trading_value20 > 0 else 0
     distance_to_ma20 = (close - ma20) / ma20 * 100
     distance_to_kijun = (close - kijun) / kijun * 100
     days_after_cross = None
@@ -168,11 +186,29 @@ def score_swing_setup(
         (float(last["Volume"]) >= vol_prev5 * STRONG_VOLUME_SPIKE_RATIO, 1, "Strong volume spike"),
         (market_filter_ok, 2, "KOSPI above MA5"),
         (universe in {"KOSPI_TOP500", "KOSDAQ150"}, 2, universe),
+        (relative_strength_20d >= MIN_RELATIVE_STRENGTH_20D, 2, "Market relative strength"),
+        (trading_value_spike_ratio >= MIN_TRADING_VALUE_SPIKE_RATIO, 1, "Trading value spike"),
+        (MIN_ATR_PCT_BONUS <= atr_pct <= MAX_ATR_PCT_BONUS, 1, "ATR in swing range"),
     ]
     for passed, points, reason in scoring_rules:
         if passed:
             score += points
             reasons.append(reason)
+
+    penalty_reasons: list[str] = []
+    penalty = 0
+    if gap_pct >= GAP_UP_PENALTY_PCT:
+        penalty += 2
+        penalty_reasons.append("Gap up penalty")
+    if upper_shadow_ratio >= UPPER_SHADOW_PENALTY_RATIO:
+        penalty += 2
+        penalty_reasons.append("Upper shadow penalty")
+    if atr_pct > MAX_ATR_PCT_BONUS:
+        penalty += 2
+        penalty_reasons.append("ATR too high")
+    if penalty:
+        score -= penalty
+        reasons.extend(penalty_reasons)
 
     if tenkan <= kijun:
         return None
@@ -215,6 +251,7 @@ def score_swing_setup(
         "HoldMaxDays": HOLD_MAX_DAYS,
         "RSI14": round(rsi, 1),
         "ATR14": round(atr14, 2),
+        "ATR(%)": round(atr_pct, 2),
         "Tenkan": round(tenkan, 2),
         "Kijun": round(kijun, 2),
         "DaysAfterIchimokuCross": days_after_cross,
@@ -225,12 +262,17 @@ def score_swing_setup(
         "BBExpansion(%)": round(bb_expansion, 2),
         "VolumeSpikeRatio": round(float(last["Volume"]) / vol_prev5, 2),
         "BodyRatio(%)": round(body_ratio, 2),
+        "UpperShadowRatio": round(upper_shadow_ratio, 2),
+        "Gap(%)": round(gap_pct, 2),
         "Low52W": round(low_52w, 2),
         "DistanceFrom52WLow(%)": round((close / low_52w - 1) * 100, 2),
         "MarketFilter": "KOSPI close > MA5",
         "Universe": universe,
         "Ret_5D(%)": round(ret_5d, 2),
         "Ret_20D(%)": round(ret_20d, 2),
+        "MarketRet_20D(%)": round(market_ret_20d, 2),
+        "RelativeStrength_20D(%)": round(relative_strength_20d, 2),
+        "TradingValueSpikeRatio": round(trading_value_spike_ratio, 2),
         "DistanceToMA20(%)": round(distance_to_ma20, 2),
         "Vol20": int(vol20),
         "TradingValue20D": int(trading_value_20d),
@@ -246,6 +288,15 @@ def kospi_market_filter_ok(base_date: date) -> bool:
         return False
     close = frame["Close"]
     return bool(float(close.iloc[-1]) > float(close.rolling(5).mean().iloc[-1]))
+
+
+def market_return_20d(base_date: date) -> float:
+    start = (datetime.combine(base_date, datetime.min.time()) - timedelta(days=60)).strftime("%Y-%m-%d")
+    frame = fdr.DataReader("KS11", start=start)
+    if frame is None or len(frame) < 21:
+        return 0.0
+    close = frame["Close"]
+    return float(close.iloc[-1] / close.iloc[-21] - 1) * 100
 
 
 def _normalize_listing(listing: pd.DataFrame, universe: str) -> pd.DataFrame:
@@ -298,12 +349,14 @@ def prepare_chunked_scan_state_sync(today: date | None = None) -> dict:
     universe = load_scan_universe()
     logger.warning("Signal scan market filter started")
     market_ok = kospi_market_filter_ok(base_date)
-    logger.warning("Signal scan market filter completed: market_ok=%s", market_ok)
+    market_ret_20d = market_return_20d(base_date)
+    logger.warning("Signal scan market filter completed: market_ok=%s market_ret_20d=%.2f", market_ok, market_ret_20d)
     start = (datetime.combine(base_date, datetime.min.time()) - timedelta(days=420)).strftime("%Y-%m-%d")
     return {
         "trade_date": base_date.isoformat(),
         "universe": universe.to_dict("records"),
         "market_ok": market_ok,
+        "market_ret_20d": market_ret_20d,
         "start": start,
         "offset": 0,
         "total": len(universe),
@@ -335,6 +388,7 @@ def process_scan_chunk_sync(state: dict, chunk_size: int = SCAN_CHUNK_SIZE) -> d
                 row["Name"],
                 market_filter_ok=bool(state["market_ok"]),
                 universe=row["Universe"],
+                market_ret_20d=float(state.get("market_ret_20d") or 0),
             )
             if result:
                 results.append(result)
@@ -382,6 +436,7 @@ def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
                 row["Name"],
                 market_filter_ok=bool(state["market_ok"]),
                 universe=row["Universe"],
+                market_ret_20d=float(state.get("market_ret_20d") or 0),
             )
             if result:
                 results.append(result)
