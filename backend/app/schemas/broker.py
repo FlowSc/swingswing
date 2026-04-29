@@ -42,22 +42,6 @@ class BrokerStatusOut(BaseModel):
     is_active: bool = False
 
 
-class BrokerTestOut(BaseModel):
-    ok: bool
-    error: str | None = None
-    token_ok: bool
-    quote_ok: bool
-    balance_ok: bool
-    telegram_ok: bool
-    account: str
-    mode: str
-    quote_code: str
-    quote_price: int | None = None
-    holdings_count: int | None = None
-    cash: int | None = None
-    total_equity: int | None = None
-
-
 class KisHoldingOut(BaseModel):
     code: str
     name: str | None = None

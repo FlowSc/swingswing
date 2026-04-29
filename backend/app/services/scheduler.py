@@ -37,7 +37,7 @@ def start_scheduler() -> None:
     settings = get_settings()
     timezone = ZoneInfo(settings.timezone)
     scheduler = AsyncIOScheduler(timezone=timezone)
-    scheduler.add_job(daily_scan_job, "cron", day_of_week="mon-fri", hour=14, minute=0)
+    scheduler.add_job(daily_scan_job, "cron", day_of_week="mon-fri", hour=13, minute=30)
     scheduler.add_job(intraday_watch_job, "cron", day_of_week="mon-fri", hour="9-15", minute="*/5")
     scheduler.start()
     _scheduler = scheduler

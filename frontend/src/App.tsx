@@ -176,16 +176,6 @@ function Dashboard({ session }: { session: Session }) {
     }
   }
 
-  async function testBroker() {
-    await run("test", async () => {
-      const result = await api.testBroker(session);
-      if (!result.ok) {
-        throw new Error(result.error || "KIS 연결 테스트 실패");
-      }
-      return result;
-    }, "KIS 연결 테스트 완료:");
-  }
-
   async function loadKisAccount() {
     await run("account", async () => {
       const result = await api.getKisAccount(session);
@@ -403,9 +393,6 @@ function Dashboard({ session }: { session: Session }) {
           <button disabled={pending !== null || !brokerStatus?.configured || !brokerStatus?.enabled} onClick={() => run("disable", () => api.setAutoTradingEnabled(session, false), "자동매매 OFF 완료:")}>
             {pending === "disable" ? "자동매매 끄는 중..." : "자동매매 OFF"}
           </button>
-          <button disabled={pending !== null || !brokerStatus?.configured} onClick={testBroker}>
-            {pending === "test" ? "KIS 테스트 중..." : "KIS 연결 테스트"}
-          </button>
           <button disabled={pending !== null || !brokerStatus?.configured} onClick={loadKisAccount}>
             {pending === "account" ? "계좌 조회 중..." : "KIS 계좌 조회"}
           </button>
@@ -461,7 +448,6 @@ function labelForPending(key: string) {
     broker: "KIS 정보 저장",
     enable: "자동매매 ON",
     disable: "자동매매 OFF",
-    test: "KIS 연결 테스트",
     account: "KIS 계좌 조회",
     accountSwitch: "활성 계좌 변경",
     scan: "오늘 시그널 스캔",

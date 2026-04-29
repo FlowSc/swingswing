@@ -57,22 +57,6 @@ export type BrokerAccount = {
   is_active: boolean;
 };
 
-export type BrokerTestResult = {
-  ok: boolean;
-  error?: string;
-  token_ok: boolean;
-  quote_ok: boolean;
-  balance_ok: boolean;
-  telegram_ok: boolean;
-  account: string;
-  mode: string;
-  quote_code: string;
-  quote_price?: number;
-  holdings_count?: number;
-  cash?: number;
-  total_equity?: number;
-};
-
 export type KisHolding = {
   code: string;
   name?: string;
@@ -127,7 +111,6 @@ export const api = {
     request("/broker/kis", session, { method: "POST", body: JSON.stringify(payload) }),
   activateBrokerAccount: (session: Session, accountId: string) =>
     request<BrokerAccount>(`/broker/kis/accounts/${accountId}/activate`, session, { method: "POST" }),
-  testBroker: (session: Session) => request<BrokerTestResult>("/broker/kis/test", session, { method: "POST" }),
   getKisAccount: (session: Session) => request<KisAccount>("/broker/kis/account", session),
   setAutoTradingEnabled: (session: Session, enabled: boolean) =>
     request("/bot/control", session, { method: "POST", body: JSON.stringify({ enabled }) }),

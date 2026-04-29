@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
-from app.schemas.broker import BrokerAccountOut, BrokerCredentialIn, BrokerCredentialOut, BrokerStatusOut, BrokerTestOut, KisAccountOut, KisHoldingOut
+from app.schemas.broker import BrokerAccountOut, BrokerCredentialIn, BrokerCredentialOut, BrokerStatusOut, KisAccountOut, KisHoldingOut
 from app.services.broker_credentials import (
     get_broker_credentials,
     get_decrypted_broker_credentials,
@@ -10,8 +10,7 @@ from app.services.broker_credentials import (
     save_broker_credentials,
     set_active_broker_account,
 )
-from app.services.kis import client_from_credentials, extract_cash, extract_total_equity, parse_current_price
-from app.services.telegram import send_telegram_message
+from app.services.kis import client_from_credentials, extract_cash, extract_total_equity
 
 
 router = APIRouter(prefix="/broker", tags=["broker"])
@@ -112,58 +111,6 @@ async def activate_kis_account(
 ) -> BrokerAccountOut:
     row = await set_active_broker_account(user.id, account_id)
     return BrokerAccountOut(**account_out(row).model_dump())
-
-
-@router.post("/kis/test", response_model=BrokerTestOut)
-async def test_kis_connection(user: CurrentUser = Depends(get_current_user)) -> BrokerTestOut:
-    credentials = await get_decrypted_broker_credentials(user.id)
-    client = client_from_credentials(credentials, enable_orders=False)
-
-    account = f"{credentials['kis_account_no']}-{credentials.get('kis_account_product_code') or '01'}"
-    mode = credentials.get("mode") or "paper"
-
-    try:
-        token = await client.access_token()
-        quote = await client.get_current_price("005930")
-        quote_price = parse_current_price(quote)
-        balance = await client.get_balance()
-        holdings = balance.get("output1", [])
-        cash = extract_cash(balance)
-        total_equity = extract_total_equity(balance)
-    except Exception as exc:
-        return BrokerTestOut(
-            ok=False,
-            error=str(exc),
-            token_ok=False,
-            quote_ok=False,
-            balance_ok=False,
-            telegram_ok=False,
-            account=account,
-            mode=mode,
-            quote_code="005930",
-        )
-
-    telegram_ok = False
-    if get_settings().telegram_chat_id or credentials.get("telegram_chat_id"):
-        telegram_ok = await send_telegram_message(
-            credentials.get("telegram_chat_id"),
-            "KIS paper connection test passed.",
-        )
-
-    return BrokerTestOut(
-        ok=True,
-        token_ok=bool(token),
-        quote_ok=quote_price > 0,
-        balance_ok=True,
-        telegram_ok=telegram_ok,
-        account=account,
-        mode=mode,
-        quote_code="005930",
-        quote_price=quote_price,
-        holdings_count=len(holdings),
-        cash=cash,
-        total_equity=total_equity,
-    )
 
 
 @router.get("/kis/account", response_model=KisAccountOut)
