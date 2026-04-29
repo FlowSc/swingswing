@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     scheduler_enabled: bool = False
     allow_live_trading: bool = False
+    scan_admin_email: str = "zelatool@gmail.com"
 
     model_config = SettingsConfigDict(
         env_file=".env",

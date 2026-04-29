@@ -133,6 +133,7 @@ function Dashboard({ session }: { session: Session }) {
   const [autoLoadedAccountKey, setAutoLoadedAccountKey] = useState("");
   const [detail, setDetail] = useState<DetailSelection | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+  const isScanAdmin = (session.user.email || "").toLowerCase() === "zelatool@gmail.com";
 
   useEffect(() => {
     refresh();
@@ -347,7 +348,7 @@ function Dashboard({ session }: { session: Session }) {
 
         <div className="panel command">
           <h2>자동매매</h2>
-          <p className="command-copy">현재 활성 계정 기준으로 자동 스캔과 주문 감시를 켜거나 끕니다. 모의/실전 계정 모두 같은 방식으로 제어됩니다.</p>
+          <p className="command-copy">현재 활성 계정 기준으로 주문 감시를 켜거나 끕니다. 오늘 시그널은 관리자가 생성한 공용 스캔 데이터를 표시합니다.</p>
           <button disabled={pending !== null || !brokerStatus?.configured || brokerStatus?.enabled} onClick={() => run("enable", () => api.setAutoTradingEnabled(session, true), "자동매매 ON 완료:")}>
             {pending === "enable" ? "자동매매 켜는 중..." : "자동매매 ON"}
           </button>
@@ -360,9 +361,13 @@ function Dashboard({ session }: { session: Session }) {
           <button disabled={pending !== null || !brokerStatus?.configured} onClick={loadKisAccount}>
             {pending === "account" ? "계좌 조회 중..." : "KIS 계좌 조회"}
           </button>
-          <button disabled={pending !== null} onClick={() => run("scan", () => api.scan(session), "스캔 완료:")}>
-            {pending === "scan" ? "스캔 중... 1분 정도 걸림" : "오늘 시그널 스캔"}
-          </button>
+          {isScanAdmin ? (
+            <button disabled={pending !== null} onClick={() => run("scan", () => api.scan(session), "스캔 완료:")}>
+              {pending === "scan" ? "스캔 중... 1분 정도 걸림" : "오늘 시그널 스캔"}
+            </button>
+          ) : (
+            <p className="command-copy">스캔 실행은 관리자만 가능하고, 사용자는 생성된 오늘 시그널만 조회합니다.</p>
+          )}
           <StatusLine status={status} />
         </div>
       </div>

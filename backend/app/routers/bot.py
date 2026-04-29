@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.auth import CurrentUser, get_current_user
+from app.core.config import get_settings
 from app.schemas.bot import BotControlIn, BotControlOut, WatchTickIn
 from app.services.broker_credentials import get_broker_credentials, get_decrypted_broker_credentials, set_bot_enabled
 from app.services.scanner import scan_and_store_for_user
@@ -21,6 +22,9 @@ async def control_bot(
 
 @router.post("/scan")
 async def scan(user: CurrentUser = Depends(get_current_user)) -> dict:
+    settings = get_settings()
+    if (user.email or "").lower() != settings.scan_admin_email.lower():
+        raise HTTPException(status_code=403, detail="Only scan admin can run signal scans")
     credentials = await get_broker_credentials(user.id)
     telegram_chat_id = credentials.get("telegram_chat_id") if credentials else None
     return await scan_and_store_for_user(user.id, telegram_chat_id)

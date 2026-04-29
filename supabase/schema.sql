@@ -49,6 +49,24 @@ create table if not exists signals (
 create unique index if not exists uq_signals_trade_date_user_code
   on signals (trade_date, user_id, code);
 
+create table if not exists shared_signals (
+  id bigint generated always as identity primary key,
+  trade_date date not null,
+  code text not null,
+  name text not null,
+  entry numeric,
+  stop_loss numeric,
+  take_profit_1 numeric,
+  take_profit_2 numeric,
+  trailing_stop numeric,
+  score numeric,
+  raw jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists uq_shared_signals_trade_date_code
+  on shared_signals (trade_date, code);
+
 create table if not exists positions (
   id bigint generated always as identity primary key,
   user_id uuid not null,
@@ -86,6 +104,7 @@ create table if not exists trade_logs (
 );
 
 create index if not exists idx_signals_trade_date_user on signals (trade_date, user_id);
+create index if not exists idx_shared_signals_trade_date on shared_signals (trade_date, score desc);
 create index if not exists idx_positions_user_status on positions (user_id, status);
 create index if not exists idx_trade_logs_user_created_at on trade_logs (user_id, created_at desc);
 create index if not exists idx_broker_accounts_user_active on broker_accounts (user_id, is_active);
@@ -148,6 +167,7 @@ where trade_logs.broker_account_id is null
 alter table broker_credentials enable row level security;
 alter table broker_accounts enable row level security;
 alter table signals enable row level security;
+alter table shared_signals enable row level security;
 alter table positions enable row level security;
 alter table trade_logs enable row level security;
 
@@ -165,6 +185,11 @@ drop policy if exists "Users can read own signals" on signals;
 create policy "Users can read own signals"
   on signals for select
   using (auth.uid() = user_id);
+
+drop policy if exists "Users can read shared signals" on shared_signals;
+create policy "Users can read shared signals"
+  on shared_signals for select
+  using (auth.uid() is not null);
 
 drop policy if exists "Users can read own positions" on positions;
 create policy "Users can read own positions"

@@ -15,8 +15,8 @@ router = APIRouter(tags=["trading"])
 async def today_signals(user: CurrentUser = Depends(get_current_user)) -> list[dict]:
     today = datetime.now(ZoneInfo(get_settings().timezone)).date().isoformat()
     return await SupabaseRest().select(
-        "signals",
-        filters={"user_id": f"eq.{user.id}", "trade_date": f"eq.{today}"},
+        "shared_signals",
+        filters={"trade_date": f"eq.{today}"},
         order="score.desc",
     )
 

@@ -36,6 +36,25 @@ class SupabaseRest:
             response.raise_for_status()
             return response.json()
 
+    async def find_user_by_email(self, email: str) -> dict[str, Any] | None:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(
+                f"{self.base_url}/auth/v1/admin/users",
+                headers={
+                    "apikey": self.service_key,
+                    "authorization": f"Bearer {self.service_key}",
+                },
+                params={"page": 1, "per_page": 1000},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        users = payload.get("users", payload if isinstance(payload, list) else [])
+        target = email.lower()
+        for user in users:
+            if (user.get("email") or "").lower() == target:
+                return user
+        return None
+
     async def upsert(self, table: str, payload: dict[str, Any], on_conflict: str) -> list[dict[str, Any]]:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(

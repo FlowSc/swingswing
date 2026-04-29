@@ -327,12 +327,37 @@ def signal_to_record(user_id: str, trade_date: date, signal: dict) -> dict:
     }
 
 
+def shared_signal_to_record(trade_date: date, signal: dict) -> dict:
+    return {
+        "trade_date": trade_date.isoformat(),
+        "code": signal["Code"],
+        "name": signal["Name"],
+        "entry": signal["Entry"],
+        "stop_loss": signal["StopLoss"],
+        "take_profit_1": signal["TakeProfit1"],
+        "take_profit_2": signal["TakeProfit2"],
+        "trailing_stop": signal["TrailingStop"],
+        "score": signal["Score"],
+        "raw": signal,
+    }
+
+
 async def save_user_signals(user_id: str, signals: list[dict], trade_date: date | None = None) -> int:
     today = trade_date or datetime.now(ZoneInfo(get_settings().timezone)).date()
     rest = SupabaseRest()
     count = 0
     for signal in signals:
         await rest.upsert("signals", signal_to_record(user_id, today, signal), on_conflict="trade_date,user_id,code")
+        count += 1
+    return count
+
+
+async def save_shared_signals(signals: list[dict], trade_date: date | None = None) -> int:
+    today = trade_date or datetime.now(ZoneInfo(get_settings().timezone)).date()
+    rest = SupabaseRest()
+    count = 0
+    for signal in signals:
+        await rest.upsert("shared_signals", shared_signal_to_record(today, signal), on_conflict="trade_date,code")
         count += 1
     return count
 
@@ -355,5 +380,6 @@ async def scan_and_store_for_user(user_id: str, telegram_chat_id: str | None = N
     trade_date = datetime.now(ZoneInfo(get_settings().timezone)).date()
     signals = await scan_kospi_signals(trade_date)
     saved = await save_user_signals(user_id, signals, trade_date)
+    shared_saved = await save_shared_signals(signals, trade_date)
     await send_telegram_message(telegram_chat_id, format_top_signals_message(signals, trade_date))
-    return {"trade_date": trade_date.isoformat(), "signals": len(signals), "saved": saved}
+    return {"trade_date": trade_date.isoformat(), "signals": len(signals), "saved": saved, "shared_saved": shared_saved}
