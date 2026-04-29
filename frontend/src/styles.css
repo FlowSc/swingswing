@@ -210,6 +210,10 @@ button:disabled {
   opacity: 0.55;
 }
 
+a {
+  color: inherit;
+}
+
 .primary {
   background: var(--lime);
   color: #172213;
@@ -271,6 +275,24 @@ button:disabled {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.5;
+}
+
+.telegram-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 13px 18px;
+  border: 1px solid rgba(31, 93, 58, 0.2);
+  border-radius: 999px;
+  background: #fffef8;
+  color: var(--green);
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.telegram-link:hover {
+  transform: translateY(-1px);
+  background: rgba(201, 240, 90, 0.28);
 }
 
 .rule-box {

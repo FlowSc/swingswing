@@ -403,6 +403,9 @@ function Dashboard({ session }: { session: Session }) {
           ) : (
             <p className="command-copy">스캔 실행은 관리자만 가능하고, 사용자는 생성된 오늘 시그널만 조회합니다.</p>
           )}
+          <a className="telegram-link" href="https://t.me/sc_swingbot" target="_blank" rel="noreferrer">
+            텔레그램 봇 추가하기
+          </a>
           <StatusLine status={status} />
         </div>
       </div>
