@@ -1,16 +1,15 @@
 import type { Session } from "@supabase/supabase-js";
+import { supabase } from "./supabase";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
 async function request<T>(path: string, session: Session, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    ...options,
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${session.access_token}`,
-      ...(options.headers || {}),
-    },
-  });
+  const token = await currentAccessToken(session);
+  let response = await fetchWithToken(path, token, options);
+  if (response.status === 401) {
+    const refreshed = await refreshedAccessToken();
+    response = await fetchWithToken(path, refreshed, options);
+  }
 
   if (!response.ok) {
     const message = await response.text();
@@ -18,6 +17,31 @@ async function request<T>(path: string, session: Session, options: RequestInit =
   }
 
   return response.json() as Promise<T>;
+}
+
+async function currentAccessToken(fallbackSession: Session): Promise<string> {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token || fallbackSession.access_token;
+}
+
+async function refreshedAccessToken(): Promise<string> {
+  const { data, error } = await supabase.auth.refreshSession();
+  if (error || !data.session?.access_token) {
+    throw new Error(error?.message || "Supabase session refresh failed.");
+  }
+  return data.session.access_token;
+}
+
+async function fetchWithToken(path: string, accessToken: string, options: RequestInit): Promise<Response> {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...options,
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${accessToken}`,
+      ...(options.headers || {}),
+    },
+  });
+  return response;
 }
 
 export type BrokerPayload = {
