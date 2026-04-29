@@ -342,6 +342,19 @@ a {
   margin-bottom: 0;
 }
 
+.strategy-summary {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(31, 93, 58, 0.08);
+}
+
+.strategy-summary span {
+  color: var(--muted);
+}
+
 .preset-row,
 .strategy-checks {
   display: flex;
@@ -365,6 +378,10 @@ a {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+
+.strategy-save {
+  justify-self: start;
 }
 
 .section-title {

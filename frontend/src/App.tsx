@@ -180,6 +180,7 @@ function Dashboard({ session }: { session: Session }) {
   const [logs, setLogs] = useState<Array<Record<string, unknown>>>([]);
   const [kisAccount, setKisAccount] = useState<KisAccount | null>(null);
   const [strategy, setStrategy] = useState<StrategySettings>(defaultStrategy);
+  const [editingStrategy, setEditingStrategy] = useState(false);
   const [autoLoadedAccountKey, setAutoLoadedAccountKey] = useState("");
   const [detail, setDetail] = useState<DetailSelection | null>(null);
   const [pending, setPending] = useState<string | null>(null);
@@ -330,6 +331,7 @@ function Dashboard({ session }: { session: Session }) {
 
   async function saveStrategy() {
     await run("strategy", () => api.saveStrategy(session, strategy), "전략 설정 저장 완료:");
+    setEditingStrategy(false);
   }
 
   async function changeSignalDate(tradeDate: string) {
@@ -470,7 +472,9 @@ function Dashboard({ session }: { session: Session }) {
 
       <StrategyPanel
         strategy={strategy}
+        editing={editingStrategy}
         pending={pending === "strategy"}
+        onToggleEdit={() => setEditingStrategy((value) => !value)}
         onPresetChange={applyStrategyPreset}
         onChange={setStrategy}
         onSave={saveStrategy}
@@ -518,13 +522,17 @@ function Dashboard({ session }: { session: Session }) {
 
 function StrategyPanel({
   strategy,
+  editing,
   pending,
+  onToggleEdit,
   onPresetChange,
   onChange,
   onSave,
 }: {
   strategy: StrategySettings;
+  editing: boolean;
   pending: boolean;
+  onToggleEdit: () => void;
   onPresetChange: (preset: StrategyPreset) => void;
   onChange: (strategy: StrategySettings) => void;
   onSave: () => void;
@@ -539,11 +547,23 @@ function StrategyPanel({
           <h2>전략 설정</h2>
           <p className="command-copy">공용 시그널은 그대로 쓰고, 내 계좌의 자동매매 실행 조건만 조정합니다.</p>
         </div>
-        <button className="primary" type="button" disabled={pending} onClick={onSave}>
-          {pending ? "저장 중..." : "전략 저장"}
+        <button className="ghost small" type="button" onClick={onToggleEdit}>
+          {editing ? "변경 취소" : "변경하기"}
         </button>
       </div>
 
+      {!editing && (
+        <div className="strategy-summary">
+          <strong>{presetLabel(strategy.preset)} 전략을 사용 중입니다.</strong>
+          <span>최소 점수 {strategy.min_score}점</span>
+          <span>최대 보유 {strategy.max_open_positions}종목 · 하루 신규 {strategy.max_new_positions_per_day}종목</span>
+          <span>종목당 {formatPct(strategy.position_capital_pct)} 이하 · 리스크 {formatPct(strategy.risk_per_trade_pct)} 이하</span>
+          <span>최소 주문금액 {Number(strategy.min_order_amount).toLocaleString()}원</span>
+        </div>
+      )}
+
+      {editing && (
+        <>
       <div className="preset-row">
         {(["conservative", "balanced", "aggressive"] as StrategyPreset[]).map((preset) => (
           <button
@@ -606,6 +626,11 @@ function StrategyPanel({
           볼린저 상단 필터 사용
         </label>
       </div>
+      <button className="primary strategy-save" type="button" disabled={pending} onClick={onSave}>
+        {pending ? "저장 중..." : "전략 저장"}
+      </button>
+        </>
+      )}
     </div>
   );
 }
