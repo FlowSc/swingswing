@@ -361,10 +361,9 @@ async def process_scan_chunk(state: dict, chunk_size: int = SCAN_CHUNK_SIZE) -> 
 async def finalize_chunked_scan(user_id: str, state: dict, telegram_chat_id: str | None = None) -> dict:
     trade_date = date.fromisoformat(state["trade_date"])
     signals = sort_top_signals(list(state.get("candidates") or []))
-    saved = await save_user_signals(user_id, signals, trade_date)
     shared_saved = await save_shared_signals(signals, trade_date)
     await send_telegram_message(telegram_chat_id, format_top_signals_message(signals, trade_date))
-    return {"trade_date": trade_date.isoformat(), "signals": len(signals), "saved": saved, "shared_saved": shared_saved}
+    return {"trade_date": trade_date.isoformat(), "signals": len(signals), "saved": 0, "shared_saved": shared_saved}
 
 
 def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
@@ -398,22 +397,6 @@ async def scan_kospi_signals(today: date | None = None) -> list[dict]:
     return await asyncio.to_thread(scan_kospi_signals_sync, today)
 
 
-def signal_to_record(user_id: str, trade_date: date, signal: dict) -> dict:
-    return {
-        "user_id": user_id,
-        "trade_date": trade_date.isoformat(),
-        "code": signal["Code"],
-        "name": signal["Name"],
-        "entry": signal["Entry"],
-        "stop_loss": signal["StopLoss"],
-        "take_profit_1": signal["TakeProfit1"],
-        "take_profit_2": signal["TakeProfit2"],
-        "trailing_stop": signal["TrailingStop"],
-        "score": signal["Score"],
-        "raw": signal,
-    }
-
-
 def shared_signal_to_record(trade_date: date, signal: dict) -> dict:
     return {
         "trade_date": trade_date.isoformat(),
@@ -427,16 +410,6 @@ def shared_signal_to_record(trade_date: date, signal: dict) -> dict:
         "score": signal["Score"],
         "raw": signal,
     }
-
-
-async def save_user_signals(user_id: str, signals: list[dict], trade_date: date | None = None) -> int:
-    today = trade_date or datetime.now(ZoneInfo(get_settings().timezone)).date()
-    rest = SupabaseRest()
-    count = 0
-    for signal in signals:
-        await rest.upsert("signals", signal_to_record(user_id, today, signal), on_conflict="trade_date,user_id,code")
-        count += 1
-    return count
 
 
 async def save_shared_signals(signals: list[dict], trade_date: date | None = None) -> int:
@@ -466,7 +439,6 @@ def format_top_signals_message(signals: list[dict], trade_date: date) -> str:
 async def scan_and_store_for_user(user_id: str, telegram_chat_id: str | None = None) -> dict:
     trade_date = datetime.now(ZoneInfo(get_settings().timezone)).date()
     signals = await scan_kospi_signals(trade_date)
-    saved = await save_user_signals(user_id, signals, trade_date)
     shared_saved = await save_shared_signals(signals, trade_date)
     await send_telegram_message(telegram_chat_id, format_top_signals_message(signals, trade_date))
-    return {"trade_date": trade_date.isoformat(), "signals": len(signals), "saved": saved, "shared_saved": shared_saved}
+    return {"trade_date": trade_date.isoformat(), "signals": len(signals), "saved": 0, "shared_saved": shared_saved}

@@ -170,10 +170,10 @@ async def open_positions(user_id: str, broker_account_id: str | None) -> list[di
     )
 
 
-async def today_signals(user_id: str) -> list[dict]:
+async def today_signals() -> list[dict]:
     return await SupabaseRest().select(
-        "signals",
-        filters={"user_id": f"eq.{user_id}", "trade_date": f"eq.{now_kst().date().isoformat()}"},
+        "shared_signals",
+        filters={"trade_date": f"eq.{now_kst().date().isoformat()}"},
         order="score.desc",
     )
 
@@ -254,7 +254,7 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
     if not in_window(ENTRY_START, ENTRY_END, test_mode=test_mode):
         return []
 
-    signals = await today_signals(user_id)
+    signals = await today_signals()
     if not signals:
         return []
 
