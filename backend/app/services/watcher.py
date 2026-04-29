@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
@@ -22,6 +23,7 @@ from app.services.supabase_rest import SupabaseRest
 from app.services.telegram import send_telegram_message
 
 
+logger = logging.getLogger(__name__)
 ENTRY_START = time(14, 30)
 ENTRY_END = time(15, 20)
 MANAGE_START = time(9, 20)
@@ -35,6 +37,16 @@ REASON_LABELS = {
     "TimeExit": "최대 보유기간 도달",
     "TakeProfit1": "1차 익절가 도달",
     "TakeProfit2": "2차 익절가 도달",
+    "AlreadyHeld": "이미 보유 중인 종목",
+    "ScoreBelowMinimum": "전략 최소 점수 미달",
+    "BelowEntryBand": "현재가가 진입 허용 하단보다 낮음",
+    "AboveEntryBand": "현재가가 진입 허용 상단보다 높음",
+    "BelowKijun": "현재가가 일목 기준선 아래",
+    "AboveBBUpper": "현재가가 볼린저 상단 위",
+    "PulledBackFromDayHigh": "당일 고점 대비 과도하게 밀림",
+    "QuoteFailed": "현재가 조회 실패",
+    "InvalidQuote": "현재가 값 비정상",
+    "SizingRejected": "수량/리스크/최소주문금액 조건 미충족",
 }
 
 
@@ -154,6 +166,44 @@ async def insert_trade_log(
     )
 
 
+async def insert_decision_log(
+    user_id: str,
+    broker_account_id: str | None,
+    decision: str,
+    signal: dict,
+    reason: str,
+    *,
+    price: int | None = None,
+    raw: dict | None = None,
+) -> None:
+    today = now_kst().date().isoformat()
+    try:
+        await SupabaseRest().upsert(
+            "trade_decision_logs",
+            {
+                "decision_date": today,
+                "user_id": user_id,
+                "broker_account_id": broker_account_id,
+                "decision": decision,
+                "code": signal["code"],
+                "name": signal.get("name"),
+                "price": price,
+                "score": signal.get("score"),
+                "reason_code": reason,
+                "reason": reason_label(reason),
+                "raw": {
+                    **(raw or {}),
+                    "reason_code": reason,
+                    "reason_ko": reason_label(reason),
+                    "logged_at": now_kst().isoformat(),
+                },
+            },
+            on_conflict="decision_date,user_id,broker_account_id,code,reason_code",
+        )
+    except RuntimeError as exc:
+        logger.warning("Failed to insert trade decision log: code=%s reason=%s error=%s", signal.get("code"), reason, exc)
+
+
 async def open_positions(user_id: str, broker_account_id: str | None) -> list[dict]:
     filters = {"user_id": f"eq.{user_id}", "status": "eq.OPEN"}
     if broker_account_id:
@@ -264,25 +314,32 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
     if daily_slots <= 0:
         return []
 
-    candidates = [
-        signal
-        for signal in signals
-        if signal["code"] not in blocked_codes and float(signal.get("score") or 0) >= float(strategy["min_score"])
-    ]
-
     actions: list[dict] = []
     rest = SupabaseRest()
-    for signal in candidates:
+    for signal in signals:
         if len(actions) >= daily_slots:
             break
 
+        score = float(signal.get("score") or 0)
+        if signal["code"] in blocked_codes:
+            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "AlreadyHeld", raw={"strategy": strategy})
+            continue
+        if score < float(strategy["min_score"]):
+            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "ScoreBelowMinimum", raw={"strategy": strategy})
+            continue
+
         quote = await get_quote_safe(client, signal["code"])
-        if quote is None or quote["current_price"] <= 0:
+        if quote is None:
+            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "QuoteFailed", raw={"strategy": strategy})
+            continue
+        if quote["current_price"] <= 0:
+            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "InvalidQuote", raw={"quote": quote, "strategy": strategy})
             continue
         current_price = quote["current_price"]
         raw = signal.get("raw") or {}
         passed, reason = passes_intraday_entry_filter(signal, quote, strategy)
         if not passed:
+            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, reason, price=current_price, raw={"quote": quote, "strategy": strategy})
             continue
 
         sizing_signal = {**signal, "entry": current_price}
@@ -296,6 +353,7 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
             min_order_amount=int(strategy["min_order_amount"]),
         )
         if qty <= 0:
+            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "SizingRejected", price=current_price, raw={"quote": quote, "sizing": sizing, "strategy": strategy})
             continue
 
         response = await place_buy(client, signal, qty, current_price, dry_run=dry_run)

@@ -105,7 +105,7 @@ export type KisAccount = {
 
 export type ScanRun = {
   id: number;
-  status: "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "failed";
   trade_date?: string;
   signals_count?: number;
   shared_saved?: number;
@@ -126,6 +126,63 @@ export type ScanStartResult = {
   offset: number;
   total: number;
   message: string;
+};
+
+export type TradeDecisionLog = {
+  id: number;
+  decision_date: string;
+  decision: "BUY" | "SKIP" | string;
+  code: string;
+  name?: string;
+  price?: number;
+  score?: number;
+  reason_code: string;
+  reason: string;
+  raw?: Record<string, unknown>;
+  created_at: string;
+};
+
+export type DailyDashboard = {
+  date: string;
+  signals_count: number;
+  open_positions: number;
+  buy_count: number;
+  sell_count: number;
+  skip_count: number;
+  latest_scan?: ScanRun | null;
+  top_skip_reasons: Array<{
+    reason_code: string;
+    reason: string;
+    count: number;
+  }>;
+};
+
+export type BacktestTrade = {
+  trade_date: string;
+  entry_date: string;
+  code: string;
+  name?: string;
+  score?: number;
+  entry: number;
+  exit_price: number;
+  return_pct: number;
+  hold_days: number;
+  exit_reason: string;
+};
+
+export type BacktestResult = {
+  days: number;
+  signals_tested: number;
+  win_count: number;
+  loss_count: number;
+  win_rate: number;
+  avg_return_pct: number;
+  avg_win_pct: number;
+  avg_loss_pct: number;
+  best_return_pct: number;
+  worst_return_pct: number;
+  avg_hold_days: number;
+  trades: BacktestTrade[];
 };
 
 export type StrategyPreset = "conservative" | "balanced" | "aggressive";
@@ -169,4 +226,11 @@ export const api = {
   signalsByDate: (session: Session, tradeDate: string) => request<Array<Record<string, unknown>>>(`/signals?trade_date=${encodeURIComponent(tradeDate)}`, session),
   positions: (session: Session) => request<Array<Record<string, unknown>>>("/positions", session),
   tradeLogs: (session: Session) => request<Array<Record<string, unknown>>>("/trade-logs", session),
+  tradeDecisions: (session: Session, tradeDate?: string) => {
+    const suffix = tradeDate ? `?trade_date=${encodeURIComponent(tradeDate)}` : "";
+    return request<TradeDecisionLog[]>(`/trade-decisions${suffix}`, session);
+  },
+  dailyDashboard: (session: Session) => request<DailyDashboard>("/dashboard/daily", session),
+  backtestSharedSignals: (session: Session, days = 120, maxSignals = 200) =>
+    request<BacktestResult>(`/backtest/shared-signals?days=${days}&max_signals=${maxSignals}`, session),
 };

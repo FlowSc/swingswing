@@ -1,11 +1,22 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { api, type BrokerAccount, type BrokerPayload, type BrokerStatus, type KisAccount, type StrategyPreset, type StrategySettings } from "./api";
+import {
+  api,
+  type BacktestResult,
+  type BrokerAccount,
+  type BrokerPayload,
+  type BrokerStatus,
+  type DailyDashboard,
+  type KisAccount,
+  type StrategyPreset,
+  type StrategySettings,
+  type TradeDecisionLog,
+} from "./api";
 import { supabase } from "./supabase";
 
 type AuthMode = "login" | "signup";
 type Status = { type: "idle" | "info" | "error"; message: string };
-type DetailKind = "signal" | "log" | "position" | "account";
+type DetailKind = "signal" | "log" | "position" | "account" | "decision";
 type DetailSelection = { title: string; kind: DetailKind; row: Record<string, unknown> };
 
 const emptyBroker: BrokerPayload = {
@@ -178,6 +189,10 @@ function Dashboard({ session }: { session: Session }) {
   const [selectedSignalDate, setSelectedSignalDate] = useState("");
   const [positions, setPositions] = useState<Array<Record<string, unknown>>>([]);
   const [logs, setLogs] = useState<Array<Record<string, unknown>>>([]);
+  const [decisions, setDecisions] = useState<TradeDecisionLog[]>([]);
+  const [dailyDashboard, setDailyDashboard] = useState<DailyDashboard | null>(null);
+  const [backtest, setBacktest] = useState<BacktestResult | null>(null);
+  const [backtestDays, setBacktestDays] = useState(120);
   const [kisAccount, setKisAccount] = useState<KisAccount | null>(null);
   const [strategy, setStrategy] = useState<StrategySettings>(defaultStrategy);
   const [editingStrategy, setEditingStrategy] = useState(false);
@@ -275,23 +290,47 @@ function Dashboard({ session }: { session: Session }) {
     setStatus({ type: "info", message: "스캔 step 제한에 도달했습니다. 다시 버튼을 누르면 이어서 처리하지 않고 새 스캔이 시작됩니다." });
   }
 
+  async function runBacktest() {
+    setPending("backtest");
+    setStatus({ type: "info", message: "백테스트 실행 중..." });
+    try {
+      const result = await api.backtestSharedSignals(session, backtestDays, 300);
+      setBacktest(result);
+      setStatus({
+        type: "info",
+        message: `백테스트 완료: ${result.signals_tested}건 / 승률 ${result.win_rate}% / 평균 ${result.avg_return_pct}%`,
+      });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function refresh() {
     try {
-      const [brokerResult, accountResult, strategyResult, dateResult, positionResult, logResult] = await Promise.all([
+      const [brokerResult, accountResult, strategyResult, dateResult, positionResult, logResult, dashboardResult] = await Promise.all([
         api.getBrokerStatus(session),
         api.getBrokerAccounts(session),
         api.getStrategy(session),
         api.signalDates(session),
         api.positions(session),
         api.tradeLogs(session),
+        api.dailyDashboard(session).catch(() => null),
       ]);
       const nextSignalDate = selectedSignalDate || dateResult[0] || "";
-      const signalResult = nextSignalDate ? await api.signalsByDate(session, nextSignalDate) : [];
+      const [signalResult, decisionResult] = nextSignalDate
+        ? await Promise.all([
+            api.signalsByDate(session, nextSignalDate),
+            api.tradeDecisions(session, nextSignalDate).catch(() => []),
+          ])
+        : [[], []];
       setBrokerStatus(brokerResult);
       setBrokerAccounts(accountResult);
       setStrategy(strategyResult);
       setSignalDates(dateResult);
       setSelectedSignalDate(nextSignalDate);
+      setDailyDashboard(dashboardResult);
       if (brokerResult.configured) {
         setBroker((current) => ({
           ...current,
@@ -305,6 +344,7 @@ function Dashboard({ session }: { session: Session }) {
       setSignals(signalResult);
       setPositions(positionResult);
       setLogs(logResult);
+      setDecisions(decisionResult);
     } catch {
       // First-time users may not have credentials yet. Keep the form usable.
     }
@@ -336,11 +376,21 @@ function Dashboard({ session }: { session: Session }) {
 
   async function changeSignalDate(tradeDate: string) {
     setSelectedSignalDate(tradeDate);
-    await run("signals", async () => {
-      const result = await api.signalsByDate(session, tradeDate);
-      setSignals(result);
-      return { trade_date: tradeDate, signals: result.length };
-    }, "시그널 조회 완료:");
+    setPending("signals");
+    setStatus({ type: "info", message: "시그널 조회 중..." });
+    try {
+      const [signalResult, decisionResult] = await Promise.all([
+        api.signalsByDate(session, tradeDate),
+        api.tradeDecisions(session, tradeDate).catch(() => []),
+      ]);
+      setSignals(signalResult);
+      setDecisions(decisionResult);
+      setStatus({ type: "info", message: `시그널 조회 완료: ${tradeDate} / ${signalResult.length}개` });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPending(null);
+    }
   }
 
   const shouldShowBrokerForm = !brokerStatus?.configured || editingBroker;
@@ -358,6 +408,8 @@ function Dashboard({ session }: { session: Session }) {
         </div>
         <button className="ghost" onClick={() => supabase.auth.signOut()}>로그아웃</button>
       </div>
+
+      <DailyDashboardPanel dashboard={dailyDashboard} />
 
       <div className="grid two">
         <form className="panel" onSubmit={saveBroker}>
@@ -514,8 +566,72 @@ function Dashboard({ session }: { session: Session }) {
           })}
         />
       </div>
+
+      <div className="grid two">
+        <DataPanel
+          title={selectedSignalDate ? `${selectedSignalDate} 매수 제외 로그` : "매수 제외 로그"}
+          rows={decisions.map(normalizeDecisionRow)}
+          columns={["code", "name", "score", "price", "reason", "created_at"]}
+          maxRows={30}
+          onRowClick={(row) => setDetail({
+            title: `${formatCell(row.name)} 제외 사유`,
+            kind: "decision",
+            row,
+          })}
+        />
+        <BacktestPanel
+          result={backtest}
+          days={backtestDays}
+          pending={pending === "backtest"}
+          onDaysChange={setBacktestDays}
+          onRun={runBacktest}
+        />
+      </div>
       <AutoTradingRules strategy={strategy} mode={brokerStatus?.mode} liveOrderEnabled={brokerStatus?.live_order_enabled || false} serverLiveTradingAllowed={brokerStatus?.server_live_trading_allowed || false} />
       {detail && <DetailOverlay detail={detail} onClose={() => setDetail(null)} />}
+    </section>
+  );
+}
+
+function DailyDashboardPanel({ dashboard }: { dashboard: DailyDashboard | null }) {
+  const scan = dashboard?.latest_scan;
+  const cards = [
+    ["오늘 시그널", dashboard?.signals_count],
+    ["오픈 포지션", dashboard?.open_positions],
+    ["오늘 매수", dashboard?.buy_count],
+    ["오늘 매도", dashboard?.sell_count],
+    ["매수 제외", dashboard?.skip_count],
+  ];
+
+  return (
+    <section className="panel daily-panel">
+      <div className="section-title">
+        <div>
+          <h2>데일리 대시보드</h2>
+          <p className="command-copy">{dashboard?.date || "오늘"} 기준 자동매매 상태 요약</p>
+        </div>
+        <span className={`scan-badge ${scan?.status || "idle"}`}>
+          스캔 {scan?.status || "대기"}
+        </span>
+      </div>
+      <div className="metric-grid">
+        {cards.map(([label, value]) => (
+          <div className="metric-card" key={label}>
+            <span>{label}</span>
+            <strong>{formatCell(value)}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="skip-summary">
+        <strong>상위 제외 사유</strong>
+        {dashboard?.top_skip_reasons?.length ? (
+          dashboard.top_skip_reasons.map((item) => (
+            <span key={item.reason_code}>{item.reason} {item.count}건</span>
+          ))
+        ) : (
+          <span>아직 기록 없음</span>
+        )}
+      </div>
     </section>
   );
 }
@@ -635,6 +751,75 @@ function StrategyPanel({
   );
 }
 
+function BacktestPanel({
+  result,
+  days,
+  pending,
+  onDaysChange,
+  onRun,
+}: {
+  result: BacktestResult | null;
+  days: number;
+  pending: boolean;
+  onDaysChange: (days: number) => void;
+  onRun: () => void;
+}) {
+  const summary = result
+    ? [
+        ["검증 건수", result.signals_tested],
+        ["승률", `${result.win_rate}%`],
+        ["평균 수익률", `${result.avg_return_pct}%`],
+        ["평균 보유", `${result.avg_hold_days}일`],
+        ["최고/최악", `${result.best_return_pct}% / ${result.worst_return_pct}%`],
+      ]
+    : [];
+
+  return (
+    <section className="panel data-panel backtest-panel">
+      <div className="data-panel-head">
+        <h2>백테스트</h2>
+        <div className="backtest-controls">
+          <select value={days} onChange={(event) => onDaysChange(Number(event.target.value))}>
+            <option value={120}>120일</option>
+            <option value={240}>240일</option>
+            <option value={365}>365일</option>
+            <option value={730}>730일</option>
+          </select>
+          <button className="primary small" type="button" disabled={pending} onClick={onRun}>
+            {pending ? "실행 중..." : "백테스트 실행"}
+          </button>
+        </div>
+      </div>
+      {!result ? (
+        <p className="empty">공용 시그널 기준으로 진입가, 손절가, 익절가, 최대 보유일을 단순 검증합니다.</p>
+      ) : (
+        <>
+          <div className="metric-grid compact">
+            {summary.map(([label, value]) => (
+              <div className="metric-card" key={label}>
+                <span>{label}</span>
+                <strong>{formatCell(value)}</strong>
+              </div>
+            ))}
+          </div>
+          <MiniTable
+            rows={result.trades.map((trade) => ({
+              date: trade.trade_date,
+              code: trade.code,
+              name: trade.name,
+              score: trade.score,
+              return_pct: `${trade.return_pct}%`,
+              hold_days: trade.hold_days,
+              exit_reason: translateReason(trade.exit_reason),
+            }))}
+            columns={["date", "code", "name", "score", "return_pct", "hold_days", "exit_reason"]}
+          />
+        </>
+      )}
+    </section>
+  );
+}
+
 function presetLabel(preset: StrategyPreset) {
   if (preset === "conservative") return "보수적";
   if (preset === "aggressive") return "공격적";
@@ -708,6 +893,7 @@ function labelForPending(key: string) {
     strategy: "전략 설정 저장",
     scan: "오늘 시그널 스캔",
     signals: "시그널 조회",
+    backtest: "백테스트",
   };
   return labels[key] || "요청";
 }
@@ -833,12 +1019,17 @@ function DataPanel({
 }
 
 function DetailOverlay({ detail, onClose }: { detail: DetailSelection; onClose: () => void }) {
+  const detailLabel =
+    detail.kind === "signal" ? "시그널 상세"
+      : detail.kind === "log" ? "매매 로그 상세"
+        : detail.kind === "decision" ? "매수 제외 상세"
+          : "포지션 상세";
   return (
     <div className="overlay-backdrop" onClick={onClose}>
       <aside className="detail-popover" onClick={(event) => event.stopPropagation()}>
         <div className="detail-head">
           <div>
-            <span>{detail.kind === "signal" ? "시그널 상세" : detail.kind === "log" ? "매매 로그 상세" : "포지션 상세"}</span>
+            <span>{detailLabel}</span>
             <h2>{detail.title}</h2>
           </div>
           <button className="ghost small" onClick={onClose}>닫기</button>
@@ -846,6 +1037,7 @@ function DetailOverlay({ detail, onClose }: { detail: DetailSelection; onClose: 
         {detail.kind === "signal" && <SignalDetail row={detail.row} />}
         {detail.kind === "log" && <TradeLogDetail row={detail.row} />}
         {detail.kind === "position" && <PositionDetail row={detail.row} />}
+        {detail.kind === "decision" && <DecisionDetail row={detail.row} />}
       </aside>
     </div>
   );
@@ -963,6 +1155,42 @@ function PositionDetail({ row }: { row: Record<string, unknown> }) {
   );
 }
 
+function DecisionDetail({ row }: { row: Record<string, unknown> }) {
+  const raw = asRecord(row.raw);
+  const quote = asRecord(raw.quote);
+  const sizing = asRecord(raw.sizing);
+  const strategy = asRecord(raw.strategy);
+  return (
+    <div className="detail-grid">
+      <DetailSection title="제외 판단" items={[
+        ["종목", `${formatCell(row.name)} (${formatCell(row.code)})`],
+        ["판단일", row.decision_date],
+        ["점수", row.score],
+        ["현재가", row.price],
+        ["제외 사유", row.reason],
+        ["사유 코드", row.reason_code],
+        ["기록 시간", formatDateTime(row.created_at)],
+      ]} />
+      <DetailSection title="장중 값" items={[
+        ["현재가", quote.current_price],
+        ["당일 고가", quote.day_high],
+        ["당일 저가", quote.day_low],
+        ["누적 거래량", quote.accumulated_volume],
+        ["호가 기준", quote.price_source],
+      ]} />
+      <DetailSection title="전략/수량 조건" items={[
+        ["최소 점수", strategy.min_score],
+        ["진입가 하단 배율", strategy.min_entry_discount],
+        ["진입가 상단 배율", strategy.max_entry_premium],
+        ["고점 이탈 허용", strategy.max_pullback_from_day_high],
+        ["계산 수량", sizing.qty],
+        ["주문 가능금액", sizing.available_cash],
+        ["리스크 기준 수량", sizing.risk_qty],
+      ]} />
+    </div>
+  );
+}
+
 function DetailSection({ title, items }: { title: string; items: Array<[string, unknown]> }) {
   return (
     <section className="detail-section">
@@ -994,6 +1222,14 @@ function normalizeTradeLogRow(row: Record<string, unknown>) {
     ...row,
     action_ko: row.action === "BUY" ? "매수" : row.action === "SELL" ? "매도" : row.action,
     reason_ko: translateReason(row.reason),
+    created_at: formatDateTime(row.created_at),
+  };
+}
+
+function normalizeDecisionRow(row: TradeDecisionLog): Record<string, unknown> {
+  return {
+    ...row,
+    reason: row.reason || translateReason(row.reason_code),
     created_at: formatDateTime(row.created_at),
   };
 }
@@ -1044,8 +1280,19 @@ function translateReason(reason: unknown) {
     StopLoss: "손절가 도달",
     TrailingStop: "추적 손절가 도달",
     TimeExit: "최대 보유기간 도달",
+    MaxHold: "최대 보유 후 청산",
     TakeProfit1: "1차 익절가 도달",
     TakeProfit2: "2차 익절가 도달",
+    AlreadyHeld: "이미 보유 중인 종목",
+    ScoreBelowMinimum: "전략 최소 점수 미달",
+    BelowEntryBand: "현재가가 진입 허용 하단보다 낮음",
+    AboveEntryBand: "현재가가 진입 허용 상단보다 높음",
+    BelowKijun: "현재가가 일목 기준선 아래",
+    AboveBBUpper: "현재가가 볼린저 상단 위",
+    PulledBackFromDayHigh: "당일 고점 대비 과도하게 밀림",
+    QuoteFailed: "현재가 조회 실패",
+    InvalidQuote: "현재가 값 비정상",
+    SizingRejected: "수량/리스크/최소주문금액 조건 미충족",
   };
   return map[value] || value || "-";
 }
