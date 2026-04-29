@@ -407,12 +407,11 @@ function Dashboard({ session }: { session: Session }) {
         </div>
       </div>
 
-      <div className="grid three">
-        <AccountPanel account={kisAccount} />
+      <div className="grid">
         <DataPanel
           title={selectedSignalDate ? `${selectedSignalDate} 시그널` : "시그널"}
           rows={signals}
-          columns={["score", "code", "name", "entry", "stop_loss", "take_profit_2"]}
+          columns={["score", "name", "entry", "stop_loss", "take_profit_2", "code"]}
           maxRows={30}
           headerAction={signalDates.length > 0 ? (
             <select className="compact-select" value={selectedSignalDate} onChange={(event) => changeSignalDate(event.target.value)}>
@@ -421,6 +420,10 @@ function Dashboard({ session }: { session: Session }) {
           ) : undefined}
           onRowClick={(row) => setDetail({ title: `${formatCell(row.name)} (${formatCell(row.code)})`, kind: "signal", row })}
         />
+      </div>
+
+      <div className="grid three">
+        <AccountPanel account={kisAccount} />
         <DataPanel
           title="포지션"
           rows={positions}
