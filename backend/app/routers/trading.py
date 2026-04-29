@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -14,11 +14,37 @@ router = APIRouter(tags=["trading"])
 @router.get("/signals/today")
 async def today_signals(user: CurrentUser = Depends(get_current_user)) -> list[dict]:
     today = datetime.now(ZoneInfo(get_settings().timezone)).date().isoformat()
+    return await signals_by_date(today, user)
+
+
+@router.get("/signals")
+async def signals_by_date(
+    trade_date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
     return await SupabaseRest().select(
         "shared_signals",
-        filters={"trade_date": f"eq.{today}"},
+        filters={"trade_date": f"eq.{trade_date}"},
         order="score.desc",
     )
+
+
+@router.get("/signals/dates")
+async def signal_dates(user: CurrentUser = Depends(get_current_user)) -> list[str]:
+    rows = await SupabaseRest().select(
+        "shared_signals",
+        columns="trade_date",
+        order="trade_date.desc",
+        limit=30,
+    )
+    seen = set()
+    dates: list[str] = []
+    for row in rows:
+        value = row.get("trade_date")
+        if value and value not in seen:
+            seen.add(value)
+            dates.append(value)
+    return dates
 
 
 @router.get("/positions")

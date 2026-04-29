@@ -88,12 +88,13 @@ class SupabaseRest:
         self,
         table: str,
         *,
+        columns: str = "*",
         filters: dict[str, str] | None = None,
         order: str | None = None,
         limit: int | None = None,
         or_filter: str | None = None,
     ) -> list[dict[str, Any]]:
-        params: dict[str, str | int] = {"select": "*"}
+        params: dict[str, str | int] = {"select": columns}
         if filters:
             params.update(filters)
         if or_filter:

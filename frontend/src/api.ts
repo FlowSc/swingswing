@@ -110,6 +110,8 @@ export const api = {
   watchTick: (session: Session, payload: { test_mode: boolean; dry_run: boolean }) =>
     request("/bot/watch-tick", session, { method: "POST", body: JSON.stringify(payload) }),
   todaySignals: (session: Session) => request<Array<Record<string, unknown>>>("/signals/today", session),
+  signalDates: (session: Session) => request<string[]>("/signals/dates", session),
+  signalsByDate: (session: Session, tradeDate: string) => request<Array<Record<string, unknown>>>(`/signals?trade_date=${encodeURIComponent(tradeDate)}`, session),
   positions: (session: Session) => request<Array<Record<string, unknown>>>("/positions", session),
   tradeLogs: (session: Session) => request<Array<Record<string, unknown>>>("/trade-logs", session),
 };

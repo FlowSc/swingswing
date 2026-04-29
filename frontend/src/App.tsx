@@ -127,6 +127,8 @@ function Dashboard({ session }: { session: Session }) {
   const [brokerStatus, setBrokerStatus] = useState<BrokerStatus | null>(null);
   const [brokerAccounts, setBrokerAccounts] = useState<BrokerAccount[]>([]);
   const [signals, setSignals] = useState<Array<Record<string, unknown>>>([]);
+  const [signalDates, setSignalDates] = useState<string[]>([]);
+  const [selectedSignalDate, setSelectedSignalDate] = useState("");
   const [positions, setPositions] = useState<Array<Record<string, unknown>>>([]);
   const [logs, setLogs] = useState<Array<Record<string, unknown>>>([]);
   const [kisAccount, setKisAccount] = useState<KisAccount | null>(null);
@@ -203,15 +205,19 @@ function Dashboard({ session }: { session: Session }) {
 
   async function refresh() {
     try {
-      const [brokerResult, accountResult, signalResult, positionResult, logResult] = await Promise.all([
+      const [brokerResult, accountResult, dateResult, positionResult, logResult] = await Promise.all([
         api.getBrokerStatus(session),
         api.getBrokerAccounts(session),
-        api.todaySignals(session),
+        api.signalDates(session),
         api.positions(session),
         api.tradeLogs(session),
       ]);
+      const nextSignalDate = selectedSignalDate || dateResult[0] || "";
+      const signalResult = nextSignalDate ? await api.signalsByDate(session, nextSignalDate) : [];
       setBrokerStatus(brokerResult);
       setBrokerAccounts(accountResult);
+      setSignalDates(dateResult);
+      setSelectedSignalDate(nextSignalDate);
       if (brokerResult.configured) {
         setBroker((current) => ({
           ...current,
@@ -243,6 +249,15 @@ function Dashboard({ session }: { session: Session }) {
     setKisAccount(null);
     setAutoLoadedAccountKey("");
     await run("accountSwitch", () => api.activateBrokerAccount(session, accountId), "활성 계좌 변경 완료:");
+  }
+
+  async function changeSignalDate(tradeDate: string) {
+    setSelectedSignalDate(tradeDate);
+    await run("signals", async () => {
+      const result = await api.signalsByDate(session, tradeDate);
+      setSignals(result);
+      return { trade_date: tradeDate, signals: result.length };
+    }, "시그널 조회 완료:");
   }
 
   const shouldShowBrokerForm = !brokerStatus?.configured || editingBroker;
@@ -375,10 +390,15 @@ function Dashboard({ session }: { session: Session }) {
       <div className="grid three">
         <AccountPanel account={kisAccount} />
         <DataPanel
-          title="오늘 시그널"
+          title={selectedSignalDate ? `${selectedSignalDate} 시그널` : "시그널"}
           rows={signals}
           columns={["code", "name", "entry", "stop_loss", "take_profit_2", "score"]}
           maxRows={30}
+          headerAction={signalDates.length > 0 ? (
+            <select className="compact-select" value={selectedSignalDate} onChange={(event) => changeSignalDate(event.target.value)}>
+              {signalDates.map((tradeDate) => <option key={tradeDate} value={tradeDate}>{tradeDate}</option>)}
+            </select>
+          ) : undefined}
           onRowClick={(row) => setDetail({ title: `${formatCell(row.name)} (${formatCell(row.code)})`, kind: "signal", row })}
         />
         <DataPanel
@@ -412,6 +432,7 @@ function labelForPending(key: string) {
     account: "KIS 계좌 조회",
     accountSwitch: "활성 계좌 변경",
     scan: "오늘 시그널 스캔",
+    signals: "시그널 조회",
   };
   return labels[key] || "요청";
 }
@@ -479,6 +500,7 @@ function DataPanel({
   rows,
   columns,
   onRowClick,
+  headerAction,
   initialRows = 10,
   maxRows = 10,
 }: {
@@ -486,6 +508,7 @@ function DataPanel({
   rows: Array<Record<string, unknown>>;
   columns: string[];
   onRowClick?: (row: Record<string, unknown>) => void;
+  headerAction?: React.ReactNode;
   initialRows?: number;
   maxRows?: number;
 }) {
@@ -499,7 +522,10 @@ function DataPanel({
 
   return (
     <section className="panel data-panel">
-      <h2>{title}</h2>
+      <div className="data-panel-head">
+        <h2>{title}</h2>
+        {headerAction}
+      </div>
       {rows.length === 0 ? (
         <p className="empty">데이터 없음</p>
       ) : (
