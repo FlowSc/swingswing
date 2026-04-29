@@ -7,22 +7,74 @@ class BrokerCredentialIn(BaseModel):
     kis_account_no: str = Field(min_length=8, max_length=16)
     kis_account_product_code: str = "01"
     mode: str = "paper"
-    telegram_chat_id: str | None = None
+    live_order_enabled: bool = False
 
 
 class BrokerCredentialOut(BaseModel):
+    id: str | None = None
     user_id: str
+    label: str | None = None
     kis_account_no: str
     kis_account_product_code: str
     mode: str
-    telegram_chat_id: str | None = None
+    telegram_configured: bool = False
     enabled: bool
+    live_order_enabled: bool = False
+    server_live_trading_allowed: bool = False
+    is_active: bool = True
+
+
+class BrokerAccountOut(BrokerCredentialOut):
+    pass
 
 
 class BrokerStatusOut(BaseModel):
     configured: bool
+    id: str | None = None
+    label: str | None = None
     mode: str | None = None
     account_no: str | None = None
     account_product_code: str | None = None
-    telegram_chat_id: str | None = None
+    telegram_configured: bool = False
     enabled: bool = False
+    live_order_enabled: bool = False
+    server_live_trading_allowed: bool = False
+    is_active: bool = False
+
+
+class BrokerTestOut(BaseModel):
+    ok: bool
+    error: str | None = None
+    token_ok: bool
+    quote_ok: bool
+    balance_ok: bool
+    telegram_ok: bool
+    account: str
+    mode: str
+    quote_code: str
+    quote_price: int | None = None
+    holdings_count: int | None = None
+    cash: int | None = None
+    total_equity: int | None = None
+
+
+class KisHoldingOut(BaseModel):
+    code: str
+    name: str | None = None
+    qty: int
+    avg_price: int | None = None
+    current_price: int | None = None
+    evaluation_amount: int | None = None
+    profit_loss: int | None = None
+    profit_loss_rate: float | None = None
+
+
+class KisAccountOut(BaseModel):
+    ok: bool
+    error: str | None = None
+    account: str
+    mode: str
+    cash: int | None = None
+    total_equity: int | None = None
+    holdings_count: int = 0
+    holdings: list[KisHoldingOut] = Field(default_factory=list)

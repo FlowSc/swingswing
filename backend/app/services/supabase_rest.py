@@ -64,10 +64,13 @@ class SupabaseRest:
         filters: dict[str, str] | None = None,
         order: str | None = None,
         limit: int | None = None,
+        or_filter: str | None = None,
     ) -> list[dict[str, Any]]:
         params: dict[str, str | int] = {"select": "*"}
         if filters:
             params.update(filters)
+        if or_filter:
+            params["or"] = or_filter
         if order:
             params["order"] = order
         if limit:

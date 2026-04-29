@@ -72,7 +72,7 @@ The backend uses the service role key for encrypted credential storage and bot j
 3. User saves KIS credentials through `POST /broker/kis`.
 4. `POST /bot/scan` creates today's signals and stores them in Supabase.
 5. `POST /bot/watch-tick` runs one entry/exit cycle for testing.
-6. With `SCHEDULER_ENABLED=true`, Railway runs scan at 08:45 and watcher every 5 minutes during market hours.
+6. With `SCHEDULER_ENABLED=true`, Railway runs scan at 13:00 and watcher every 5 minutes during market hours. New entries are only allowed from 14:30 to 15:20.
 
 `/bot/watch-tick` body:
 

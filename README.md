@@ -20,6 +20,7 @@ kospi/
 
 - Supabase Auth 기반 회원가입/로그인
 - 회원별 KIS 앱키, 시크릿, 계좌번호 저장
+- 텔레그램 봇 토큰과 Chat ID는 백엔드 환경변수에서 고정 관리
 - KIS 시크릿은 백엔드에서 암호화 후 Supabase에 저장
 - KOSPI 스윙 후보 종목 스캔
 - 장중 감시 및 조건 충족 시 KIS 모의투자 주문
@@ -69,10 +70,10 @@ kospi/
 기본 운용 흐름:
 
 ```text
-08:45  오늘의 KOSPI 스윙 후보 스캔
+13:00  오늘의 KOSPI 스윙 후보 스캔
 09:20  장중 감시 시작
-09:20-10:30  신규 진입 허용
-09:20-15:10  보유 포지션 관리
+14:30-15:20  신규 진입 허용
+09:20-15:20  보유 포지션 관리
 5분마다  watcher tick 실행
 ```
 
@@ -127,6 +128,7 @@ SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 BROKER_ENCRYPTION_KEY=
 TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
 ```
 
 `BROKER_ENCRYPTION_KEY` 생성:
@@ -193,11 +195,11 @@ GET  /trade-logs
 - 회원가입
 - 로그인
 - KIS 앱키/시크릿/계좌번호 저장
-- 텔레그램 Chat ID 저장
-- 봇 켜기/끄기
+- 백엔드에 고정된 텔레그램 설정 사용
+- 자동매매 ON/OFF
 - 오늘 시그널 스캔
-- 테스트 감시 1회 실행
-- 모의주문 감시 1회 실행
+- KIS 연결 테스트
+- KIS 계좌 조회
 - 오늘 시그널 조회
 - 포지션 조회
 - 매매 로그 조회
@@ -229,6 +231,7 @@ SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 BROKER_ENCRYPTION_KEY=
 TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
 ```
 
 ## 프론트엔드 배포

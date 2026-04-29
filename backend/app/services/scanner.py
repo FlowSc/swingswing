@@ -355,6 +355,5 @@ async def scan_and_store_for_user(user_id: str, telegram_chat_id: str | None = N
     trade_date = datetime.now(ZoneInfo(get_settings().timezone)).date()
     signals = await scan_kospi_signals(trade_date)
     saved = await save_user_signals(user_id, signals, trade_date)
-    if telegram_chat_id:
-        await send_telegram_message(telegram_chat_id, format_top_signals_message(signals, trade_date))
+    await send_telegram_message(telegram_chat_id, format_top_signals_message(signals, trade_date))
     return {"trade_date": trade_date.isoformat(), "signals": len(signals), "saved": saved}

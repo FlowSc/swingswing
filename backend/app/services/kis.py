@@ -31,6 +31,7 @@ class KisConfig:
     account_product_code: str = "01"
     mode: str = "paper"
     enable_orders: bool = True
+    allow_live_orders: bool = False
 
     @property
     def base_url(self) -> str:
@@ -147,8 +148,8 @@ class KisClient:
     async def place_cash_order(self, *, code: str, side: str, qty: int, price: int, order_type: str = "00") -> dict[str, Any]:
         if not self.config.enable_orders:
             raise RuntimeError("Order placement is disabled.")
-        if self.config.mode == "live":
-            raise RuntimeError("Live trading is blocked in this backend version.")
+        if self.config.mode == "live" and not self.config.allow_live_orders:
+            raise RuntimeError("Live trading is disabled for this account or deployment.")
         if side not in {"buy", "sell"}:
             raise ValueError("side must be 'buy' or 'sell'.")
         if qty <= 0:
@@ -176,7 +177,12 @@ class KisClient:
         return await self.place_cash_order(code=code, side="sell", qty=qty, price=price)
 
 
-def client_from_credentials(credentials: dict[str, Any], *, enable_orders: bool = True) -> KisClient:
+def client_from_credentials(
+    credentials: dict[str, Any],
+    *,
+    enable_orders: bool = True,
+    allow_live_orders: bool = False,
+) -> KisClient:
     return KisClient(
         KisConfig(
             app_key=credentials["kis_app_key"],
@@ -185,6 +191,7 @@ def client_from_credentials(credentials: dict[str, Any], *, enable_orders: bool 
             account_product_code=credentials.get("kis_account_product_code") or "01",
             mode=credentials.get("mode") or "paper",
             enable_orders=enable_orders,
+            allow_live_orders=allow_live_orders,
         )
     )
 

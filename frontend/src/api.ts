@@ -26,23 +26,85 @@ export type BrokerPayload = {
   kis_account_no: string;
   kis_account_product_code: string;
   mode: "paper" | "live";
-  telegram_chat_id?: string;
+  live_order_enabled: boolean;
 };
 
 export type BrokerStatus = {
   configured: boolean;
+  id?: string;
+  label?: string;
   enabled: boolean;
   mode?: "paper" | "live";
   account_no?: string;
   account_product_code?: string;
-  telegram_chat_id?: string;
+  telegram_configured: boolean;
+  live_order_enabled: boolean;
+  server_live_trading_allowed: boolean;
+  is_active: boolean;
+};
+
+export type BrokerAccount = {
+  id: string;
+  user_id: string;
+  label?: string;
+  kis_account_no: string;
+  kis_account_product_code: string;
+  mode: "paper" | "live";
+  telegram_configured: boolean;
+  enabled: boolean;
+  live_order_enabled: boolean;
+  server_live_trading_allowed: boolean;
+  is_active: boolean;
+};
+
+export type BrokerTestResult = {
+  ok: boolean;
+  error?: string;
+  token_ok: boolean;
+  quote_ok: boolean;
+  balance_ok: boolean;
+  telegram_ok: boolean;
+  account: string;
+  mode: string;
+  quote_code: string;
+  quote_price?: number;
+  holdings_count?: number;
+  cash?: number;
+  total_equity?: number;
+};
+
+export type KisHolding = {
+  code: string;
+  name?: string;
+  qty: number;
+  avg_price?: number;
+  current_price?: number;
+  evaluation_amount?: number;
+  profit_loss?: number;
+  profit_loss_rate?: number;
+};
+
+export type KisAccount = {
+  ok: boolean;
+  error?: string;
+  account: string;
+  mode: string;
+  cash?: number;
+  total_equity?: number;
+  holdings_count: number;
+  holdings: KisHolding[];
 };
 
 export const api = {
   getBrokerStatus: (session: Session) => request<BrokerStatus>("/broker/kis/status", session),
+  getBrokerAccounts: (session: Session) => request<BrokerAccount[]>("/broker/kis/accounts", session),
   saveBroker: (session: Session, payload: BrokerPayload) =>
     request("/broker/kis", session, { method: "POST", body: JSON.stringify(payload) }),
-  setBotEnabled: (session: Session, enabled: boolean) =>
+  activateBrokerAccount: (session: Session, accountId: string) =>
+    request<BrokerAccount>(`/broker/kis/accounts/${accountId}/activate`, session, { method: "POST" }),
+  testBroker: (session: Session) => request<BrokerTestResult>("/broker/kis/test", session, { method: "POST" }),
+  getKisAccount: (session: Session) => request<KisAccount>("/broker/kis/account", session),
+  setAutoTradingEnabled: (session: Session, enabled: boolean) =>
     request("/bot/control", session, { method: "POST", body: JSON.stringify({ enabled }) }),
   scan: (session: Session) => request<{ trade_date: string; signals: number; saved: number }>("/bot/scan", session, { method: "POST" }),
   watchTick: (session: Session, payload: { test_mode: boolean; dry_run: boolean }) =>

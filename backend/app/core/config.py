@@ -15,8 +15,10 @@ class Settings(BaseSettings):
     broker_encryption_key: str
 
     telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
 
     scheduler_enabled: bool = False
+    allow_live_trading: bool = False
 
     model_config = SettingsConfigDict(
         env_file=".env",

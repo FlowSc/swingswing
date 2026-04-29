@@ -24,15 +24,23 @@ from app.services.supabase_rest import SupabaseRest
 from app.services.telegram import send_telegram_message
 
 
-ENTRY_START = time(9, 20)
-ENTRY_END = time(10, 30)
+ENTRY_START = time(14, 30)
+ENTRY_END = time(15, 20)
 MANAGE_START = time(9, 20)
-MANAGE_END = time(15, 10)
+MANAGE_END = time(15, 20)
 QUOTE_DELAY_SECONDS = 1.0
 QUOTE_ERROR_BACKOFF_SECONDS = 3.0
 MAX_ENTRY_PREMIUM = 1.02
 MIN_ENTRY_DISCOUNT = 0.995
 MAX_PULLBACK_FROM_DAY_HIGH = 0.03
+REASON_LABELS = {
+    "IntradayEntry": "장중 진입 조건 충족",
+    "StopLoss": "손절가 도달",
+    "TrailingStop": "추적 손절가 도달",
+    "TimeExit": "최대 보유기간 도달",
+    "TakeProfit1": "1차 익절가 도달",
+    "TakeProfit2": "2차 익절가 도달",
+}
 
 
 def now_kst() -> datetime:
@@ -54,6 +62,26 @@ def days_held(entry_date: str | None) -> int:
     except ValueError:
         return 0
     return max(0, (now_kst().date() - start).days)
+
+
+def reason_label(reason_code: str) -> str:
+    return REASON_LABELS.get(reason_code, reason_code)
+
+
+def exit_plan_from_source(source: dict) -> dict:
+    raw = source.get("raw") or {}
+    return {
+        "entry_price": source.get("entry_price") or source.get("entry"),
+        "stop_loss": source.get("stop_loss"),
+        "take_profit_1": source.get("take_profit_1"),
+        "take_profit_2": source.get("take_profit_2"),
+        "trailing_stop": source.get("trailing_stop"),
+        "hold_min_days": raw.get("HoldMinDays"),
+        "hold_preferred_days": raw.get("HoldPreferredDays"),
+        "hold_max_days": raw.get("HoldMaxDays", 15),
+        "planned_entry_window": "14:30-15:20",
+        "planned_manage_window": "09:20-15:20",
+    }
 
 
 async def get_price_safe(client, code: str) -> int | None:
@@ -97,26 +125,47 @@ def passes_intraday_entry_filter(signal: dict, quote: dict[str, int]) -> tuple[b
     return True, "IntradayEntry"
 
 
-async def insert_trade_log(user_id: str, action: str, position_or_signal: dict, price: int, qty: int, reason: str, raw: dict | None = None) -> None:
+async def insert_trade_log(
+    user_id: str,
+    broker_account_id: str | None,
+    action: str,
+    position_or_signal: dict,
+    price: int,
+    qty: int,
+    reason: str,
+    raw: dict | None = None,
+) -> None:
+    logged_at = now_kst().isoformat()
+    payload_raw = {
+        **(raw or {}),
+        "reason_code": reason,
+        "reason_ko": reason_label(reason),
+        "logged_at": logged_at,
+        "exit_plan": exit_plan_from_source(position_or_signal),
+    }
     await SupabaseRest().insert(
         "trade_logs",
         {
             "user_id": user_id,
+            "broker_account_id": broker_account_id,
             "action": action,
             "code": position_or_signal["code"],
             "name": position_or_signal.get("name"),
             "price": price,
             "qty": qty,
-            "reason": reason,
-            "raw": raw or {},
+            "reason": reason_label(reason),
+            "raw": payload_raw,
         },
     )
 
 
-async def open_positions(user_id: str) -> list[dict]:
+async def open_positions(user_id: str, broker_account_id: str | None) -> list[dict]:
+    filters = {"user_id": f"eq.{user_id}", "status": "eq.OPEN"}
+    if broker_account_id:
+        filters["broker_account_id"] = f"eq.{broker_account_id}"
     return await SupabaseRest().select(
         "positions",
-        filters={"user_id": f"eq.{user_id}", "status": "eq.OPEN"},
+        filters=filters,
         order="created_at.asc",
     )
 
@@ -141,7 +190,7 @@ async def place_buy(client, signal: dict, qty: int, price: int, *, dry_run: bool
     return await client.buy_limit(signal["code"], qty, price)
 
 
-async def manage_positions(user_id: str, client, positions: list[dict], *, test_mode: bool, dry_run: bool) -> list[dict]:
+async def manage_positions(user_id: str, broker_account_id: str | None, client, positions: list[dict], *, test_mode: bool, dry_run: bool) -> list[dict]:
     if not in_window(MANAGE_START, MANAGE_END, test_mode=test_mode):
         return []
 
@@ -195,13 +244,13 @@ async def manage_positions(user_id: str, client, positions: list[dict], *, test_
         if patch.get("remaining_qty", remaining_qty) <= 0:
             patch["status"] = "CLOSED"
         await rest.patch("positions", filters={"id": f"eq.{position['id']}"}, payload=patch)
-        await insert_trade_log(user_id, "SELL", position, current_price, sell_qty, reason, response)
-        actions.append({"action": "SELL", "code": position["code"], "qty": sell_qty, "price": current_price, "reason": reason})
+        await insert_trade_log(user_id, broker_account_id, "SELL", position, current_price, sell_qty, reason, {"order": response})
+        actions.append({"action": "SELL", "code": position["code"], "qty": sell_qty, "price": current_price, "reason": reason_label(reason)})
 
     return actions
 
 
-async def enter_positions(user_id: str, client, positions: list[dict], balance: dict, *, test_mode: bool, dry_run: bool) -> list[dict]:
+async def enter_positions(user_id: str, broker_account_id: str | None, client, positions: list[dict], balance: dict, *, test_mode: bool, dry_run: bool) -> list[dict]:
     if not in_window(ENTRY_START, ENTRY_END, test_mode=test_mode):
         return []
 
@@ -253,6 +302,7 @@ async def enter_positions(user_id: str, client, positions: list[dict], balance: 
         response = await place_buy(client, signal, qty, current_price, dry_run=dry_run)
         position_payload = {
             "user_id": user_id,
+            "broker_account_id": broker_account_id,
             "code": signal["code"],
             "name": signal["name"],
             "entry_date": now_kst().date().isoformat(),
@@ -269,25 +319,47 @@ async def enter_positions(user_id: str, client, positions: list[dict], balance: 
             "raw": {**raw, "intraday_quote": quote, "kis_order_response": response, "sizing": sizing},
         }
         await rest.insert("positions", position_payload)
-        await insert_trade_log(user_id, "BUY", signal, current_price, qty, reason, {"quote": quote, "order": response})
-        actions.append({"action": "BUY", "code": signal["code"], "qty": qty, "price": current_price, "reason": reason})
+        await insert_trade_log(
+            user_id,
+            broker_account_id,
+            "BUY",
+            signal,
+            current_price,
+            qty,
+            reason,
+            {"quote": quote, "order": response, "signal_raw": raw},
+        )
+        actions.append({"action": "BUY", "code": signal["code"], "qty": qty, "price": current_price, "reason": reason_label(reason)})
 
     return actions
 
 
 async def run_watch_tick_for_user(credentials: dict, *, test_mode: bool = False, dry_run: bool = False) -> dict:
     user_id = credentials["user_id"]
-    client = client_from_credentials(credentials, enable_orders=not dry_run)
-    positions = await open_positions(user_id)
+    broker_account_id = credentials.get("id")
+    settings = get_settings()
+    is_live = (credentials.get("mode") or "paper") == "live"
+    allow_live_orders = bool(credentials.get("live_order_enabled")) and settings.allow_live_trading
+    client = client_from_credentials(credentials, enable_orders=not dry_run, allow_live_orders=allow_live_orders)
+    positions = await open_positions(user_id, broker_account_id)
     actions: list[dict] = []
-    actions.extend(await manage_positions(user_id, client, positions, test_mode=test_mode, dry_run=dry_run))
+    actions.extend(await manage_positions(user_id, broker_account_id, client, positions, test_mode=test_mode, dry_run=dry_run))
     balance = await client.get_balance()
-    positions = await open_positions(user_id)
-    actions.extend(await enter_positions(user_id, client, positions, balance, test_mode=test_mode, dry_run=dry_run))
+    positions = await open_positions(user_id, broker_account_id)
+    actions.extend(await enter_positions(user_id, broker_account_id, client, positions, balance, test_mode=test_mode, dry_run=dry_run))
 
-    if actions and credentials.get("telegram_chat_id"):
+    if actions:
         lines = [f"KOSPI bot actions: {len(actions)}"]
         lines.extend(f"{item['action']} {item['code']} qty {item['qty']} @ {item['price']:,} {item['reason']}" for item in actions)
-        await send_telegram_message(credentials["telegram_chat_id"], "\n".join(lines))
+        await send_telegram_message(credentials.get("telegram_chat_id"), "\n".join(lines))
 
-    return {"user_id": user_id, "actions": actions, "action_count": len(actions)}
+    return {
+        "user_id": user_id,
+        "broker_account_id": broker_account_id,
+        "actions": actions,
+        "action_count": len(actions),
+        "mode": credentials.get("mode") or "paper",
+        "live_order_enabled": bool(credentials.get("live_order_enabled")),
+        "server_live_trading_allowed": settings.allow_live_trading,
+        "orders_allowed": not dry_run and (not is_live or allow_live_orders),
+    }
