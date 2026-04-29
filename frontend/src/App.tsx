@@ -387,6 +387,7 @@ function Dashboard({ session }: { session: Session }) {
         <div className="panel command">
           <h2>자동매매</h2>
           <p className="command-copy">현재 활성 계정 기준으로 주문 감시를 켜거나 끕니다. 오늘 시그널은 관리자가 생성한 공용 스캔 데이터를 표시합니다.</p>
+          <AutoTradingRules mode={brokerStatus?.mode} liveOrderEnabled={brokerStatus?.live_order_enabled || false} serverLiveTradingAllowed={brokerStatus?.server_live_trading_allowed || false} />
           <button disabled={pending !== null || !brokerStatus?.configured || brokerStatus?.enabled} onClick={() => run("enable", () => api.setAutoTradingEnabled(session, true), "자동매매 ON 완료:")}>
             {pending === "enable" ? "자동매매 켜는 중..." : "자동매매 ON"}
           </button>
@@ -440,6 +441,56 @@ function Dashboard({ session }: { session: Session }) {
       </div>
       {detail && <DetailOverlay detail={detail} onClose={() => setDetail(null)} />}
     </section>
+  );
+}
+
+function AutoTradingRules({
+  mode,
+  liveOrderEnabled,
+  serverLiveTradingAllowed,
+}: {
+  mode?: "paper" | "live";
+  liveOrderEnabled: boolean;
+  serverLiveTradingAllowed: boolean;
+}) {
+  const liveBlocked = mode === "live" && (!liveOrderEnabled || !serverLiveTradingAllowed);
+  return (
+    <div className="rule-box">
+      <div>
+        <strong>매수 조건</strong>
+        <ul>
+          <li>오늘 공용 시그널 점수 12점 이상</li>
+          <li>14:30~15:20 사이에만 신규 매수</li>
+          <li>점수 높은 순서로 확인하되 장중 가격 필터 통과 필요</li>
+          <li>현재가가 진입가 -0.5%~+2% 범위 안</li>
+          <li>현재가가 일목 기준선 위, 볼린저 상단 아래</li>
+          <li>당일 고점 대비 3% 이상 밀리면 제외</li>
+        </ul>
+      </div>
+      <div>
+        <strong>자금/리스크</strong>
+        <ul>
+          <li>전체 보유 최대 5종목</li>
+          <li>하루 신규 매수 최대 2종목</li>
+          <li>종목당 총자산 18% 이하</li>
+          <li>1회 손실 리스크 총자산 1% 이하</li>
+          <li>주문금액 10만원 미만이면 매수 안 함</li>
+        </ul>
+      </div>
+      <div>
+        <strong>매도 조건</strong>
+        <ul>
+          <li>09:20~15:20 동안 5분 단위 감시</li>
+          <li>손절가 도달 시 전량 매도</li>
+          <li>1차/2차 익절가 도달 시 일부 매도</li>
+          <li>익절 후 추적 손절 도달 시 잔량 매도</li>
+          <li>최대 보유일 도달 시 전량 매도</li>
+        </ul>
+      </div>
+      {liveBlocked && (
+        <p className="rule-warning">실전 계좌는 사용자 실전 주문 허용과 서버 ALLOW_LIVE_TRADING 둘 다 켜져야 주문됩니다.</p>
+      )}
+    </div>
   );
 }
 

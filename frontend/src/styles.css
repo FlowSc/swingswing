@@ -273,6 +273,44 @@ button:disabled {
   line-height: 1.5;
 }
 
+.rule-box {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(31, 93, 58, 0.18);
+  border-radius: 20px;
+  background:
+    linear-gradient(135deg, rgba(201, 240, 90, 0.2), rgba(255, 254, 248, 0.8)),
+    #fffef8;
+}
+
+.rule-box strong {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--green);
+  font-size: 13px;
+}
+
+.rule-box ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.rule-warning {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(167, 59, 36, 0.1);
+  color: var(--red);
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .section-title {
   display: flex;
   align-items: center;
