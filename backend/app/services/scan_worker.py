@@ -33,6 +33,7 @@ async def queue_admin_scan() -> dict:
 
 
 async def reset_stale_running_scans() -> None:
+    logger.info("Scan worker resetting stale running scans")
     await SupabaseRest().patch(
         "scan_runs",
         filters={"status": "eq.running"},
@@ -51,11 +52,14 @@ async def _claim_next_scan() -> dict | None:
     if not rows:
         return None
     scan_run = rows[0]
+    logger.info("Scan worker claiming queued scan: scan_run_id=%s", scan_run["id"])
     patched = await rest.patch(
         "scan_runs",
         filters={"id": f"eq.{scan_run['id']}", "status": "eq.queued"},
-        payload={"status": "running", "error": None},
+        payload={"status": "running", "error": None, "started_at": _now_iso()},
     )
+    if not patched:
+        logger.info("Scan worker claim lost race: scan_run_id=%s", scan_run["id"])
     return patched[0] if patched else None
 
 
@@ -91,6 +95,7 @@ async def _process_scan(scan_run: dict) -> None:
 
 
 async def _worker_loop(stop_event: asyncio.Event) -> None:
+    logger.info("Scan worker loop started")
     await reset_stale_running_scans()
     while not stop_event.is_set():
         scan_run = await _claim_next_scan()
@@ -106,14 +111,17 @@ async def _worker_loop(stop_event: asyncio.Event) -> None:
 def start_scan_worker() -> None:
     global _worker_task, _stop_event
     if _worker_task and not _worker_task.done():
+        logger.info("Scan worker already running")
         return
     _stop_event = asyncio.Event()
     _worker_task = asyncio.create_task(_worker_loop(_stop_event))
+    logger.info("Scan worker task created")
 
 
 async def stop_scan_worker() -> None:
     global _worker_task, _stop_event
     if _stop_event:
+        logger.info("Stopping scan worker")
         _stop_event.set()
     if _worker_task:
         await _worker_task

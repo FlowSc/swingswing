@@ -77,6 +77,7 @@ create table if not exists scan_runs (
   result jsonb not null default '{}'::jsonb,
   error text,
   created_at timestamptz not null default now(),
+  started_at timestamptz,
   finished_at timestamptz
 );
 
@@ -128,6 +129,7 @@ alter table positions add column if not exists take_profit_2_done boolean not nu
 alter table positions add column if not exists broker_account_id uuid;
 alter table trade_logs add column if not exists broker_account_id uuid;
 alter table broker_credentials add column if not exists live_order_enabled boolean not null default false;
+alter table scan_runs add column if not exists started_at timestamptz;
 
 create index if not exists idx_positions_user_account_status on positions (user_id, broker_account_id, status);
 create index if not exists idx_trade_logs_user_account_created_at on trade_logs (user_id, broker_account_id, created_at desc);

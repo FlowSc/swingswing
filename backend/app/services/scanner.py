@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -12,6 +13,7 @@ from app.services.supabase_rest import SupabaseRest
 from app.services.telegram import send_telegram_message
 
 
+logger = logging.getLogger(__name__)
 TOP_N = 30
 MIN_VOLUME_20D = 20000
 MIN_PRICE = 1000
@@ -257,6 +259,7 @@ def _normalize_listing(listing: pd.DataFrame, universe: str) -> pd.DataFrame:
 
 
 def load_scan_universe() -> pd.DataFrame:
+    logger.info("Loading scan universe")
     kospi = fdr.StockListing("KOSPI")
     if "Marcap" in kospi.columns:
         kospi = kospi.sort_values("Marcap", ascending=False).head(KOSPI_MARKET_CAP_LIMIT)
@@ -270,18 +273,26 @@ def load_scan_universe() -> pd.DataFrame:
     except Exception:
         pass
 
-    return pd.concat(frames, ignore_index=True).drop_duplicates("Code")
+    universe = pd.concat(frames, ignore_index=True).drop_duplicates("Code")
+    logger.info("Loaded scan universe: %s symbols", len(universe))
+    return universe
 
 
 def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
     base_date = today or datetime.now(ZoneInfo(get_settings().timezone)).date()
+    logger.info("Signal scan universe load started: date=%s", base_date.isoformat())
     universe = load_scan_universe()
+    logger.info("Signal scan market filter started")
     market_ok = kospi_market_filter_ok(base_date)
+    logger.info("Signal scan market filter completed: market_ok=%s", market_ok)
     start = (datetime.combine(base_date, datetime.min.time()) - timedelta(days=420)).strftime("%Y-%m-%d")
     results: list[dict] = []
 
-    for _, row in universe.iterrows():
+    total = len(universe)
+    for index, (_, row) in enumerate(universe.iterrows(), start=1):
         try:
+            if index == 1 or index % 50 == 0:
+                logger.info("Signal scan progress: %s/%s candidates=%s", index, total, len(results))
             raw = fdr.DataReader(row["Code"], start=start)
             result = score_swing_setup(
                 raw,
@@ -293,8 +304,10 @@ def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
             if result:
                 results.append(result)
         except Exception:
+            logger.debug("Signal scan skipped code=%s", row.get("Code"), exc_info=True)
             continue
 
+    logger.info("Signal scan scoring completed: scanned=%s candidates=%s", total, len(results))
     results.sort(
         key=lambda item: (
             item.get("Score", 0),
