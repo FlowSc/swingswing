@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -156,6 +156,8 @@ async def backtest_shared_signals(
     max_signals: int = Query(200, ge=10, le=1000),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
+    if (user.email or "").lower() != get_settings().scan_admin_email.lower():
+        raise HTTPException(status_code=403, detail="Backtest is available to admin only.")
     return await run_shared_signal_backtest(days=days, max_signals=max_signals)
 
 

@@ -579,13 +579,15 @@ function Dashboard({ session }: { session: Session }) {
             row,
           })}
         />
-        <BacktestPanel
-          result={backtest}
-          days={backtestDays}
-          pending={pending === "backtest"}
-          onDaysChange={setBacktestDays}
-          onRun={runBacktest}
-        />
+        {isScanAdmin && (
+          <BacktestPanel
+            result={backtest}
+            days={backtestDays}
+            pending={pending === "backtest"}
+            onDaysChange={setBacktestDays}
+            onRun={runBacktest}
+          />
+        )}
       </div>
       <AutoTradingRules strategy={strategy} mode={brokerStatus?.mode} liveOrderEnabled={brokerStatus?.live_order_enabled || false} serverLiveTradingAllowed={brokerStatus?.server_live_trading_allowed || false} />
       {detail && <DetailOverlay detail={detail} onClose={() => setDetail(null)} />}
