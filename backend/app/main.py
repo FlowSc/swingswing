@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+import logging
+import sys
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,9 +11,19 @@ from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.scan_worker import start_scan_worker, stop_scan_worker
 
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True,
+)
+logging.getLogger("app").setLevel(logging.INFO)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    logging.getLogger(__name__).warning("Application startup: scheduler_enabled=%s", settings.scheduler_enabled)
     start_scan_worker()
     if settings.scheduler_enabled:
         start_scheduler()

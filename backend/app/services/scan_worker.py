@@ -22,6 +22,7 @@ def _now_iso() -> str:
 
 async def queue_admin_scan() -> dict:
     settings = get_settings()
+    logger.warning("Queueing admin signal scan: admin_email=%s", settings.scan_admin_email)
     admin = await SupabaseRest().find_user_by_email(settings.scan_admin_email)
     if not admin:
         raise RuntimeError(f"Scan admin not found: {settings.scan_admin_email}")
@@ -29,11 +30,12 @@ async def queue_admin_scan() -> dict:
         "scan_runs",
         {"requested_by": admin["id"], "status": "queued"},
     )
+    logger.warning("Queued signal scan: scan_run_id=%s user_id=%s", rows[0]["id"], admin["id"])
     return rows[0]
 
 
 async def reset_stale_running_scans() -> None:
-    logger.info("Scan worker resetting stale running scans")
+    logger.warning("Scan worker resetting stale running scans")
     await SupabaseRest().patch(
         "scan_runs",
         filters={"status": "eq.running"},
@@ -52,14 +54,14 @@ async def _claim_next_scan() -> dict | None:
     if not rows:
         return None
     scan_run = rows[0]
-    logger.info("Scan worker claiming queued scan: scan_run_id=%s", scan_run["id"])
+    logger.warning("Scan worker claiming queued scan: scan_run_id=%s", scan_run["id"])
     patched = await rest.patch(
         "scan_runs",
         filters={"id": f"eq.{scan_run['id']}", "status": "eq.queued"},
         payload={"status": "running", "error": None, "started_at": _now_iso()},
     )
     if not patched:
-        logger.info("Scan worker claim lost race: scan_run_id=%s", scan_run["id"])
+        logger.warning("Scan worker claim lost race: scan_run_id=%s", scan_run["id"])
     return patched[0] if patched else None
 
 
@@ -70,7 +72,7 @@ async def _process_scan(scan_run: dict) -> None:
     try:
         credentials = await get_broker_credentials(user_id)
         telegram_chat_id = credentials.get("telegram_chat_id") if credentials else None
-        logger.info("Signal scan started: scan_run_id=%s user_id=%s", scan_run_id, user_id)
+        logger.warning("Signal scan started: scan_run_id=%s user_id=%s", scan_run_id, user_id)
         result = await scan_and_store_for_user(user_id, telegram_chat_id)
         await rest.patch(
             "scan_runs",
@@ -84,7 +86,7 @@ async def _process_scan(scan_run: dict) -> None:
                 "finished_at": _now_iso(),
             },
         )
-        logger.info("Signal scan completed: %s", result)
+        logger.warning("Signal scan completed: %s", result)
     except Exception as exc:
         await rest.patch(
             "scan_runs",
@@ -95,7 +97,7 @@ async def _process_scan(scan_run: dict) -> None:
 
 
 async def _worker_loop(stop_event: asyncio.Event) -> None:
-    logger.info("Scan worker loop started")
+    logger.warning("Scan worker loop started")
     await reset_stale_running_scans()
     while not stop_event.is_set():
         scan_run = await _claim_next_scan()
@@ -111,17 +113,17 @@ async def _worker_loop(stop_event: asyncio.Event) -> None:
 def start_scan_worker() -> None:
     global _worker_task, _stop_event
     if _worker_task and not _worker_task.done():
-        logger.info("Scan worker already running")
+        logger.warning("Scan worker already running")
         return
     _stop_event = asyncio.Event()
     _worker_task = asyncio.create_task(_worker_loop(_stop_event))
-    logger.info("Scan worker task created")
+    logger.warning("Scan worker task created")
 
 
 async def stop_scan_worker() -> None:
     global _worker_task, _stop_event
     if _stop_event:
-        logger.info("Stopping scan worker")
+        logger.warning("Stopping scan worker")
         _stop_event.set()
     if _worker_task:
         await _worker_task
