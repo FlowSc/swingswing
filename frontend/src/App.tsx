@@ -387,7 +387,6 @@ function Dashboard({ session }: { session: Session }) {
         <div className="panel command">
           <h2>자동매매</h2>
           <p className="command-copy">현재 활성 계정 기준으로 주문 감시를 켜거나 끕니다. 오늘 시그널은 관리자가 생성한 공용 스캔 데이터를 표시합니다.</p>
-          <AutoTradingRules mode={brokerStatus?.mode} liveOrderEnabled={brokerStatus?.live_order_enabled || false} serverLiveTradingAllowed={brokerStatus?.server_live_trading_allowed || false} />
           <button disabled={pending !== null || !brokerStatus?.configured || brokerStatus?.enabled} onClick={() => run("enable", () => api.setAutoTradingEnabled(session, true), "자동매매 ON 완료:")}>
             {pending === "enable" ? "자동매매 켜는 중..." : "자동매매 ON"}
           </button>
@@ -413,7 +412,7 @@ function Dashboard({ session }: { session: Session }) {
         <DataPanel
           title={selectedSignalDate ? `${selectedSignalDate} 시그널` : "시그널"}
           rows={signals}
-          columns={["code", "name", "entry", "stop_loss", "take_profit_2", "score"]}
+          columns={["score", "code", "name", "entry", "stop_loss", "take_profit_2"]}
           maxRows={30}
           headerAction={signalDates.length > 0 ? (
             <select className="compact-select" value={selectedSignalDate} onChange={(event) => changeSignalDate(event.target.value)}>
@@ -439,6 +438,7 @@ function Dashboard({ session }: { session: Session }) {
           })}
         />
       </div>
+      <AutoTradingRules mode={brokerStatus?.mode} liveOrderEnabled={brokerStatus?.live_order_enabled || false} serverLiveTradingAllowed={brokerStatus?.server_live_trading_allowed || false} />
       {detail && <DetailOverlay detail={detail} onClose={() => setDetail(null)} />}
     </section>
   );
