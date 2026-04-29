@@ -129,3 +129,13 @@ class SupabaseRest:
             )
             self._raise_for_status(response)
             return response.json()
+
+    async def rpc(self, function_name: str, payload: dict[str, Any]) -> Any:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                f"{self.base_url}/rest/v1/rpc/{function_name}",
+                headers=self._headers(),
+                json=payload,
+            )
+            self._raise_for_status(response)
+            return response.json()

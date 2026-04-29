@@ -203,6 +203,38 @@ function Dashboard({ session }: { session: Session }) {
     }, "KIS 계좌 조회 완료:");
   }
 
+  async function startScan() {
+    setPending("scan");
+    setStatus({ type: "info", message: "스캔 요청 중..." });
+    try {
+      const queued = await api.scan(session);
+      setStatus({ type: "info", message: `스캔 시작됨. 작업 ID: ${queued.scan_run_id}` });
+      await pollScanRun(queued.scan_run_id);
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function pollScanRun(scanRunId: number) {
+    for (let index = 0; index < 120; index += 1) {
+      await delay(5000);
+      const latest = await api.latestScanRun(session);
+      if (!latest || latest.id !== scanRunId) continue;
+      if (latest.status === "completed") {
+        setStatus({ type: "info", message: `스캔 완료: ${latest.trade_date || "-"} / 후보 ${latest.signals_count}개 / 저장 ${latest.shared_saved}개` });
+        await refresh();
+        return;
+      }
+      if (latest.status === "failed") {
+        throw new Error(latest.error || "스캔 실패");
+      }
+      setStatus({ type: "info", message: `스캔 진행 중... 작업 ID: ${scanRunId}` });
+    }
+    setStatus({ type: "info", message: "스캔이 아직 진행 중입니다. 잠시 후 날짜별 시그널을 새로고침하세요." });
+  }
+
   async function refresh() {
     try {
       const [brokerResult, accountResult, dateResult, positionResult, logResult] = await Promise.all([
@@ -377,7 +409,7 @@ function Dashboard({ session }: { session: Session }) {
             {pending === "account" ? "계좌 조회 중..." : "KIS 계좌 조회"}
           </button>
           {isScanAdmin ? (
-            <button disabled={pending !== null} onClick={() => run("scan", () => api.scan(session), "스캔 완료:")}>
+            <button disabled={pending !== null} onClick={startScan}>
               {pending === "scan" ? "스캔 중... 1분 정도 걸림" : "오늘 시그널 스캔"}
             </button>
           ) : (
@@ -796,4 +828,8 @@ function formatDateTime(value: unknown) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
