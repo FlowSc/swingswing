@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { api, type BrokerAccount, type BrokerPayload, type BrokerStatus, type KisAccount } from "./api";
+import { api, type BrokerAccount, type BrokerPayload, type BrokerStatus, type KisAccount, type StrategyPreset, type StrategySettings } from "./api";
 import { supabase } from "./supabase";
 
 type AuthMode = "login" | "signup";
@@ -16,6 +16,53 @@ const emptyBroker: BrokerPayload = {
   mode: "paper",
   live_order_enabled: false,
 };
+
+const strategyPresets: Record<StrategyPreset, StrategySettings> = {
+  conservative: {
+    preset: "conservative",
+    min_score: 13,
+    max_open_positions: 4,
+    max_new_positions_per_day: 1,
+    position_capital_pct: 0.12,
+    risk_per_trade_pct: 0.007,
+    min_order_amount: 100000,
+    min_entry_discount: 0.995,
+    max_entry_premium: 1.015,
+    max_pullback_from_day_high: 0.02,
+    use_kijun_filter: true,
+    use_bb_upper_filter: true,
+  },
+  balanced: {
+    preset: "balanced",
+    min_score: 12,
+    max_open_positions: 5,
+    max_new_positions_per_day: 2,
+    position_capital_pct: 0.18,
+    risk_per_trade_pct: 0.01,
+    min_order_amount: 100000,
+    min_entry_discount: 0.995,
+    max_entry_premium: 1.02,
+    max_pullback_from_day_high: 0.03,
+    use_kijun_filter: true,
+    use_bb_upper_filter: true,
+  },
+  aggressive: {
+    preset: "aggressive",
+    min_score: 10,
+    max_open_positions: 7,
+    max_new_positions_per_day: 3,
+    position_capital_pct: 0.25,
+    risk_per_trade_pct: 0.015,
+    min_order_amount: 100000,
+    min_entry_discount: 0.99,
+    max_entry_premium: 1.03,
+    max_pullback_from_day_high: 0.04,
+    use_kijun_filter: true,
+    use_bb_upper_filter: true,
+  },
+};
+
+const defaultStrategy = strategyPresets.balanced;
 
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -132,6 +179,7 @@ function Dashboard({ session }: { session: Session }) {
   const [positions, setPositions] = useState<Array<Record<string, unknown>>>([]);
   const [logs, setLogs] = useState<Array<Record<string, unknown>>>([]);
   const [kisAccount, setKisAccount] = useState<KisAccount | null>(null);
+  const [strategy, setStrategy] = useState<StrategySettings>(defaultStrategy);
   const [autoLoadedAccountKey, setAutoLoadedAccountKey] = useState("");
   const [detail, setDetail] = useState<DetailSelection | null>(null);
   const [pending, setPending] = useState<string | null>(null);
@@ -228,9 +276,10 @@ function Dashboard({ session }: { session: Session }) {
 
   async function refresh() {
     try {
-      const [brokerResult, accountResult, dateResult, positionResult, logResult] = await Promise.all([
+      const [brokerResult, accountResult, strategyResult, dateResult, positionResult, logResult] = await Promise.all([
         api.getBrokerStatus(session),
         api.getBrokerAccounts(session),
+        api.getStrategy(session),
         api.signalDates(session),
         api.positions(session),
         api.tradeLogs(session),
@@ -239,6 +288,7 @@ function Dashboard({ session }: { session: Session }) {
       const signalResult = nextSignalDate ? await api.signalsByDate(session, nextSignalDate) : [];
       setBrokerStatus(brokerResult);
       setBrokerAccounts(accountResult);
+      setStrategy(strategyResult);
       setSignalDates(dateResult);
       setSelectedSignalDate(nextSignalDate);
       if (brokerResult.configured) {
@@ -272,6 +322,14 @@ function Dashboard({ session }: { session: Session }) {
     setKisAccount(null);
     setAutoLoadedAccountKey("");
     await run("accountSwitch", () => api.activateBrokerAccount(session, accountId), "활성 계좌 변경 완료:");
+  }
+
+  function applyStrategyPreset(preset: StrategyPreset) {
+    setStrategy(strategyPresets[preset]);
+  }
+
+  async function saveStrategy() {
+    await run("strategy", () => api.saveStrategy(session, strategy), "전략 설정 저장 완료:");
   }
 
   async function changeSignalDate(tradeDate: string) {
@@ -410,6 +468,14 @@ function Dashboard({ session }: { session: Session }) {
         </div>
       </div>
 
+      <StrategyPanel
+        strategy={strategy}
+        pending={pending === "strategy"}
+        onPresetChange={applyStrategyPreset}
+        onChange={setStrategy}
+        onSave={saveStrategy}
+      />
+
       <div className="grid">
         <DataPanel
           title={selectedSignalDate ? `${selectedSignalDate} 시그널` : "시그널"}
@@ -444,17 +510,124 @@ function Dashboard({ session }: { session: Session }) {
           })}
         />
       </div>
-      <AutoTradingRules mode={brokerStatus?.mode} liveOrderEnabled={brokerStatus?.live_order_enabled || false} serverLiveTradingAllowed={brokerStatus?.server_live_trading_allowed || false} />
+      <AutoTradingRules strategy={strategy} mode={brokerStatus?.mode} liveOrderEnabled={brokerStatus?.live_order_enabled || false} serverLiveTradingAllowed={brokerStatus?.server_live_trading_allowed || false} />
       {detail && <DetailOverlay detail={detail} onClose={() => setDetail(null)} />}
     </section>
   );
 }
 
+function StrategyPanel({
+  strategy,
+  pending,
+  onPresetChange,
+  onChange,
+  onSave,
+}: {
+  strategy: StrategySettings;
+  pending: boolean;
+  onPresetChange: (preset: StrategyPreset) => void;
+  onChange: (strategy: StrategySettings) => void;
+  onSave: () => void;
+}) {
+  const updateNumber = (key: keyof StrategySettings, value: string) => {
+    onChange({ ...strategy, [key]: Number(value) });
+  };
+  return (
+    <div className="panel strategy-panel">
+      <div className="section-title">
+        <div>
+          <h2>전략 설정</h2>
+          <p className="command-copy">공용 시그널은 그대로 쓰고, 내 계좌의 자동매매 실행 조건만 조정합니다.</p>
+        </div>
+        <button className="primary" type="button" disabled={pending} onClick={onSave}>
+          {pending ? "저장 중..." : "전략 저장"}
+        </button>
+      </div>
+
+      <div className="preset-row">
+        {(["conservative", "balanced", "aggressive"] as StrategyPreset[]).map((preset) => (
+          <button
+            key={preset}
+            type="button"
+            className={strategy.preset === preset ? "preset-chip active" : "preset-chip"}
+            onClick={() => onPresetChange(preset)}
+          >
+            {presetLabel(preset)}
+          </button>
+        ))}
+      </div>
+
+      <div className="strategy-grid">
+        <label>
+          최소 점수
+          <input type="number" step="0.5" value={strategy.min_score} onChange={(event) => updateNumber("min_score", event.target.value)} />
+        </label>
+        <label>
+          최대 보유 종목
+          <input type="number" min="1" value={strategy.max_open_positions} onChange={(event) => updateNumber("max_open_positions", event.target.value)} />
+        </label>
+        <label>
+          하루 신규 매수
+          <input type="number" min="1" value={strategy.max_new_positions_per_day} onChange={(event) => updateNumber("max_new_positions_per_day", event.target.value)} />
+        </label>
+        <label>
+          종목당 최대 비중
+          <input type="number" step="0.01" value={strategy.position_capital_pct} onChange={(event) => updateNumber("position_capital_pct", event.target.value)} />
+        </label>
+        <label>
+          1회 리스크 비중
+          <input type="number" step="0.001" value={strategy.risk_per_trade_pct} onChange={(event) => updateNumber("risk_per_trade_pct", event.target.value)} />
+        </label>
+        <label>
+          최소 주문금액
+          <input type="number" step="10000" value={strategy.min_order_amount} onChange={(event) => updateNumber("min_order_amount", event.target.value)} />
+        </label>
+        <label>
+          진입가 하단 배율
+          <input type="number" step="0.001" value={strategy.min_entry_discount} onChange={(event) => updateNumber("min_entry_discount", event.target.value)} />
+        </label>
+        <label>
+          진입가 상단 배율
+          <input type="number" step="0.001" value={strategy.max_entry_premium} onChange={(event) => updateNumber("max_entry_premium", event.target.value)} />
+        </label>
+        <label>
+          고점 이탈 허용
+          <input type="number" step="0.005" value={strategy.max_pullback_from_day_high} onChange={(event) => updateNumber("max_pullback_from_day_high", event.target.value)} />
+        </label>
+      </div>
+
+      <div className="strategy-checks">
+        <label className="check-row">
+          <input type="checkbox" checked={strategy.use_kijun_filter} onChange={(event) => onChange({ ...strategy, use_kijun_filter: event.target.checked })} />
+          일목 기준선 필터 사용
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={strategy.use_bb_upper_filter} onChange={(event) => onChange({ ...strategy, use_bb_upper_filter: event.target.checked })} />
+          볼린저 상단 필터 사용
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function presetLabel(preset: StrategyPreset) {
+  if (preset === "conservative") return "보수적";
+  if (preset === "aggressive") return "공격적";
+  return "기본";
+}
+
+function formatPct(value: number) {
+  const rounded = (value * 100).toFixed(1).replace(/\.0$/, "");
+  return `${rounded}%`;
+}
+
 function AutoTradingRules({
+  strategy,
   mode,
   liveOrderEnabled,
   serverLiveTradingAllowed,
 }: {
+  strategy: StrategySettings;
   mode?: "paper" | "live";
   liveOrderEnabled: boolean;
   serverLiveTradingAllowed: boolean;
@@ -465,22 +638,22 @@ function AutoTradingRules({
       <div>
         <strong>매수 조건</strong>
         <ul>
-          <li>오늘 공용 시그널 점수 12점 이상</li>
+          <li>오늘 공용 시그널 점수 {strategy.min_score}점 이상</li>
           <li>14:30~15:20 사이에만 신규 매수</li>
           <li>점수 높은 순서로 확인하되 장중 가격 필터 통과 필요</li>
-          <li>현재가가 진입가 -0.5%~+2% 범위 안</li>
-          <li>현재가가 일목 기준선 위, 볼린저 상단 아래</li>
-          <li>당일 고점 대비 3% 이상 밀리면 제외</li>
+          <li>현재가가 진입가 {formatPct(strategy.min_entry_discount - 1)}~+{formatPct(strategy.max_entry_premium - 1)} 범위 안</li>
+          <li>일목 기준선 필터 {strategy.use_kijun_filter ? "사용" : "미사용"}, 볼린저 상단 필터 {strategy.use_bb_upper_filter ? "사용" : "미사용"}</li>
+          <li>당일 고점 대비 {formatPct(strategy.max_pullback_from_day_high)} 이상 밀리면 제외</li>
         </ul>
       </div>
       <div>
         <strong>자금/리스크</strong>
         <ul>
-          <li>전체 보유 최대 5종목</li>
-          <li>하루 신규 매수 최대 2종목</li>
-          <li>종목당 총자산 18% 이하</li>
-          <li>1회 손실 리스크 총자산 1% 이하</li>
-          <li>주문금액 10만원 미만이면 매수 안 함</li>
+          <li>전체 보유 최대 {strategy.max_open_positions}종목</li>
+          <li>하루 신규 매수 최대 {strategy.max_new_positions_per_day}종목</li>
+          <li>종목당 총자산 {formatPct(strategy.position_capital_pct)} 이하</li>
+          <li>1회 손실 리스크 총자산 {formatPct(strategy.risk_per_trade_pct)} 이하</li>
+          <li>주문금액 {Number(strategy.min_order_amount).toLocaleString()}원 미만이면 매수 안 함</li>
         </ul>
       </div>
       <div>
@@ -507,6 +680,7 @@ function labelForPending(key: string) {
     disable: "자동매매 OFF",
     account: "KIS 계좌 조회",
     accountSwitch: "활성 계좌 변경",
+    strategy: "전략 설정 저장",
     scan: "오늘 시그널 스캔",
     signals: "시그널 조회",
   };

@@ -5,9 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
-from app.schemas.bot import BotControlIn, BotControlOut, WatchTickIn
+from app.schemas.bot import BotControlIn, BotControlOut, StrategySettingsIn, StrategySettingsOut, WatchTickIn
 from app.services.broker_credentials import get_broker_credentials, get_decrypted_broker_credentials, set_bot_enabled
 from app.services.scanner import finalize_chunked_scan, prepare_chunked_scan_state, process_scan_chunk
+from app.services.strategy_settings import get_strategy_settings, save_strategy_settings
 from app.services.supabase_rest import SupabaseRest
 from app.services.watcher import run_watch_tick_for_user
 
@@ -32,6 +33,19 @@ async def control_bot(
 ) -> BotControlOut:
     row = await set_bot_enabled(user.id, payload.enabled)
     return BotControlOut(user_id=row["user_id"], enabled=row["enabled"])
+
+
+@router.get("/strategy", response_model=StrategySettingsOut)
+async def strategy_settings(user: CurrentUser = Depends(get_current_user)) -> StrategySettingsOut:
+    return StrategySettingsOut(**await get_strategy_settings(user.id))
+
+
+@router.put("/strategy", response_model=StrategySettingsOut)
+async def update_strategy_settings(
+    payload: StrategySettingsIn,
+    user: CurrentUser = Depends(get_current_user),
+) -> StrategySettingsOut:
+    return StrategySettingsOut(**await save_strategy_settings(user.id, payload.model_dump()))
 
 
 @router.post("/scan")

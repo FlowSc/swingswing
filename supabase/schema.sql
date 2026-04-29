@@ -83,6 +83,24 @@ create table if not exists scan_runs (
   finished_at timestamptz
 );
 
+create table if not exists strategy_settings (
+  user_id uuid primary key,
+  preset text not null default 'balanced',
+  min_score numeric not null default 12,
+  max_open_positions integer not null default 5,
+  max_new_positions_per_day integer not null default 2,
+  position_capital_pct numeric not null default 0.18,
+  risk_per_trade_pct numeric not null default 0.01,
+  min_order_amount integer not null default 100000,
+  min_entry_discount numeric not null default 0.995,
+  max_entry_premium numeric not null default 1.02,
+  max_pullback_from_day_high numeric not null default 0.03,
+  use_kijun_filter boolean not null default true,
+  use_bb_upper_filter boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists positions (
   id bigint generated always as identity primary key,
   user_id uuid not null,
@@ -189,6 +207,7 @@ alter table broker_accounts enable row level security;
 alter table signals enable row level security;
 alter table shared_signals enable row level security;
 alter table scan_runs enable row level security;
+alter table strategy_settings enable row level security;
 alter table positions enable row level security;
 alter table trade_logs enable row level security;
 
@@ -216,6 +235,11 @@ drop policy if exists "Users can read scan runs" on scan_runs;
 create policy "Users can read scan runs"
   on scan_runs for select
   using (auth.uid() is not null);
+
+drop policy if exists "Users can read own strategy settings" on strategy_settings;
+create policy "Users can read own strategy settings"
+  on strategy_settings for select
+  using (auth.uid() = user_id);
 
 drop policy if exists "Users can read own positions" on positions;
 create policy "Users can read own positions"

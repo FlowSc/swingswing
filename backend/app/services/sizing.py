@@ -10,22 +10,31 @@ MIN_SCORE = 12
 DEFAULT_CAPITAL = 10_000_000
 
 
-def calculate_order_qty(signal: dict, *, cash: int, total_equity: int, available_slots: int) -> tuple[int, dict[str, float]]:
+def calculate_order_qty(
+    signal: dict,
+    *,
+    cash: int,
+    total_equity: int,
+    available_slots: int,
+    position_capital_pct: float = POSITION_CAPITAL_PCT,
+    risk_per_trade_pct: float = RISK_PER_TRADE_PCT,
+    min_order_amount: int = MIN_ORDER_AMOUNT,
+) -> tuple[int, dict[str, float]]:
     price = int(round(float(signal["entry"])))
     stop_loss = float(signal["stop_loss"])
     per_share_risk = max(price - stop_loss, 0)
     if price <= 0 or per_share_risk <= 0:
         return 0, {}
 
-    max_position_capital = total_equity * POSITION_CAPITAL_PCT
-    max_risk_capital = total_equity * RISK_PER_TRADE_PCT
+    max_position_capital = total_equity * position_capital_pct
+    max_risk_capital = total_equity * risk_per_trade_pct
     slot_cash_capital = cash / max(available_slots, 1)
     usable_capital = min(max_position_capital, slot_cash_capital, cash)
 
     qty_by_capital = int(usable_capital // price)
     qty_by_risk = int(max_risk_capital // per_share_risk)
     qty = min(qty_by_capital, qty_by_risk)
-    if qty * price < MIN_ORDER_AMOUNT:
+    if qty * price < min_order_amount:
         return 0, {
             "price": float(price),
             "per_share_risk": per_share_risk,

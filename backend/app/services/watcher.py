@@ -15,11 +15,9 @@ from app.services.kis import (
 )
 from app.services.sizing import (
     DEFAULT_CAPITAL,
-    MAX_NEW_POSITIONS_PER_DAY,
-    MAX_OPEN_POSITIONS,
-    MIN_SCORE,
     calculate_order_qty,
 )
+from app.services.strategy_settings import get_strategy_settings
 from app.services.supabase_rest import SupabaseRest
 from app.services.telegram import send_telegram_message
 
@@ -30,9 +28,6 @@ MANAGE_START = time(9, 20)
 MANAGE_END = time(15, 20)
 QUOTE_DELAY_SECONDS = 1.0
 QUOTE_ERROR_BACKOFF_SECONDS = 3.0
-MAX_ENTRY_PREMIUM = 1.02
-MIN_ENTRY_DISCOUNT = 0.995
-MAX_PULLBACK_FROM_DAY_HIGH = 0.03
 REASON_LABELS = {
     "IntradayEntry": "장중 진입 조건 충족",
     "StopLoss": "손절가 도달",
@@ -104,7 +99,7 @@ async def get_quote_safe(client, code: str) -> dict[str, int] | None:
         return None
 
 
-def passes_intraday_entry_filter(signal: dict, quote: dict[str, int]) -> tuple[bool, str]:
+def passes_intraday_entry_filter(signal: dict, quote: dict[str, int], strategy: dict) -> tuple[bool, str]:
     raw = signal.get("raw") or {}
     current_price = quote["current_price"]
     day_high = quote.get("day_high") or current_price
@@ -112,15 +107,15 @@ def passes_intraday_entry_filter(signal: dict, quote: dict[str, int]) -> tuple[b
     kijun = float(raw.get("Kijun") or 0)
     bb_upper = float(raw.get("BBUpper") or entry * 1.1)
 
-    if current_price < entry * MIN_ENTRY_DISCOUNT:
+    if current_price < entry * float(strategy["min_entry_discount"]):
         return False, "BelowEntryBand"
-    if current_price > entry * MAX_ENTRY_PREMIUM:
+    if current_price > entry * float(strategy["max_entry_premium"]):
         return False, "AboveEntryBand"
-    if kijun > 0 and current_price < kijun:
+    if strategy.get("use_kijun_filter", True) and kijun > 0 and current_price < kijun:
         return False, "BelowKijun"
-    if current_price > bb_upper:
+    if strategy.get("use_bb_upper_filter", True) and current_price > bb_upper:
         return False, "AboveBBUpper"
-    if day_high > 0 and current_price < day_high * (1 - MAX_PULLBACK_FROM_DAY_HIGH):
+    if day_high > 0 and current_price < day_high * (1 - float(strategy["max_pullback_from_day_high"])):
         return False, "PulledBackFromDayHigh"
     return True, "IntradayEntry"
 
@@ -260,18 +255,19 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
 
     cash = extract_cash(balance)
     total_equity = extract_total_equity(balance)
+    strategy = await get_strategy_settings(user_id)
     kis_codes = kis_holding_codes(balance)
     open_codes = {position["code"] for position in positions}
     blocked_codes = open_codes | kis_codes
-    available_slots = max(0, MAX_OPEN_POSITIONS - len(open_codes) - len(kis_codes))
-    daily_slots = min(MAX_NEW_POSITIONS_PER_DAY, available_slots)
+    available_slots = max(0, int(strategy["max_open_positions"]) - len(open_codes) - len(kis_codes))
+    daily_slots = min(int(strategy["max_new_positions_per_day"]), available_slots)
     if daily_slots <= 0:
         return []
 
     candidates = [
         signal
         for signal in signals
-        if signal["code"] not in blocked_codes and float(signal.get("score") or 0) >= MIN_SCORE
+        if signal["code"] not in blocked_codes and float(signal.get("score") or 0) >= float(strategy["min_score"])
     ]
 
     actions: list[dict] = []
@@ -285,7 +281,7 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
             continue
         current_price = quote["current_price"]
         raw = signal.get("raw") or {}
-        passed, reason = passes_intraday_entry_filter(signal, quote)
+        passed, reason = passes_intraday_entry_filter(signal, quote, strategy)
         if not passed:
             continue
 
@@ -295,6 +291,9 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
             cash=cash,
             total_equity=max(total_equity, DEFAULT_CAPITAL),
             available_slots=daily_slots,
+            position_capital_pct=float(strategy["position_capital_pct"]),
+            risk_per_trade_pct=float(strategy["risk_per_trade_pct"]),
+            min_order_amount=int(strategy["min_order_amount"]),
         )
         if qty <= 0:
             continue

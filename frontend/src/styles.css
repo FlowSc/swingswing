@@ -333,6 +333,40 @@ a {
   font-weight: 800;
 }
 
+.strategy-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.strategy-panel .section-title {
+  margin-bottom: 0;
+}
+
+.preset-row,
+.strategy-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.preset-chip {
+  border: 1px solid var(--line);
+  background: #fffef8;
+  color: var(--ink);
+}
+
+.preset-chip.active {
+  border-color: var(--green);
+  background: var(--lime);
+  color: #172213;
+}
+
+.strategy-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .section-title {
   display: flex;
   align-items: center;

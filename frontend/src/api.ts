@@ -104,6 +104,24 @@ export type ScanStartResult = {
   message: string;
 };
 
+export type StrategyPreset = "conservative" | "balanced" | "aggressive";
+
+export type StrategySettings = {
+  user_id?: string;
+  preset: StrategyPreset;
+  min_score: number;
+  max_open_positions: number;
+  max_new_positions_per_day: number;
+  position_capital_pct: number;
+  risk_per_trade_pct: number;
+  min_order_amount: number;
+  min_entry_discount: number;
+  max_entry_premium: number;
+  max_pullback_from_day_high: number;
+  use_kijun_filter: boolean;
+  use_bb_upper_filter: boolean;
+};
+
 export const api = {
   getBrokerStatus: (session: Session) => request<BrokerStatus>("/broker/kis/status", session),
   getBrokerAccounts: (session: Session) => request<BrokerAccount[]>("/broker/kis/accounts", session),
@@ -114,6 +132,9 @@ export const api = {
   getKisAccount: (session: Session) => request<KisAccount>("/broker/kis/account", session),
   setAutoTradingEnabled: (session: Session, enabled: boolean) =>
     request("/bot/control", session, { method: "POST", body: JSON.stringify({ enabled }) }),
+  getStrategy: (session: Session) => request<StrategySettings>("/bot/strategy", session),
+  saveStrategy: (session: Session, payload: StrategySettings) =>
+    request<StrategySettings>("/bot/strategy", session, { method: "PUT", body: JSON.stringify(payload) }),
   scan: (session: Session) => request<ScanStartResult>("/bot/scan", session, { method: "POST" }),
   scanStep: (session: Session, scanRunId: number) => request<ScanRun>(`/bot/scan-runs/${scanRunId}/step`, session, { method: "POST" }),
   latestScanRun: (session: Session) => request<ScanRun | null>("/bot/scan-runs/latest", session),
