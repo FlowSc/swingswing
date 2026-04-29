@@ -6,4 +6,7 @@ export default defineConfig({
   server: {
     port: 5173,
   },
+  preview: {
+    allowedHosts: ["swingswing-production-90b1.up.railway.app"],
+  },
 });
