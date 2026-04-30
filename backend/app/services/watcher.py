@@ -11,7 +11,9 @@ from app.services.kis import (
     extract_cash,
     extract_total_equity,
     kis_holding_codes,
+    parse_holdings,
     parse_current_price,
+    parse_order_identifiers,
     parse_quote,
 )
 from app.services.sizing import (
@@ -20,7 +22,7 @@ from app.services.sizing import (
 )
 from app.services.strategy_settings import get_strategy_settings
 from app.services.supabase_rest import SupabaseRest
-from app.services.telegram import send_telegram_message
+from app.services.telegram import send_telegram_message_with_bot
 
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,7 @@ MANAGE_START = time(9, 20)
 MANAGE_END = time(15, 20)
 QUOTE_DELAY_SECONDS = 1.0
 QUOTE_ERROR_BACKOFF_SECONDS = 3.0
+OPEN_PENDING_STATUSES = {"OPEN", "CANCEL_FAILED"}
 REASON_LABELS = {
     "IntradayEntry": "장중 진입 조건 충족",
     "StopLoss": "손절가 도달",
@@ -46,6 +49,13 @@ REASON_LABELS = {
     "BelowKijun": "현재가가 일목 기준선 아래",
     "AboveBBUpper": "현재가가 볼린저 상단 위",
     "PulledBackFromDayHigh": "당일 고점 대비 과도하게 밀림",
+    "PendingOrderExists": "미체결 주문 대기 중",
+    "OrderPending": "주문 접수 후 체결 대기",
+    "OrderFilled": "계좌 잔고 기준 체결 확인",
+    "OrderCanceled": "장마감 전 미체결 주문 취소",
+    "OrderCancelFailed": "미체결 주문 취소 실패",
+    "PositionSynced": "계좌 잔고 기준 포지션 수량 동기화",
+    "PositionClosedByBalance": "계좌 잔고 기준 포지션 종료",
     "QuoteFailed": "현재가 조회 실패",
     "InvalidQuote": "현재가 값 비정상",
     "SizingRejected": "수량/리스크/최소주문금액 조건 미충족",
@@ -225,6 +235,175 @@ async def today_signals() -> list[dict]:
     )
 
 
+async def open_pending_orders(user_id: str, broker_account_id: str | None) -> list[dict]:
+    filters = {"user_id": f"eq.{user_id}"}
+    if broker_account_id:
+        filters["broker_account_id"] = f"eq.{broker_account_id}"
+    orders = await SupabaseRest().select("pending_orders", filters=filters, order="created_at.asc")
+    return [order for order in orders if order.get("status") in OPEN_PENDING_STATUSES]
+
+
+async def insert_pending_order(
+    user_id: str,
+    broker_account_id: str | None,
+    *,
+    side: str,
+    source: dict,
+    qty: int,
+    price: int,
+    response: dict,
+    reason: str,
+    raw: dict | None = None,
+) -> None:
+    identifiers = parse_order_identifiers(response)
+    await SupabaseRest().insert(
+        "pending_orders",
+        {
+            "user_id": user_id,
+            "broker_account_id": broker_account_id,
+            "side": side,
+            "code": source["code"],
+            "name": source.get("name"),
+            "qty": qty,
+            "price": price,
+            "order_no": identifiers.get("order_no"),
+            "order_org_no": identifiers.get("order_org_no"),
+            "status": "OPEN",
+            "reason": reason_label(reason),
+            "raw": {
+                **(raw or {}),
+                "reason_code": reason,
+                "reason_ko": reason_label(reason),
+                "order": response,
+                "order_identifiers": identifiers,
+            },
+        },
+    )
+
+
+async def mark_pending_order(order_id: int, status: str, raw: dict | None = None) -> None:
+    payload = {"status": status, "updated_at": now_kst().isoformat()}
+    if raw is not None:
+        payload["raw"] = raw
+    await SupabaseRest().patch("pending_orders", filters={"id": f"eq.{order_id}"}, payload=payload)
+
+
+async def sync_positions_with_balance(user_id: str, broker_account_id: str | None, positions: list[dict], balance: dict) -> list[dict]:
+    holdings = parse_holdings(balance)
+    actions: list[dict] = []
+    rest = SupabaseRest()
+    for position in positions:
+        code = position["code"]
+        holding = holdings.get(code)
+        expected_qty = int(position.get("remaining_qty") or 0)
+        actual_qty = int((holding or {}).get("qty") or 0)
+        if actual_qty == expected_qty:
+            continue
+
+        patch = {"remaining_qty": actual_qty, "updated_at": now_kst().isoformat()}
+        if actual_qty <= 0:
+            patch["status"] = "CLOSED"
+        await rest.patch("positions", filters={"id": f"eq.{position['id']}"}, payload=patch)
+
+        reason = "PositionClosedByBalance" if actual_qty <= 0 else "PositionSynced"
+        await insert_trade_log(
+            user_id,
+            broker_account_id,
+            "SYNC",
+            position,
+            int((holding or {}).get("current_price") or position.get("entry_price") or 0),
+            actual_qty,
+            reason,
+            {"holding": holding, "previous_remaining_qty": expected_qty, "patch": patch},
+        )
+        actions.append({"action": "SYNC", "code": code, "qty": actual_qty, "price": int((holding or {}).get("current_price") or 0), "reason": reason_label(reason)})
+    return actions
+
+
+async def reconcile_pending_orders(
+    user_id: str,
+    broker_account_id: str | None,
+    client,
+    balance: dict,
+    *,
+    test_mode: bool,
+    dry_run: bool,
+) -> list[dict]:
+    pending_orders = await open_pending_orders(user_id, broker_account_id)
+    if not pending_orders:
+        return []
+
+    holdings = parse_holdings(balance)
+    positions = await open_positions(user_id, broker_account_id)
+    open_codes = {position["code"] for position in positions}
+    actions: list[dict] = []
+    rest = SupabaseRest()
+    should_cancel = not test_mode and now_kst().time() >= ENTRY_END
+
+    for order in pending_orders:
+        raw = order.get("raw") or {}
+        code = order["code"]
+        side = order["side"]
+        holding = holdings.get(code)
+        previous_qty = int((raw.get("previous_remaining_qty") if isinstance(raw, dict) else 0) or 0)
+        is_filled = (side == "BUY" and holding and int(holding.get("qty") or 0) > 0) or (
+            side == "SELL" and (not holding or (previous_qty > 0 and int(holding.get("qty") or 0) < previous_qty))
+        )
+
+        if is_filled:
+            raw = {**raw, "filled_at": now_kst().isoformat(), "holding": holding}
+            await mark_pending_order(int(order["id"]), "FILLED", raw)
+            if side == "BUY" and code not in open_codes:
+                expected = raw.get("expected_position") or {}
+                signal = raw.get("signal") or {}
+                qty = int((holding or {}).get("qty") or order.get("qty") or 0)
+                entry_price = int((holding or {}).get("avg_price") or order.get("price") or 0)
+                await rest.insert(
+                    "positions",
+                    {
+                        **expected,
+                        "entry_price": entry_price,
+                        "qty": qty,
+                        "remaining_qty": qty,
+                        "raw": {
+                            **(expected.get("raw") or {}),
+                            "filled_by_balance": True,
+                            "holding": holding,
+                            "pending_order_id": order["id"],
+                        },
+                    },
+                )
+                await insert_trade_log(user_id, broker_account_id, "BUY", signal or order, entry_price, qty, "OrderFilled", raw)
+                open_codes.add(code)
+            actions.append({"action": "FILL", "code": code, "qty": int(order.get("qty") or 0), "price": int(order.get("price") or 0), "reason": reason_label("OrderFilled")})
+            continue
+
+        if not should_cancel:
+            continue
+
+        try:
+            if dry_run:
+                cancel_response = {"dry_run": True, "order_no": order.get("order_no")}
+            else:
+                cancel_response = await client.cancel_order(
+                    order_org_no=order.get("order_org_no") or "",
+                    order_no=order.get("order_no") or "",
+                    qty=int(order.get("qty") or 0),
+                    price=int(float(order.get("price") or 0)),
+                )
+            raw = {**raw, "cancel_response": cancel_response, "canceled_at": now_kst().isoformat()}
+            await mark_pending_order(int(order["id"]), "CANCELED", raw)
+            await insert_trade_log(user_id, broker_account_id, side, order, int(float(order.get("price") or 0)), int(order.get("qty") or 0), "OrderCanceled", raw)
+            actions.append({"action": "CANCEL", "code": code, "qty": int(order.get("qty") or 0), "price": int(float(order.get("price") or 0)), "reason": reason_label("OrderCanceled")})
+        except Exception as exc:
+            raw = {**raw, "cancel_error": str(exc), "cancel_failed_at": now_kst().isoformat()}
+            await mark_pending_order(int(order["id"]), "CANCEL_FAILED", raw)
+            await insert_trade_log(user_id, broker_account_id, side, order, int(float(order.get("price") or 0)), int(order.get("qty") or 0), "OrderCancelFailed", raw)
+            actions.append({"action": "CANCEL_FAILED", "code": code, "qty": int(order.get("qty") or 0), "price": int(float(order.get("price") or 0)), "reason": reason_label("OrderCancelFailed")})
+
+    return actions
+
+
 async def place_sell(client, position: dict, qty: int, price: int, *, reason: str, dry_run: bool) -> dict:
     if dry_run:
         return {"dry_run": True, "side": "sell", "code": position["code"], "qty": qty, "price": price, "reason": reason}
@@ -244,7 +423,11 @@ async def manage_positions(user_id: str, broker_account_id: str | None, client, 
     actions: list[dict] = []
     rest = SupabaseRest()
     strategy = await get_strategy_settings(user_id)
+    pending_sells = {order["code"] for order in await open_pending_orders(user_id, broker_account_id) if order.get("side") == "SELL"}
     for position in positions:
+        if position["code"] in pending_sells:
+            continue
+
         current_price = await get_price_safe(client, position["code"])
         if current_price is None:
             continue
@@ -304,9 +487,24 @@ async def manage_positions(user_id: str, broker_account_id: str | None, client, 
         response = await place_sell(client, position, sell_qty, current_price, reason=reason, dry_run=dry_run)
         if patch.get("remaining_qty", remaining_qty) <= 0:
             patch["status"] = "CLOSED"
-        await rest.patch("positions", filters={"id": f"eq.{position['id']}"}, payload=patch)
-        await insert_trade_log(user_id, broker_account_id, "SELL", position, current_price, sell_qty, reason, {"order": response, "strategy": strategy, "patch": patch})
-        actions.append({"action": "SELL", "code": position["code"], "qty": sell_qty, "price": current_price, "reason": reason_label(reason)})
+        if dry_run:
+            await rest.patch("positions", filters={"id": f"eq.{position['id']}"}, payload=patch)
+            await insert_trade_log(user_id, broker_account_id, "SELL", position, current_price, sell_qty, reason, {"order": response, "strategy": strategy, "patch": patch})
+            actions.append({"action": "SELL", "code": position["code"], "qty": sell_qty, "price": current_price, "reason": reason_label(reason)})
+        else:
+            await insert_pending_order(
+                user_id,
+                broker_account_id,
+                side="SELL",
+                source=position,
+                qty=sell_qty,
+                price=current_price,
+                response=response,
+                reason=reason,
+                raw={"position": position, "patch": patch, "strategy": strategy, "previous_remaining_qty": remaining_qty},
+            )
+            await insert_trade_log(user_id, broker_account_id, "SELL", position, current_price, sell_qty, "OrderPending", {"order": response, "strategy": strategy, "exit_reason": reason, "patch": patch})
+            actions.append({"action": "SELL_ORDER", "code": position["code"], "qty": sell_qty, "price": current_price, "reason": f"{reason_label(reason)} 주문 접수"})
 
     return actions
 
@@ -324,8 +522,11 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
     strategy = await get_strategy_settings(user_id)
     kis_codes = kis_holding_codes(balance)
     open_codes = {position["code"] for position in positions}
-    blocked_codes = open_codes | kis_codes
-    available_slots = max(0, int(strategy["max_open_positions"]) - len(open_codes) - len(kis_codes))
+    pending_orders = await open_pending_orders(user_id, broker_account_id)
+    pending_codes = {order["code"] for order in pending_orders}
+    pending_buy_count = len([order for order in pending_orders if order.get("side") == "BUY"])
+    blocked_codes = open_codes | kis_codes | pending_codes
+    available_slots = max(0, int(strategy["max_open_positions"]) - len(open_codes) - len(kis_codes) - pending_buy_count)
     daily_slots = min(int(strategy["max_new_positions_per_day"]), available_slots)
     if daily_slots <= 0:
         return []
@@ -338,7 +539,8 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
 
         score = float(signal.get("score") or 0)
         if signal["code"] in blocked_codes:
-            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "AlreadyHeld", raw={"strategy": strategy})
+            reason = "PendingOrderExists" if signal["code"] in pending_codes else "AlreadyHeld"
+            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, reason, raw={"strategy": strategy})
             continue
         if score < float(strategy["min_score"]):
             await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "ScoreBelowMinimum", raw={"strategy": strategy})
@@ -391,18 +593,43 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
             "take_profit_2_done": False,
             "raw": {**raw, "intraday_quote": quote, "kis_order_response": response, "sizing": sizing},
         }
-        await rest.insert("positions", position_payload)
-        await insert_trade_log(
-            user_id,
-            broker_account_id,
-            "BUY",
-            signal,
-            current_price,
-            qty,
-            reason,
-            {"quote": quote, "order": response, "signal_raw": raw},
-        )
-        actions.append({"action": "BUY", "code": signal["code"], "qty": qty, "price": current_price, "reason": reason_label(reason)})
+        if dry_run:
+            await rest.insert("positions", position_payload)
+            await insert_trade_log(
+                user_id,
+                broker_account_id,
+                "BUY",
+                signal,
+                current_price,
+                qty,
+                reason,
+                {"quote": quote, "order": response, "signal_raw": raw},
+            )
+            actions.append({"action": "BUY", "code": signal["code"], "qty": qty, "price": current_price, "reason": reason_label(reason)})
+        else:
+            await insert_pending_order(
+                user_id,
+                broker_account_id,
+                side="BUY",
+                source=signal,
+                qty=qty,
+                price=current_price,
+                response=response,
+                reason=reason,
+                raw={"signal": signal, "quote": quote, "signal_raw": raw, "sizing": sizing, "expected_position": position_payload},
+            )
+            await insert_trade_log(
+                user_id,
+                broker_account_id,
+                "BUY",
+                signal,
+                current_price,
+                qty,
+                "OrderPending",
+                {"quote": quote, "order": response, "signal_raw": raw, "entry_reason": reason},
+            )
+            actions.append({"action": "BUY_ORDER", "code": signal["code"], "qty": qty, "price": current_price, "reason": reason_label("OrderPending")})
+        blocked_codes.add(signal["code"])
 
     return actions
 
@@ -414,17 +641,25 @@ async def run_watch_tick_for_user(credentials: dict, *, test_mode: bool = False,
     is_live = (credentials.get("mode") or "paper") == "live"
     allow_live_orders = bool(credentials.get("live_order_enabled")) and settings.allow_live_trading
     client = client_from_credentials(credentials, enable_orders=not dry_run, allow_live_orders=allow_live_orders)
-    positions = await open_positions(user_id, broker_account_id)
     actions: list[dict] = []
+    balance = await client.get_balance()
+
+    actions.extend(await reconcile_pending_orders(user_id, broker_account_id, client, balance, test_mode=test_mode, dry_run=dry_run))
+    positions = await open_positions(user_id, broker_account_id)
+    actions.extend(await sync_positions_with_balance(user_id, broker_account_id, positions, balance))
+    positions = await open_positions(user_id, broker_account_id)
     actions.extend(await manage_positions(user_id, broker_account_id, client, positions, test_mode=test_mode, dry_run=dry_run))
     balance = await client.get_balance()
+    actions.extend(await reconcile_pending_orders(user_id, broker_account_id, client, balance, test_mode=test_mode, dry_run=dry_run))
+    positions = await open_positions(user_id, broker_account_id)
+    actions.extend(await sync_positions_with_balance(user_id, broker_account_id, positions, balance))
     positions = await open_positions(user_id, broker_account_id)
     actions.extend(await enter_positions(user_id, broker_account_id, client, positions, balance, test_mode=test_mode, dry_run=dry_run))
 
     if actions:
         lines = [f"KOSPI bot actions: {len(actions)}"]
         lines.extend(f"{item['action']} {item['code']} qty {item['qty']} @ {item['price']:,} {item['reason']}" for item in actions)
-        await send_telegram_message(credentials.get("telegram_chat_id"), "\n".join(lines))
+        await send_telegram_message_with_bot(credentials.get("telegram_bot_token"), credentials.get("telegram_chat_id"), "\n".join(lines))
 
     return {
         "user_id": user_id,

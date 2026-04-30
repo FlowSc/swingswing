@@ -6,7 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
-from app.services.broker_credentials import get_broker_credentials, list_enabled_broker_credentials
+from app.services.broker_credentials import list_enabled_broker_credentials
 from app.services.ai_report import process_queued_ai_reports
 from app.services.scanner import scan_and_store_for_user
 from app.services.supabase_rest import SupabaseRest
@@ -22,9 +22,7 @@ async def daily_scan_job() -> None:
     admin = await SupabaseRest().find_user_by_email(settings.scan_admin_email)
     if not admin:
         return
-    credentials = await get_broker_credentials(admin["id"])
-    telegram_chat_id = credentials.get("telegram_chat_id") if credentials else None
-    await scan_and_store_for_user(admin["id"], telegram_chat_id)
+    await scan_and_store_for_user(admin["id"])
 
 
 async def intraday_watch_job() -> None:

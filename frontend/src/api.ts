@@ -66,6 +66,8 @@ export type BrokerPayload = {
   kis_account_product_code: string;
   mode: "paper" | "live";
   live_order_enabled: boolean;
+  telegram_bot_token?: string;
+  telegram_chat_id?: string;
 };
 
 export type SignupPayload = {
@@ -83,6 +85,7 @@ export type BrokerStatus = {
   account_no?: string;
   account_product_code?: string;
   telegram_configured: boolean;
+  telegram_chat_id?: string;
   live_order_enabled: boolean;
   server_live_trading_allowed: boolean;
   is_active: boolean;
@@ -96,6 +99,7 @@ export type BrokerAccount = {
   kis_account_product_code: string;
   mode: "paper" | "live";
   telegram_configured: boolean;
+  telegram_chat_id?: string;
   enabled: boolean;
   live_order_enabled: boolean;
   server_live_trading_allowed: boolean;

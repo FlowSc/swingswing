@@ -18,11 +18,13 @@ TR_ID = {
     "paper": {
         "buy": "VTTC0802U",
         "sell": "VTTC0801U",
+        "cancel": "VTTC0803U",
         "balance": "VTTC8434R",
     },
     "live": {
         "buy": "TTTC0802U",
         "sell": "TTTC0801U",
+        "cancel": "TTTC0803U",
         "balance": "TTTC8434R",
     },
 }
@@ -194,6 +196,32 @@ class KisClient:
     async def sell_limit(self, code: str, qty: int, price: int) -> dict[str, Any]:
         return await self.place_cash_order(code=code, side="sell", qty=qty, price=price)
 
+    async def cancel_order(self, *, order_org_no: str, order_no: str, qty: int = 0, price: int = 0) -> dict[str, Any]:
+        if not self.config.enable_orders:
+            raise RuntimeError("Order cancellation is disabled.")
+        if self.config.mode == "live" and not self.config.allow_live_orders:
+            raise RuntimeError("Live trading is disabled for this account or deployment.")
+        if not order_no:
+            raise ValueError("order_no is required.")
+
+        payload = {
+            "CANO": self.config.account_no,
+            "ACNT_PRDT_CD": self.config.account_product_code,
+            "KRX_FWDG_ORD_ORGNO": order_org_no or "",
+            "ORGN_ODNO": order_no,
+            "ORD_DVSN": "00",
+            "RVSE_CNCL_DVSN_CD": "02",
+            "ORD_QTY": str(max(0, qty)),
+            "ORD_UNPR": str(max(0, price)),
+            "QTY_ALL_ORD_YN": "Y",
+        }
+        return await self._request(
+            "POST",
+            "/uapi/domestic-stock/v1/trading/order-rvsecncl",
+            headers=await self.auth_headers(TR_ID[self.config.mode]["cancel"], hashkey=await self.hashkey(payload)),
+            json=payload,
+        )
+
 
 def client_from_credentials(
     credentials: dict[str, Any],
@@ -280,6 +308,15 @@ def parse_quote(payload: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def parse_order_identifiers(payload: dict[str, Any]) -> dict[str, str | None]:
+    output = payload.get("output") or {}
+    return {
+        "order_org_no": output.get("KRX_FWDG_ORD_ORGNO") or output.get("krx_fwdg_ord_orgno"),
+        "order_no": output.get("ODNO") or output.get("odno"),
+        "order_time": output.get("ORD_TMD") or output.get("ord_tmd"),
+    }
+
+
 def extract_cash(balance: dict[str, Any]) -> int:
     output2 = balance.get("output2", [])
     if not output2:
@@ -314,3 +351,24 @@ def kis_holding_codes(balance: dict[str, Any]) -> set[str]:
         if code and qty_value > 0:
             codes.add(str(code).zfill(6))
     return codes
+
+
+def parse_holdings(balance: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    holdings: dict[str, dict[str, Any]] = {}
+    for item in balance.get("output1", []):
+        code = item.get("pdno") or item.get("PDNO")
+        if not code:
+            continue
+        qty = _parse_int_field(item, "hldg_qty", "HLDG_QTY")
+        if qty <= 0:
+            continue
+        normalized_code = str(code).zfill(6)
+        holdings[normalized_code] = {
+            "code": normalized_code,
+            "name": item.get("prdt_name") or item.get("PRDT_NAME"),
+            "qty": qty,
+            "avg_price": _parse_int_field(item, "pchs_avg_pric", "PCHS_AVG_PRIC"),
+            "current_price": _parse_int_field(item, "prpr", "PRPR", "stck_prpr", "STCK_PRPR"),
+            "raw": item,
+        }
+    return holdings

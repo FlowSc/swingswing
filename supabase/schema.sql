@@ -5,6 +5,7 @@ create table if not exists broker_credentials (
   kis_account_no text not null,
   kis_account_product_code text not null default '01',
   mode text not null default 'paper',
+  telegram_bot_token_enc text,
   telegram_chat_id text,
   live_order_enabled boolean not null default false,
   enabled boolean not null default true,
@@ -21,6 +22,7 @@ create table if not exists broker_accounts (
   kis_account_no text not null,
   kis_account_product_code text not null default '01',
   mode text not null default 'paper',
+  telegram_bot_token_enc text,
   telegram_chat_id text,
   live_order_enabled boolean not null default false,
   enabled boolean not null default true,
@@ -140,6 +142,24 @@ create table if not exists trade_logs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists pending_orders (
+  id bigint generated always as identity primary key,
+  user_id uuid not null,
+  broker_account_id uuid,
+  side text not null,
+  code text not null,
+  name text,
+  qty integer not null,
+  price numeric,
+  order_no text,
+  order_org_no text,
+  status text not null default 'OPEN',
+  reason text,
+  raw jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists trade_decision_logs (
   id bigint generated always as identity primary key,
   decision_date date not null,
@@ -188,6 +208,7 @@ create index if not exists idx_trade_decision_logs_user_date on trade_decision_l
 create index if not exists idx_broker_accounts_user_active on broker_accounts (user_id, is_active);
 create index if not exists idx_ai_reports_trade_date on ai_reports (trade_date desc, report_type, code);
 create index if not exists idx_ai_reports_status_created_at on ai_reports (status, created_at);
+create index if not exists idx_pending_orders_user_account_status on pending_orders (user_id, broker_account_id, status);
 
 alter table positions add column if not exists take_profit_1_done boolean not null default false;
 alter table positions add column if not exists take_profit_2_done boolean not null default false;
@@ -197,6 +218,8 @@ alter table broker_credentials add column if not exists live_order_enabled boole
 alter table scan_runs add column if not exists started_at timestamptz;
 alter table broker_accounts add column if not exists access_token_enc text;
 alter table broker_accounts add column if not exists access_token_expires_at timestamptz;
+alter table broker_accounts add column if not exists telegram_bot_token_enc text;
+alter table broker_credentials add column if not exists telegram_bot_token_enc text;
 alter table strategy_settings add column if not exists use_day_candle_filter boolean not null default false;
 alter table strategy_settings add column if not exists use_breakeven_after_tp1 boolean not null default false;
 alter table strategy_settings add column if not exists use_kijun_exit boolean not null default false;
@@ -265,6 +288,7 @@ alter table scan_runs enable row level security;
 alter table strategy_settings enable row level security;
 alter table positions enable row level security;
 alter table trade_logs enable row level security;
+alter table pending_orders enable row level security;
 alter table trade_decision_logs enable row level security;
 alter table ai_reports enable row level security;
 
@@ -306,6 +330,11 @@ create policy "Users can read own positions"
 drop policy if exists "Users can read own trade logs" on trade_logs;
 create policy "Users can read own trade logs"
   on trade_logs for select
+  using (auth.uid() = user_id);
+
+drop policy if exists "Users can read own pending orders" on pending_orders;
+create policy "Users can read own pending orders"
+  on pending_orders for select
   using (auth.uid() = user_id);
 
 drop policy if exists "Users can read own trade decision logs" on trade_decision_logs;

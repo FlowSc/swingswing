@@ -28,6 +28,8 @@ const emptyBroker: BrokerPayload = {
   kis_account_product_code: "01",
   mode: "paper",
   live_order_enabled: false,
+  telegram_bot_token: "",
+  telegram_chat_id: "",
 };
 
 const strategyPresets: Record<StrategyPreset, StrategySettings> = {
@@ -440,6 +442,8 @@ function Dashboard({ session }: { session: Session }) {
           kis_account_product_code: brokerResult.account_product_code || "01",
           mode: brokerResult.mode || "paper",
           live_order_enabled: brokerResult.live_order_enabled || false,
+          telegram_bot_token: "",
+          telegram_chat_id: brokerResult.telegram_chat_id || "",
         }));
         setEditingBroker(false);
       }
@@ -458,7 +462,7 @@ function Dashboard({ session }: { session: Session }) {
     setKisAccount(null);
     setAutoLoadedAccountKey("");
     await run("broker", () => api.saveBroker(session, broker), "KIS 정보 저장 완료:");
-    setBroker((current) => ({ ...current, kis_app_key: "", kis_app_secret: "" }));
+    setBroker((current) => ({ ...current, kis_app_key: "", kis_app_secret: "", telegram_bot_token: "" }));
     setEditingBroker(false);
   }
 
@@ -533,10 +537,10 @@ function Dashboard({ session }: { session: Session }) {
               <span>계좌 {brokerStatus.account_no}-{brokerStatus.account_product_code || "01"}</span>
               <span>모드 {brokerStatus.mode || "paper"}</span>
               <span>실전주문 {brokerStatus.live_order_enabled ? "사용자 허용" : "사용자 차단"}</span>
+              <span>매매 알림 {brokerStatus.telegram_configured ? "개인 봇 설정됨" : "미설정"}</span>
               {brokerStatus.mode === "live" && !brokerStatus.server_live_trading_allowed && (
                 <span>서버 안전장치: 실전주문 차단 중</span>
               )}
-              <span>텔레그램 {brokerStatus.telegram_configured ? "백엔드 고정 설정됨" : "미설정"}</span>
               <p>앱키와 시크릿은 보안상 다시 표시하지 않습니다. 바꾸려면 변경하기를 누르고 새로 저장하세요.</p>
             </div>
           )}
@@ -553,7 +557,7 @@ function Dashboard({ session }: { session: Session }) {
                 >
                   <strong>{account.mode === "live" ? "실전투자" : "모의투자"}</strong>
                   <span>{account.kis_account_no}-{account.kis_account_product_code}</span>
-                  <small>{account.is_active ? `현재 사용 중 · 자동매매 ${account.enabled ? "ON" : "OFF"}` : "교체하기"}</small>
+                  <small>{account.is_active ? `현재 사용 중 · 자동매매 ${account.enabled ? "ON" : "OFF"} · 매매알림 ${account.telegram_configured ? "ON" : "OFF"}` : "교체하기"}</small>
                 </button>
               ))}
             </div>
@@ -596,6 +600,23 @@ function Dashboard({ session }: { session: Session }) {
                   실전 주문을 이 계정에서 허용
                 </label>
               )}
+              <label>
+                매매 알림 Telegram Bot Token
+                <input
+                  value={broker.telegram_bot_token || ""}
+                  onChange={(event) => setBroker({ ...broker, telegram_bot_token: event.target.value })}
+                  placeholder="매수/매도 알림을 받을 개인 봇 토큰"
+                />
+                <small>이미 저장된 토큰은 다시 표시하지 않습니다. 비워두면 기존 토큰을 유지합니다.</small>
+              </label>
+              <label>
+                매매 알림 Telegram Chat ID
+                <input
+                  value={broker.telegram_chat_id || ""}
+                  onChange={(event) => setBroker({ ...broker, telegram_chat_id: event.target.value })}
+                  placeholder="예: 6583699681"
+                />
+              </label>
               <button className="primary" disabled={pending === "broker"}>{pending === "broker" ? "저장 중..." : "저장"}</button>
             </>
           )}

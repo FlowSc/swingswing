@@ -4,7 +4,6 @@ from datetime import datetime
 
 from fastapi import HTTPException
 
-from app.core.config import get_settings
 from app.core.security import decrypt_secret, encrypt_secret
 from app.schemas.broker import BrokerCredentialIn
 from app.services.supabase_rest import SupabaseRest
@@ -23,6 +22,7 @@ def _public_account(row: dict) -> dict:
         "kis_account_product_code": row.get("kis_account_product_code") or "01",
         "mode": row.get("mode") or "paper",
         "telegram_chat_id": row.get("telegram_chat_id"),
+        "telegram_configured": bool(row.get("telegram_bot_token_enc") and row.get("telegram_chat_id")),
         "enabled": row.get("enabled", False),
         "live_order_enabled": row.get("live_order_enabled", False),
         "is_active": row.get("is_active", False),
@@ -42,6 +42,11 @@ def _decrypt_account(row: dict) -> dict:
             decrypted["access_token"] = None
     if row.get("access_token_expires_at"):
         decrypted["access_token_expires_at"] = row["access_token_expires_at"]
+    if row.get("telegram_bot_token_enc"):
+        try:
+            decrypted["telegram_bot_token"] = decrypt_secret(row["telegram_bot_token_enc"])
+        except Exception:
+            decrypted["telegram_bot_token"] = None
     return decrypted
 
 
@@ -77,8 +82,15 @@ async def update_broker_access_token(account_id: str | None, access_token: str, 
 
 
 async def save_broker_credentials(user_id: str, payload: BrokerCredentialIn) -> dict:
-    settings = get_settings()
     label = "실전투자" if payload.mode == "live" else "모의투자"
+    rest = SupabaseRest()
+    existing_rows = await rest.select(
+        ACCOUNTS_TABLE,
+        filters={"user_id": f"eq.{user_id}", "mode": f"eq.{payload.mode}"},
+        limit=1,
+    )
+    existing = existing_rows[0] if existing_rows else {}
+    telegram_bot_token = (payload.telegram_bot_token or "").strip()
     record = {
         "user_id": user_id,
         "label": label,
@@ -87,12 +99,12 @@ async def save_broker_credentials(user_id: str, payload: BrokerCredentialIn) -> 
         "kis_account_no": payload.kis_account_no,
         "kis_account_product_code": payload.kis_account_product_code,
         "mode": payload.mode,
-        "telegram_chat_id": settings.telegram_chat_id,
+        "telegram_bot_token_enc": encrypt_secret(telegram_bot_token) if telegram_bot_token else existing.get("telegram_bot_token_enc"),
+        "telegram_chat_id": payload.telegram_chat_id or None,
         "live_order_enabled": payload.live_order_enabled if payload.mode == "live" else False,
         "enabled": True,
         "is_active": True,
     }
-    rest = SupabaseRest()
     await rest.patch(ACCOUNTS_TABLE, filters={"user_id": f"eq.{user_id}"}, payload={"is_active": False})
     rows = await rest.upsert(ACCOUNTS_TABLE, record, on_conflict="user_id,mode")
     await clear_broker_access_token(rows[0].get("id"))

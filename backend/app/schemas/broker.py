@@ -8,6 +8,8 @@ class BrokerCredentialIn(BaseModel):
     kis_account_product_code: str = "01"
     mode: str = "paper"
     live_order_enabled: bool = False
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
 
 
 class BrokerCredentialOut(BaseModel):
@@ -18,6 +20,7 @@ class BrokerCredentialOut(BaseModel):
     kis_account_product_code: str
     mode: str
     telegram_configured: bool = False
+    telegram_chat_id: str | None = None
     enabled: bool
     live_order_enabled: bool = False
     server_live_trading_allowed: bool = False
@@ -36,6 +39,7 @@ class BrokerStatusOut(BaseModel):
     account_no: str | None = None
     account_product_code: str | None = None
     telegram_configured: bool = False
+    telegram_chat_id: str | None = None
     enabled: bool = False
     live_order_enabled: bool = False
     server_live_trading_allowed: bool = False

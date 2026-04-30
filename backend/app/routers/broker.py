@@ -48,6 +48,10 @@ def parse_holding(item: dict) -> KisHoldingOut:
     )
 
 
+def telegram_configured(row: dict) -> bool:
+    return bool(row.get("telegram_configured") or (row.get("telegram_bot_token_enc") and row.get("telegram_chat_id")))
+
+
 def account_out(row: dict) -> BrokerCredentialOut:
     settings = get_settings()
     return BrokerCredentialOut(
@@ -57,7 +61,8 @@ def account_out(row: dict) -> BrokerCredentialOut:
         kis_account_no=row["kis_account_no"],
         kis_account_product_code=row.get("kis_account_product_code") or "01",
         mode=row.get("mode") or "paper",
-        telegram_configured=bool(settings.telegram_bot_token and (settings.telegram_chat_id or row.get("telegram_chat_id"))),
+        telegram_configured=telegram_configured(row),
+        telegram_chat_id=row.get("telegram_chat_id"),
         enabled=row.get("enabled", True),
         live_order_enabled=row.get("live_order_enabled", False),
         server_live_trading_allowed=settings.allow_live_trading,
@@ -72,7 +77,7 @@ async def broker_status(user: CurrentUser = Depends(get_current_user)) -> Broker
     if not row:
         return BrokerStatusOut(
             configured=False,
-            telegram_configured=bool(settings.telegram_bot_token and settings.telegram_chat_id),
+            telegram_configured=False,
             server_live_trading_allowed=settings.allow_live_trading,
         )
     return BrokerStatusOut(
@@ -82,7 +87,8 @@ async def broker_status(user: CurrentUser = Depends(get_current_user)) -> Broker
         mode=row.get("mode"),
         account_no=row.get("kis_account_no"),
         account_product_code=row.get("kis_account_product_code"),
-        telegram_configured=bool(settings.telegram_bot_token and (settings.telegram_chat_id or row.get("telegram_chat_id"))),
+        telegram_configured=telegram_configured(row),
+        telegram_chat_id=row.get("telegram_chat_id"),
         enabled=row.get("enabled", False),
         live_order_enabled=row.get("live_order_enabled", False),
         server_live_trading_allowed=settings.allow_live_trading,

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
 from app.schemas.bot import BotControlIn, BotControlOut, StrategySettingsIn, StrategySettingsOut, WatchTickIn
-from app.services.broker_credentials import get_broker_credentials, get_decrypted_broker_credentials, set_bot_enabled
+from app.services.broker_credentials import get_decrypted_broker_credentials, set_bot_enabled
 from app.services.ai_report import queue_ai_report
 from app.services.scanner import finalize_chunked_scan, prepare_chunked_scan_state, process_scan_chunk
 from app.services.strategy_settings import get_strategy_settings, save_strategy_settings
@@ -105,9 +105,7 @@ async def scan_step(scan_run_id: int, user: CurrentUser = Depends(get_current_us
         raise
     if state["done"]:
         try:
-            credentials = await get_broker_credentials(user.id)
-            telegram_chat_id = credentials.get("telegram_chat_id") if credentials else None
-            final_result = await finalize_chunked_scan(user.id, state, telegram_chat_id)
+            final_result = await finalize_chunked_scan(user.id, state)
             patched = await SupabaseRest().patch(
                 "scan_runs",
                 filters={"id": f"eq.{scan_run_id}"},
