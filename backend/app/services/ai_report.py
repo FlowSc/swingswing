@@ -40,6 +40,7 @@ REPORT_INSTRUCTIONS = """
 - 투자 유의 문구에 한해서만 <p style="color:#d93025;"> 형식을 사용할 수 있다.
 - <html>, <head>, <body>, <script>, <style> 태그는 사용하지 않는다.
 - ```html 같은 코드펜스나 설명 문장은 출력하지 않는다.
+- 반드시 </article>로 끝낸다.
 
 작성 형식:
 
@@ -139,6 +140,7 @@ SIGNAL_REPORT_INSTRUCTIONS = """
 - <table>, <thead>, <tbody>, <tr>, <th>, <td>는 사용하지 않는다.
 - <html>, <head>, <body>, <script>, <style> 태그는 사용하지 않는다.
 - ```html 같은 코드펜스나 설명 문장은 출력하지 않는다.
+- 반드시 </article>로 끝낸다.
 
 작성 형식:
 
@@ -208,7 +210,7 @@ async def generate_daily_signal_report_result(signals: list[dict], trade_date: d
         "model": settings.ai_report_model,
         "instructions": SIGNAL_REPORT_INSTRUCTIONS if report_type == "signal" else REPORT_INSTRUCTIONS,
         "input": prompt,
-        "max_output_tokens": 9000 if report_type == "signal" else 6500,
+        "max_output_tokens": 12000,
     }
 
     try:
@@ -230,6 +232,14 @@ async def generate_daily_signal_report_result(signals: list[dict], trade_date: d
                     "report": None,
                 }
             data = response.json()
+            incomplete_error = get_incomplete_response_error(data)
+            if incomplete_error:
+                return {
+                    "ok": False,
+                    "stage": "openai_incomplete",
+                    "error": incomplete_error,
+                    "report": None,
+                }
     except httpx.TimeoutException as exc:
         logger.exception("AI report generation timed out")
         return {"ok": False, "stage": "openai", "error": f"OpenAI timeout: {repr(exc)}", "report": None}
@@ -241,9 +251,26 @@ async def generate_daily_signal_report_result(signals: list[dict], trade_date: d
         return {"ok": False, "stage": "openai", "error": f"OpenAI error: {type(exc).__name__}: {repr(exc)}", "report": None}
 
     text = data.get("output_text") or extract_output_text(data)
-    if not text or not text.strip():
+    cleaned = strip_code_fence(text) if text else ""
+    if not cleaned:
         return {"ok": False, "stage": "openai", "error": "OpenAI response did not contain output text", "report": None}
-    return {"ok": True, "stage": "openai", "error": None, "report": clean_html_report(text)}
+    if not cleaned.endswith("</article>"):
+        return {
+            "ok": False,
+            "stage": "openai_incomplete",
+            "error": "OpenAI response did not end with </article>. Report was not saved because the output may be truncated.",
+            "report": None,
+        }
+    return {"ok": True, "stage": "openai", "error": None, "report": clean_html_report(cleaned)}
+
+
+def get_incomplete_response_error(data: dict) -> str | None:
+    status = data.get("status")
+    if status != "incomplete":
+        return None
+    details = data.get("incomplete_details") if isinstance(data.get("incomplete_details"), dict) else {}
+    reason = details.get("reason") or "unknown"
+    return f"OpenAI response incomplete: {reason}. Report was not saved because the output may be truncated."
 
 
 def format_openai_error(response: httpx.Response) -> str:
@@ -261,6 +288,12 @@ def format_openai_error(response: httpx.Response) -> str:
 
 
 def clean_html_report(text: str) -> str:
+    stripped = strip_code_fence(text)
+    stripped = ensure_investment_notice(stripped)
+    return stripped
+
+
+def strip_code_fence(text: str) -> str:
     stripped = text.strip()
     if stripped.startswith("```"):
         lines = stripped.splitlines()
@@ -269,7 +302,6 @@ def clean_html_report(text: str) -> str:
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         stripped = "\n".join(lines).strip()
-    stripped = ensure_investment_notice(stripped)
     return stripped
 
 
