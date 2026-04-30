@@ -13,6 +13,12 @@ from app.services.supabase_rest import SupabaseRest
 
 logger = logging.getLogger(__name__)
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+INVESTMENT_NOTICE_TEXT = (
+    "본 리포트는 자동화된 정량 조건을 바탕으로 작성된 참고용 분석 자료입니다. "
+    "특정 종목의 매수 또는 매도를 권유하는 투자 자문이 아니며, "
+    "모든 투자 판단과 책임은 투자자 본인에게 있습니다. 주식 투자는 원금 손실 가능성이 있습니다."
+)
+INVESTMENT_NOTICE_HTML = f'<p style="color:#d93025;">{INVESTMENT_NOTICE_TEXT}</p>'
 REPORT_INSTRUCTIONS = """
 너는 한국 주식 시장을 분석하는 스윙 트레이딩 리포트 작성자다.
 
@@ -253,7 +259,16 @@ def clean_html_report(text: str) -> str:
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         stripped = "\n".join(lines).strip()
+    stripped = ensure_investment_notice(stripped)
     return stripped
+
+
+def ensure_investment_notice(html: str) -> str:
+    if INVESTMENT_NOTICE_TEXT in html:
+        return html
+    if html.endswith("</article>"):
+        return html.removesuffix("</article>").rstrip() + f"\n\n{INVESTMENT_NOTICE_HTML}\n</article>"
+    return html.rstrip() + f"\n\n{INVESTMENT_NOTICE_HTML}"
 
 
 async def send_daily_signal_report(signals: list[dict], trade_date: date) -> int:
