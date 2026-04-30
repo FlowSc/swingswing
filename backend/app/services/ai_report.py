@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -23,6 +24,8 @@ REPORT_INSTRUCTIONS = """
 - 블로그에 바로 올릴 수 있는 한국어 Markdown 형식으로 작성한다.
 - 문체는 전문적이지만 일반 투자자도 이해할 수 있게 쓴다.
 - 너무 짧게 요약하지 말고, 각 종목별로 판단 근거와 리스크를 구체적으로 설명한다.
+- 개별 기업 리포트는 전체 2,000자 이상으로 작성한다.
+- 여러 종목 리포트는 종목별 분석을 최소 800자 이상으로 작성한다.
 
 작성 형식:
 
@@ -99,7 +102,6 @@ Markdown 표로 작성한다.
 - "무조건", "확실히", "급등", "대박", "보장" 같은 표현은 사용하지 않는다.
 - "매수해야 한다" 대신 "관찰할 수 있다", "조건 충족 여부를 확인할 필요가 있다"라고 표현한다.
 - 데이터가 없는 항목은 추측하지 말고 "제공 데이터 기준 확인 불가"라고 쓴다.
-- 각 종목 분석은 최소 500자 이상으로 작성한다.
 - 전체 리포트는 Markdown 형식으로만 출력한다.
 """.strip()
 
@@ -124,11 +126,12 @@ async def generate_daily_signal_report_result(signals: list[dict], trade_date: d
         "model": settings.ai_report_model,
         "instructions": REPORT_INSTRUCTIONS,
         "input": prompt,
-        "max_output_tokens": 3500,
+        "max_output_tokens": 6500,
     }
 
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        timeout = httpx.Timeout(240, connect=20)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 OPENAI_RESPONSES_URL,
                 headers={
@@ -176,7 +179,7 @@ def format_openai_error(response: httpx.Response) -> str:
 
 
 async def send_daily_signal_report(signals: list[dict], trade_date: date) -> bool:
-    return (await create_daily_signal_report_result(signals, trade_date, report_type="daily"))["saved"]
+    return (await queue_ai_report(signals, trade_date, report_type="daily"))["queued"]
 
 
 async def send_daily_signal_report_result(signals: list[dict], trade_date: date) -> dict:
@@ -212,8 +215,47 @@ async def create_daily_signal_report_result(
             "code": code or "ALL",
             "name": name,
             "title": title,
+            "status": "completed",
             "markdown": markdown,
+            "error": None,
             "raw": {
+                "signals_count": len(signals),
+                "model": get_settings().ai_report_model,
+                "codes": [signal.get("Code") for signal in signals],
+            },
+            "finished_at": now_iso(),
+        },
+        on_conflict="trade_date,report_type,code",
+    )
+    row = rows[0] if rows else {}
+    return {"saved": True, "stage": "db", "error": None, "report_id": row.get("id"), "title": row.get("title")}
+
+
+async def queue_ai_report(
+    signals: list[dict],
+    trade_date: date,
+    *,
+    report_type: str,
+    code: str | None = None,
+    name: str | None = None,
+) -> dict:
+    title_name = name or ("상위 시그널" if report_type == "daily" else "개별 종목")
+    title = f"{trade_date.isoformat()} {title_name} AI 리포트"
+    rows = await SupabaseRest().upsert(
+        "ai_reports",
+        {
+            "trade_date": trade_date.isoformat(),
+            "report_type": report_type,
+            "code": code or "ALL",
+            "name": name,
+            "title": title,
+            "status": "queued",
+            "markdown": "",
+            "error": None,
+            "started_at": None,
+            "finished_at": None,
+            "raw": {
+                "signals": signals,
                 "signals_count": len(signals),
                 "model": get_settings().ai_report_model,
                 "codes": [signal.get("Code") for signal in signals],
@@ -222,7 +264,65 @@ async def create_daily_signal_report_result(
         on_conflict="trade_date,report_type,code",
     )
     row = rows[0] if rows else {}
-    return {"saved": True, "stage": "db", "error": None, "report_id": row.get("id"), "title": row.get("title")}
+    return {"queued": True, "stage": "queued", "error": None, "report_id": row.get("id"), "title": row.get("title")}
+
+
+async def process_queued_ai_reports(limit: int = 1) -> list[dict]:
+    rows = await SupabaseRest().select(
+        "ai_reports",
+        filters={"status": "eq.queued"},
+        order="created_at.asc",
+        limit=limit,
+    )
+    results: list[dict] = []
+    for row in rows:
+        results.append(await process_ai_report_row(row))
+    return results
+
+
+async def process_ai_report_row(row: dict) -> dict:
+    rest = SupabaseRest()
+    report_id = row["id"]
+    started_at = now_iso()
+    claimed = await rest.patch(
+        "ai_reports",
+        filters={"id": f"eq.{report_id}", "status": "eq.queued"},
+        payload={"status": "running", "started_at": started_at, "error": None},
+    )
+    if not claimed:
+        return {"id": report_id, "status": "skipped", "error": "Already claimed"}
+
+    raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
+    signals = raw.get("signals") if isinstance(raw.get("signals"), list) else []
+    trade_date = date.fromisoformat(row["trade_date"])
+    report_result = await generate_daily_signal_report_result(signals, trade_date)
+    if not report_result["ok"]:
+        await rest.patch(
+            "ai_reports",
+            filters={"id": f"eq.{report_id}"},
+            payload={
+                "status": "failed",
+                "error": report_result["error"],
+                "finished_at": now_iso(),
+            },
+        )
+        return {"id": report_id, "status": "failed", "error": report_result["error"]}
+
+    await rest.patch(
+        "ai_reports",
+        filters={"id": f"eq.{report_id}"},
+        payload={
+            "status": "completed",
+            "markdown": report_result["report"],
+            "error": None,
+            "finished_at": now_iso(),
+        },
+    )
+    return {"id": report_id, "status": "completed", "error": None}
+
+
+def now_iso() -> str:
+    return datetime.now(ZoneInfo(get_settings().timezone)).isoformat()
 
 
 def build_report_prompt(signals: list[dict], trade_date: date) -> str:

@@ -8,7 +8,7 @@ from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
 from app.schemas.bot import BotControlIn, BotControlOut, StrategySettingsIn, StrategySettingsOut, WatchTickIn
 from app.services.broker_credentials import get_broker_credentials, get_decrypted_broker_credentials, set_bot_enabled
-from app.services.ai_report import create_daily_signal_report_result, send_daily_signal_report
+from app.services.ai_report import queue_ai_report
 from app.services.scanner import finalize_chunked_scan, prepare_chunked_scan_state, process_scan_chunk
 from app.services.strategy_settings import get_strategy_settings, save_strategy_settings
 from app.services.supabase_rest import SupabaseRest
@@ -164,7 +164,7 @@ async def send_daily_report(
         raise HTTPException(status_code=404, detail="No shared signals found for report date.")
 
     signals = [shared_signal_record_to_signal(row) for row in rows]
-    result = await create_daily_signal_report_result(
+    result = await queue_ai_report(
         signals,
         datetime.fromisoformat(target_date).date(),
         report_type="daily",
@@ -187,7 +187,7 @@ async def send_single_signal_report(
         raise HTTPException(status_code=404, detail="Signal not found for report date and code.")
 
     signal = shared_signal_record_to_signal(rows[0])
-    result = await create_daily_signal_report_result(
+    result = await queue_ai_report(
         [signal],
         datetime.fromisoformat(payload.trade_date).date(),
         report_type="signal",

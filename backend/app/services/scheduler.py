@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import logging
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
 from app.services.broker_credentials import get_broker_credentials, list_enabled_broker_credentials
+from app.services.ai_report import process_queued_ai_reports
 from app.services.scanner import scan_and_store_for_user
 from app.services.supabase_rest import SupabaseRest
 from app.services.watcher import run_watch_tick_for_user
 
 
 _scheduler: AsyncIOScheduler | None = None
+logger = logging.getLogger(__name__)
 
 
 async def daily_scan_job() -> None:
@@ -29,6 +33,12 @@ async def intraday_watch_job() -> None:
         await run_watch_tick_for_user(credentials, test_mode=False, dry_run=False)
 
 
+async def ai_report_worker_job() -> None:
+    results = await process_queued_ai_reports(limit=1)
+    for result in results:
+        logger.warning("AI report worker result: %s", result)
+
+
 def start_scheduler() -> None:
     global _scheduler
     if _scheduler and _scheduler.running:
@@ -39,6 +49,7 @@ def start_scheduler() -> None:
     scheduler = AsyncIOScheduler(timezone=timezone)
     scheduler.add_job(daily_scan_job, "cron", day_of_week="mon-fri", hour=13, minute=30)
     scheduler.add_job(intraday_watch_job, "cron", day_of_week="mon-fri", hour="9-15", minute="*/5")
+    scheduler.add_job(ai_report_worker_job, "interval", minutes=1, max_instances=1, coalesce=True)
     scheduler.start()
     _scheduler = scheduler
 

@@ -160,8 +160,12 @@ create table if not exists ai_reports (
   code text not null default 'ALL',
   name text,
   title text not null,
-  markdown text not null,
+  status text not null default 'queued',
+  markdown text not null default '',
+  error text,
   raw jsonb not null default '{}'::jsonb,
+  started_at timestamptz,
+  finished_at timestamptz,
   created_at timestamptz not null default now()
 );
 
@@ -179,6 +183,7 @@ create index if not exists idx_trade_logs_user_created_at on trade_logs (user_id
 create index if not exists idx_trade_decision_logs_user_date on trade_decision_logs (user_id, decision_date, created_at desc);
 create index if not exists idx_broker_accounts_user_active on broker_accounts (user_id, is_active);
 create index if not exists idx_ai_reports_trade_date on ai_reports (trade_date desc, report_type, code);
+create index if not exists idx_ai_reports_status_created_at on ai_reports (status, created_at);
 
 alter table positions add column if not exists take_profit_1_done boolean not null default false;
 alter table positions add column if not exists take_profit_2_done boolean not null default false;
@@ -188,6 +193,12 @@ alter table broker_credentials add column if not exists live_order_enabled boole
 alter table scan_runs add column if not exists started_at timestamptz;
 alter table broker_accounts add column if not exists access_token_enc text;
 alter table broker_accounts add column if not exists access_token_expires_at timestamptz;
+alter table ai_reports add column if not exists status text not null default 'queued';
+alter table ai_reports add column if not exists error text;
+alter table ai_reports add column if not exists started_at timestamptz;
+alter table ai_reports add column if not exists finished_at timestamptz;
+alter table ai_reports alter column markdown set default '';
+alter table ai_reports alter column markdown set not null;
 
 create index if not exists idx_positions_user_account_status on positions (user_id, broker_account_id, status);
 create index if not exists idx_trade_logs_user_account_created_at on trade_logs (user_id, broker_account_id, created_at desc);

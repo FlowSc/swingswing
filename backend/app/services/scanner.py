@@ -440,13 +440,13 @@ async def finalize_chunked_scan(user_id: str, state: dict, telegram_chat_id: str
     signals = sort_top_signals(list(state.get("candidates") or []))
     shared_saved = await save_shared_signals(signals, trade_date)
     await send_telegram_message(telegram_chat_id, format_top_signals_message(signals, trade_date))
-    report_sent = await send_daily_signal_report(signals, trade_date)
+    report_queued = await send_daily_signal_report(signals, trade_date)
     return {
         "trade_date": trade_date.isoformat(),
         "signals": len(signals),
         "saved": 0,
         "shared_saved": shared_saved,
-        "ai_report_sent": report_sent,
+        "ai_report_queued": report_queued,
     }
 
 
@@ -527,11 +527,11 @@ async def scan_and_store_for_user(user_id: str, telegram_chat_id: str | None = N
     signals = await scan_kospi_signals(trade_date)
     shared_saved = await save_shared_signals(signals, trade_date)
     await send_telegram_message(telegram_chat_id, format_top_signals_message(signals, trade_date))
-    report_sent = await send_daily_signal_report(signals, trade_date)
+    report_queued = await send_daily_signal_report(signals, trade_date)
     return {
         "trade_date": trade_date.isoformat(),
         "signals": len(signals),
         "saved": 0,
         "shared_saved": shared_saved,
-        "ai_report_sent": report_sent,
+        "ai_report_queued": report_queued,
     }
