@@ -293,6 +293,79 @@ function Dashboard({ session }: { session: Session }) {
     }, "KIS 계좌 조회 완료:");
   }
 
+  async function refreshDashboardOnly() {
+    setPending("dashboardRefresh");
+    try {
+      const result = await api.dailyDashboard(session).catch(() => null);
+      setDailyDashboard(result);
+      setStatus({ type: "info", message: "대시보드 새로고침 완료" });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function refreshSignalsOnly() {
+    if (!selectedSignalDate) return;
+    setPending("signalsRefresh");
+    try {
+      const [signalResult, decisionResult, reportResult] = await Promise.all([
+        api.signalsByDate(session, selectedSignalDate),
+        api.tradeDecisions(session, selectedSignalDate).catch(() => []),
+        isScanAdmin ? api.getAiReportStatuses(session, selectedSignalDate).catch(() => []) : Promise.resolve([]),
+      ]);
+      setSignals(signalResult);
+      setDecisions(decisionResult);
+      setAiReports(reportResult);
+      setStatus({ type: "info", message: `시그널 새로고침 완료: ${signalResult.length}개` });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function refreshPositionsOnly() {
+    setPending("positionsRefresh");
+    try {
+      const result = await api.positions(session);
+      setPositions(result);
+      setStatus({ type: "info", message: `포지션 새로고침 완료: ${result.length}개` });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function refreshTradeLogsOnly() {
+    setPending("logsRefresh");
+    try {
+      const result = await api.tradeLogs(session);
+      setLogs(result);
+      setStatus({ type: "info", message: `매매 로그 새로고침 완료: ${result.length}개` });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function refreshDecisionsOnly() {
+    if (!selectedSignalDate) return;
+    setPending("decisionsRefresh");
+    try {
+      const result = await api.tradeDecisions(session, selectedSignalDate).catch(() => []);
+      setDecisions(result);
+      setStatus({ type: "info", message: `매수 제외 로그 새로고침 완료: ${result.length}개` });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function startScan() {
     setPending("scan");
     setStatus({ type: "info", message: "스캔 요청 중..." });
@@ -699,7 +772,7 @@ function Dashboard({ session }: { session: Session }) {
           </a>
           <StatusLine status={status} />
         </div>
-        <DailyDashboardPanel dashboard={dailyDashboard} />
+        <DailyDashboardPanel dashboard={dailyDashboard} onRefresh={refreshDashboardOnly} refreshing={pending === "dashboardRefresh"} />
       </div>
 
       <StrategyPanel
@@ -719,26 +792,41 @@ function Dashboard({ session }: { session: Session }) {
           columns={["score", "name", "entry", "stop_loss", "stop_loss_pct", "take_profit_2", "take_profit_2_pct", "code"]}
           maxRows={30}
           headerAction={signalDates.length > 0 ? (
-            <select className="compact-select" value={selectedSignalDate} onChange={(event) => changeSignalDate(event.target.value)}>
-              {signalDates.map((tradeDate) => <option key={tradeDate} value={tradeDate}>{tradeDate}</option>)}
-            </select>
+            <div className="panel-actions">
+              <select className="compact-select" value={selectedSignalDate} onChange={(event) => changeSignalDate(event.target.value)}>
+                {signalDates.map((tradeDate) => <option key={tradeDate} value={tradeDate}>{tradeDate}</option>)}
+              </select>
+              <button className="ghost small" type="button" disabled={pending === "signalsRefresh"} onClick={refreshSignalsOnly}>
+                {pending === "signalsRefresh" ? "갱신 중" : "새로고침"}
+              </button>
+            </div>
           ) : undefined}
           onRowClick={(row) => setDetail({ title: `${formatCell(row.name)} (${formatCell(row.code)})`, kind: "signal", row })}
         />
       </div>
 
       <div className="grid three">
-        <AccountPanel account={kisAccount} />
+        <AccountPanel account={kisAccount} onRefresh={loadKisAccount} refreshing={pending === "account"} />
         <DataPanel
           title="포지션"
           rows={positions.map(enrichPlanPercentRow)}
           columns={["code", "name", "entry_price", "stop_loss_pct", "take_profit_2_pct", "qty", "remaining_qty", "status"]}
+          headerAction={(
+            <button className="ghost small" type="button" disabled={pending === "positionsRefresh"} onClick={refreshPositionsOnly}>
+              {pending === "positionsRefresh" ? "갱신 중" : "새로고침"}
+            </button>
+          )}
           onRowClick={(row) => setDetail({ title: `${formatCell(row.name)} 포지션`, kind: "position", row })}
         />
         <DataPanel
           title="매매 로그"
           rows={logs.map(normalizeTradeLogRow).map(enrichPlanPercentRow)}
           columns={["action_ko", "name", "price", "qty", "stop_loss_pct", "take_profit_2_pct", "reason_ko", "created_at"]}
+          headerAction={(
+            <button className="ghost small" type="button" disabled={pending === "logsRefresh"} onClick={refreshTradeLogsOnly}>
+              {pending === "logsRefresh" ? "갱신 중" : "새로고침"}
+            </button>
+          )}
           onRowClick={(row) => setDetail({
             title: `${formatCell(row.action_ko)} ${formatCell(row.code)}`,
             kind: "log",
@@ -753,6 +841,11 @@ function Dashboard({ session }: { session: Session }) {
           rows={decisions.map(normalizeDecisionRow)}
           columns={["code", "name", "score", "price", "reason", "created_at"]}
           maxRows={30}
+          headerAction={(
+            <button className="ghost small" type="button" disabled={pending === "decisionsRefresh" || !selectedSignalDate} onClick={refreshDecisionsOnly}>
+              {pending === "decisionsRefresh" ? "갱신 중" : "새로고침"}
+            </button>
+          )}
           onRowClick={(row) => setDetail({
             title: `${formatCell(row.name)} 제외 사유`,
             kind: "decision",
@@ -785,7 +878,7 @@ function Dashboard({ session }: { session: Session }) {
   );
 }
 
-function DailyDashboardPanel({ dashboard }: { dashboard: DailyDashboard | null }) {
+function DailyDashboardPanel({ dashboard, onRefresh, refreshing }: { dashboard: DailyDashboard | null; onRefresh: () => void; refreshing: boolean }) {
   const scan = dashboard?.latest_scan;
   const cards = [
     ["오늘 시그널", dashboard?.signals_count],
@@ -802,9 +895,14 @@ function DailyDashboardPanel({ dashboard }: { dashboard: DailyDashboard | null }
           <h2>데일리 대시보드</h2>
           <p className="command-copy">{dashboard?.date || "오늘"} 기준 자동매매 상태 요약</p>
         </div>
-        <span className={`scan-badge ${scan?.status || "idle"}`}>
-          스캔 {scan?.status || "대기"}
-        </span>
+        <div className="panel-actions">
+          <span className={`scan-badge ${scan?.status || "idle"}`}>
+            스캔 {scan?.status || "대기"}
+          </span>
+          <button className="ghost small" type="button" disabled={refreshing} onClick={onRefresh}>
+            {refreshing ? "갱신 중" : "새로고침"}
+          </button>
+        </div>
       </div>
       <div className="metric-grid">
         {cards.map(([label, value]) => (
@@ -1109,7 +1207,7 @@ function labelForPending(key: string) {
   return labels[key] || "요청";
 }
 
-function AccountPanel({ account }: { account: KisAccount | null }) {
+function AccountPanel({ account, onRefresh, refreshing }: { account: KisAccount | null; onRefresh: () => void; refreshing: boolean }) {
   const rows = account?.holdings.map((holding) => ({
     code: holding.code,
     name: holding.name,
@@ -1122,7 +1220,12 @@ function AccountPanel({ account }: { account: KisAccount | null }) {
 
   return (
     <section className="panel data-panel account-panel">
-      <h2>KIS 계좌</h2>
+      <div className="data-panel-head">
+        <h2>KIS 계좌</h2>
+        <button className="ghost small" type="button" disabled={refreshing} onClick={onRefresh}>
+          {refreshing ? "갱신 중" : "새로고침"}
+        </button>
+      </div>
       {!account ? (
         <p className="empty">계좌 조회 전</p>
       ) : (
