@@ -423,12 +423,12 @@ function Dashboard({ session }: { session: Session }) {
     }
   }
 
-  async function startScan() {
+  async function startScan(universeScope: "limited" | "all" = "all") {
     setPending("scan");
-    setStatus({ type: "info", message: "스캔 요청 중..." });
+    setStatus({ type: "info", message: universeScope === "all" ? "전 종목 스캔 요청 중..." : "스캔 요청 중..." });
     try {
-      const started = await api.scan(session);
-      setStatus({ type: "info", message: `스캔 시작: 0/${started.total}개 처리` });
+      const started = await api.scan(session, universeScope);
+      setStatus({ type: "info", message: `${universeScope === "all" ? "전 종목" : "제한 유니버스"} 스캔 시작: 0/${started.total}개 처리` });
       await runScanSteps(started.scan_run_id);
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
@@ -811,8 +811,11 @@ function Dashboard({ session }: { session: Session }) {
           </button>
           {isScanAdmin ? (
             <>
-              <button disabled={pending !== null} onClick={startScan}>
+              <button disabled={pending !== null} onClick={() => startScan("all")}>
                 {pending === "scan" ? "스캔 중... 100개씩 처리" : "오늘 시그널 스캔"}
+              </button>
+              <button disabled={pending !== null} onClick={() => startScan("limited")}>
+                {pending === "scan" ? "스캔 중..." : "제한 유니버스 스캔"}
               </button>
               <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendReport}>
                 {pending === "report" ? "리포트 생성 요청 중..." : "AI 리포트 생성 요청"}

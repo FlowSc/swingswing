@@ -76,6 +76,7 @@ create table if not exists scan_runs (
   requested_by uuid,
   status text not null default 'running',
   trade_date date,
+  universe_scope text not null default 'all',
   signals_count integer not null default 0,
   shared_saved integer not null default 0,
   result jsonb not null default '{}'::jsonb,
@@ -261,6 +262,8 @@ alter table positions add column if not exists broker_account_id uuid;
 alter table trade_logs add column if not exists broker_account_id uuid;
 alter table broker_credentials add column if not exists live_order_enabled boolean not null default false;
 alter table scan_runs add column if not exists started_at timestamptz;
+alter table scan_runs add column if not exists finished_at timestamptz;
+alter table scan_runs add column if not exists universe_scope text not null default 'all';
 alter table broker_accounts add column if not exists access_token_enc text;
 alter table broker_accounts add column if not exists access_token_expires_at timestamptz;
 alter table broker_accounts add column if not exists telegram_bot_token_enc text;

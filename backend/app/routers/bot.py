@@ -57,10 +57,11 @@ async def update_strategy_settings(
 
 @router.post("/scan")
 async def scan(
+    universe_scope: str = Query("all", pattern="^(limited|all)$"),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     require_scan_admin(user)
-    state = await prepare_chunked_scan_state()
+    state = await prepare_chunked_scan_state(universe_scope=universe_scope)
     rows = await SupabaseRest().insert(
         "scan_runs",
         {
@@ -68,6 +69,7 @@ async def scan(
             "status": "running",
             "trade_date": state["trade_date"],
             "result": state,
+            "universe_scope": state["universe_scope"],
             "started_at": now_iso(),
         },
     )
@@ -78,6 +80,7 @@ async def scan(
         "scan_run_id": scan_run_id,
         "offset": state["offset"],
         "total": state["total"],
+        "universe_scope": state["universe_scope"],
         "message": "Signal scan initialized. Continue with scan step API.",
     }
 

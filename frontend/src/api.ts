@@ -315,7 +315,8 @@ export const api = {
   getStrategy: (session: Session) => request<StrategySettings>("/bot/strategy", session),
   saveStrategy: (session: Session, payload: StrategySettings) =>
     request<StrategySettings>("/bot/strategy", session, { method: "PUT", body: JSON.stringify(payload) }),
-  scan: (session: Session) => request<ScanStartResult>("/bot/scan", session, { method: "POST" }),
+  scan: (session: Session, universeScope: "limited" | "all" = "all") =>
+    request<ScanStartResult>(`/bot/scan?universe_scope=${encodeURIComponent(universeScope)}`, session, { method: "POST" }),
   scanStep: (session: Session, scanRunId: number) => request<ScanRun>(`/bot/scan-runs/${scanRunId}/step`, session, { method: "POST" }),
   latestScanRun: (session: Session) => request<ScanRun | null>("/bot/scan-runs/latest", session),
   sendDailyReport: (session: Session, tradeDate?: string) => {

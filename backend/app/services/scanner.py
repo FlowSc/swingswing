@@ -23,6 +23,8 @@ MIN_VOLUME_20D = 20000
 MIN_PRICE = 1000
 MIN_TRADING_VALUE_20D = 300_000_000
 KOSPI_MARKET_CAP_LIMIT = 1000
+SCAN_UNIVERSE_LIMITED = "limited"
+SCAN_UNIVERSE_ALL = "all"
 RSI_MIN = 30
 RSI_MAX_EXCLUSIVE = 56
 MIN_RET_20D = 3
@@ -222,7 +224,7 @@ def score_swing_setup(
         (float(last["Volume"]) >= vol_prev5 * MIN_VOLUME_SPIKE_RATIO, 2, "Volume spike"),
         (float(last["Volume"]) >= vol_prev5 * STRONG_VOLUME_SPIKE_RATIO, 1, "Strong volume spike"),
         (market_filter_ok, 2, "KOSPI above MA5"),
-        (universe in {"KOSPI_TOP500", "KOSDAQ150"}, 2, universe),
+        (universe in {"KOSPI_TOP500", "KOSDAQ150", "KOSPI_ALL", "KOSDAQ_ALL"}, 2, universe),
         (relative_strength_20d >= MIN_RELATIVE_STRENGTH_20D, 2, "Market relative strength"),
         (trading_value_spike_ratio >= MIN_TRADING_VALUE_SPIKE_RATIO, 1, "Trading value spike"),
         (MIN_ATR_PCT_BONUS <= atr_pct <= MAX_ATR_PCT_BONUS, 1, "ATR in swing range"),
@@ -372,18 +374,19 @@ def _normalize_listing(listing: pd.DataFrame, universe: str) -> pd.DataFrame:
     return frame[["Code", "Name", "Universe", "CompanyProfile"]].drop_duplicates("Code")
 
 
-def load_scan_universe() -> pd.DataFrame:
-    logger.warning("Loading scan universe")
+def load_scan_universe(scope: str = SCAN_UNIVERSE_LIMITED) -> pd.DataFrame:
+    full_scan = scope == SCAN_UNIVERSE_ALL
+    logger.warning("Loading scan universe: scope=%s", scope)
     kospi = fdr.StockListing("KOSPI")
-    if "Marcap" in kospi.columns:
+    if not full_scan and "Marcap" in kospi.columns:
         kospi = kospi.sort_values("Marcap", ascending=False).head(KOSPI_MARKET_CAP_LIMIT)
-    else:
+    elif not full_scan:
         kospi = kospi.head(KOSPI_MARKET_CAP_LIMIT)
-    frames = [_normalize_listing(kospi, "KOSPI_TOP500")]
+    frames = [_normalize_listing(kospi, "KOSPI_ALL" if full_scan else "KOSPI_TOP500")]
 
     try:
-        kosdaq150 = fdr.StockListing("KOSDAQ150")
-        frames.append(_normalize_listing(kosdaq150, "KOSDAQ150"))
+        kosdaq = fdr.StockListing("KOSDAQ" if full_scan else "KOSDAQ150")
+        frames.append(_normalize_listing(kosdaq, "KOSDAQ_ALL" if full_scan else "KOSDAQ150"))
     except Exception:
         pass
 
@@ -409,10 +412,11 @@ def sort_top_signals(results: list[dict]) -> list[dict]:
     return results[:TOP_N]
 
 
-def prepare_chunked_scan_state_sync(today: date | None = None) -> dict:
+def prepare_chunked_scan_state_sync(today: date | None = None, universe_scope: str = SCAN_UNIVERSE_ALL) -> dict:
     base_date = today or datetime.now(ZoneInfo(get_settings().timezone)).date()
-    logger.warning("Signal scan universe load started: date=%s", base_date.isoformat())
-    universe = load_scan_universe()
+    scope = SCAN_UNIVERSE_ALL if universe_scope == SCAN_UNIVERSE_ALL else SCAN_UNIVERSE_LIMITED
+    logger.warning("Signal scan universe load started: date=%s scope=%s", base_date.isoformat(), scope)
+    universe = load_scan_universe(scope)
     logger.warning("Signal scan market filter started")
     market_ok = kospi_market_filter_ok(base_date)
     market_ret_20d = market_return_20d(base_date)
@@ -420,6 +424,7 @@ def prepare_chunked_scan_state_sync(today: date | None = None) -> dict:
     start = (datetime.combine(base_date, datetime.min.time()) - timedelta(days=420)).strftime("%Y-%m-%d")
     return {
         "trade_date": base_date.isoformat(),
+        "universe_scope": scope,
         "universe": universe.to_dict("records"),
         "market_ok": market_ok,
         "market_ret_20d": market_ret_20d,
@@ -431,8 +436,8 @@ def prepare_chunked_scan_state_sync(today: date | None = None) -> dict:
     }
 
 
-async def prepare_chunked_scan_state(today: date | None = None) -> dict:
-    return await asyncio.to_thread(prepare_chunked_scan_state_sync, today)
+async def prepare_chunked_scan_state(today: date | None = None, universe_scope: str = SCAN_UNIVERSE_ALL) -> dict:
+    return await asyncio.to_thread(prepare_chunked_scan_state_sync, today, universe_scope)
 
 
 def process_scan_chunk_sync(state: dict, chunk_size: int = SCAN_CHUNK_SIZE) -> dict:
