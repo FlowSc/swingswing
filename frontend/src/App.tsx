@@ -437,8 +437,29 @@ function Dashboard({ session }: { session: Session }) {
     }
   }
 
+  async function continueLatestScan() {
+    setPending("scan");
+    setStatus({ type: "info", message: "진행 중인 최신 스캔 확인 중..." });
+    try {
+      const latest = await api.latestScanRun(session);
+      if (!latest || latest.status !== "running") {
+        setStatus({ type: "info", message: "이어갈 running 상태의 스캔이 없습니다." });
+        return;
+      }
+      const offset = latest.result?.offset || 0;
+      const total = latest.result?.total || 0;
+      setStatus({ type: "info", message: `스캔 이어서 처리: ${offset}/${total}개 처리됨` });
+      await runScanSteps(latest.id);
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function runScanSteps(scanRunId: number) {
-    for (let index = 0; index < 20; index += 1) {
+    const maxSteps = 80;
+    for (let index = 0; index < maxSteps; index += 1) {
       const current = await api.scanStep(session, scanRunId);
       const offset = current.result?.offset || 0;
       const total = current.result?.total || 0;
@@ -453,7 +474,7 @@ function Dashboard({ session }: { session: Session }) {
       }
       setStatus({ type: "info", message: `스캔 진행: ${offset}/${total}개 처리 / 현재 후보 ${candidates}개` });
     }
-    setStatus({ type: "info", message: "스캔 step 제한에 도달했습니다. 다시 버튼을 누르면 이어서 처리하지 않고 새 스캔이 시작됩니다." });
+    setStatus({ type: "info", message: "스캔 step 안전 제한에 도달했습니다. '진행 중 스캔 이어하기'를 누르면 같은 스캔을 이어서 처리합니다." });
   }
 
   async function runBacktest() {
@@ -816,6 +837,9 @@ function Dashboard({ session }: { session: Session }) {
               </button>
               <button disabled={pending !== null} onClick={() => startScan("limited")}>
                 {pending === "scan" ? "스캔 중..." : "제한 유니버스 스캔"}
+              </button>
+              <button disabled={pending !== null} onClick={continueLatestScan}>
+                {pending === "scan" ? "스캔 중..." : "진행 중 스캔 이어하기"}
               </button>
               <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendReport}>
                 {pending === "report" ? "리포트 생성 요청 중..." : "AI 리포트 생성 요청"}
