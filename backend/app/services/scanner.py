@@ -532,7 +532,7 @@ def format_top_signals_message(signals: list[dict], trade_date: date) -> str:
         return "\n".join(lines)
     for index, signal in enumerate(signals[:5], start=1):
         lines.append(
-            f"{index}. {signal['Name']}({signal['Code']}) "
+            f"{index}. {signal['Name']} "
             f"entry {signal['Entry']:,.0f} stop {signal['StopLoss']:,.0f} "
             f"tp2 {signal['TakeProfit2']:,.0f} score {signal['Score']}"
         )

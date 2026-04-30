@@ -715,8 +715,8 @@ function Dashboard({ session }: { session: Session }) {
       <div className="grid">
         <DataPanel
           title={selectedSignalDate ? `${selectedSignalDate} 시그널` : "시그널"}
-          rows={signals}
-          columns={["score", "name", "entry", "stop_loss", "take_profit_2", "code"]}
+          rows={signals.map(enrichPlanPercentRow)}
+          columns={["score", "name", "entry", "stop_loss", "stop_loss_pct", "take_profit_2", "take_profit_2_pct", "code"]}
           maxRows={30}
           headerAction={signalDates.length > 0 ? (
             <select className="compact-select" value={selectedSignalDate} onChange={(event) => changeSignalDate(event.target.value)}>
@@ -731,14 +731,14 @@ function Dashboard({ session }: { session: Session }) {
         <AccountPanel account={kisAccount} />
         <DataPanel
           title="포지션"
-          rows={positions}
-          columns={["code", "name", "entry_price", "qty", "remaining_qty", "status"]}
+          rows={positions.map(enrichPlanPercentRow)}
+          columns={["code", "name", "entry_price", "stop_loss_pct", "take_profit_2_pct", "qty", "remaining_qty", "status"]}
           onRowClick={(row) => setDetail({ title: `${formatCell(row.name)} 포지션`, kind: "position", row })}
         />
         <DataPanel
           title="매매 로그"
-          rows={logs.map(normalizeTradeLogRow)}
-          columns={["action_ko", "code", "price", "qty", "reason_ko", "created_at"]}
+          rows={logs.map(normalizeTradeLogRow).map(enrichPlanPercentRow)}
+          columns={["action_ko", "name", "price", "qty", "stop_loss_pct", "take_profit_2_pct", "reason_ko", "created_at"]}
           onRowClick={(row) => setDetail({
             title: `${formatCell(row.action_ko)} ${formatCell(row.code)}`,
             kind: "log",
@@ -1380,9 +1380,13 @@ function SignalDetail({
       <DetailSection title="매매 계획" items={[
         ["매수가", row.entry],
         ["손절가", row.stop_loss],
+        ["손절률", formatPercentFromEntry(row.stop_loss, row.entry)],
         ["1차 익절가", row.take_profit_1],
+        ["1차 익절률", formatPercentFromEntry(row.take_profit_1, row.entry)],
         ["2차 익절가", row.take_profit_2],
+        ["2차 익절률", formatPercentFromEntry(row.take_profit_2, row.entry)],
         ["추적 손절가", row.trailing_stop],
+        ["추적 손절률", formatPercentFromEntry(row.trailing_stop, row.entry)],
         ["권장 보유", `${formatCell(raw.HoldMinDays)}-${formatCell(raw.HoldPreferredDays)}일`],
         ["최대 보유", `${formatCell(raw.HoldMaxDays)}일`],
         ["매입 허용 시간", "14:30-15:20"],
@@ -1436,9 +1440,13 @@ function TradeLogDetail({ row }: { row: Record<string, unknown> }) {
       <DetailSection title="언제 팔 건지" items={[
         ["매수가", exitPlan.entry_price],
         ["손절", exitPlan.stop_loss],
+        ["손절률", formatPlanPct(exitPlan.stop_loss_pct) || formatPercentFromEntry(exitPlan.stop_loss, exitPlan.entry_price)],
         ["1차 익절", exitPlan.take_profit_1],
+        ["1차 익절률", formatPlanPct(exitPlan.take_profit_1_pct) || formatPercentFromEntry(exitPlan.take_profit_1, exitPlan.entry_price)],
         ["2차 익절", exitPlan.take_profit_2],
+        ["2차 익절률", formatPlanPct(exitPlan.take_profit_2_pct) || formatPercentFromEntry(exitPlan.take_profit_2, exitPlan.entry_price)],
         ["추적 손절", exitPlan.trailing_stop],
+        ["추적 손절률", formatPlanPct(exitPlan.trailing_stop_pct) || formatPercentFromEntry(exitPlan.trailing_stop, exitPlan.entry_price)],
         ["권장 보유", `${formatCell(exitPlan.hold_min_days)}-${formatCell(exitPlan.hold_preferred_days)}일`],
         ["최대 보유", `${formatCell(exitPlan.hold_max_days)}일`],
         ["매입 시간", exitPlan.planned_entry_window || "14:30-15:20"],
@@ -1469,9 +1477,13 @@ function PositionDetail({ row }: { row: Record<string, unknown> }) {
       ]} />
       <DetailSection title="청산 계획" items={[
         ["손절", row.stop_loss],
+        ["손절률", formatPercentFromEntry(row.stop_loss, row.entry_price)],
         ["1차 익절", row.take_profit_1],
+        ["1차 익절률", formatPercentFromEntry(row.take_profit_1, row.entry_price)],
         ["2차 익절", row.take_profit_2],
+        ["2차 익절률", formatPercentFromEntry(row.take_profit_2, row.entry_price)],
         ["추적 손절", row.trailing_stop],
+        ["추적 손절률", formatPercentFromEntry(row.trailing_stop, row.entry_price)],
         ["최대 보유", `${formatCell(raw.HoldMaxDays)}일`],
         ["1차 익절 완료", row.take_profit_1_done ? "예" : "아니오"],
         ["2차 익절 완료", row.take_profit_2_done ? "예" : "아니오"],
@@ -1538,6 +1550,31 @@ function formatCell(value: unknown) {
   return String(value);
 }
 
+function numericValue(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(String(value).replace(/,/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function percentFromEntry(target: unknown, entry: unknown): number | null {
+  const targetValue = numericValue(target);
+  const entryValue = numericValue(entry);
+  if (targetValue === null || entryValue === null || entryValue <= 0) return null;
+  return (targetValue / entryValue - 1) * 100;
+}
+
+function formatPlanPct(value: unknown): string {
+  const numeric = numericValue(value);
+  if (numeric === null) return "";
+  const sign = numeric > 0 ? "+" : "";
+  return `${sign}${numeric.toFixed(2)}%`;
+}
+
+function formatPercentFromEntry(target: unknown, entry: unknown): string {
+  const percent = percentFromEntry(target, entry);
+  return percent === null ? "-" : formatPlanPct(percent);
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -1548,6 +1585,23 @@ function normalizeTradeLogRow(row: Record<string, unknown>) {
     action_ko: row.action === "BUY" ? "매수" : row.action === "SELL" ? "매도" : row.action,
     reason_ko: translateReason(row.reason),
     created_at: formatDateTime(row.created_at),
+  };
+}
+
+function enrichPlanPercentRow(row: Record<string, unknown>) {
+  const raw = asRecord(row.raw);
+  const exitPlan = asRecord(raw.exit_plan);
+  const entry = row.entry_price ?? row.entry ?? exitPlan.entry_price;
+  const stopLoss = row.stop_loss ?? exitPlan.stop_loss ?? raw.StopLoss;
+  const takeProfit1 = row.take_profit_1 ?? exitPlan.take_profit_1 ?? raw.TakeProfit1;
+  const takeProfit2 = row.take_profit_2 ?? exitPlan.take_profit_2 ?? raw.TakeProfit2;
+  const trailingStop = row.trailing_stop ?? exitPlan.trailing_stop ?? raw.TrailingStop;
+  return {
+    ...row,
+    stop_loss_pct: formatPlanPct(exitPlan.stop_loss_pct) || formatPercentFromEntry(stopLoss, entry),
+    take_profit_1_pct: formatPlanPct(exitPlan.take_profit_1_pct) || formatPercentFromEntry(takeProfit1, entry),
+    take_profit_2_pct: formatPlanPct(exitPlan.take_profit_2_pct) || formatPercentFromEntry(takeProfit2, entry),
+    trailing_stop_pct: formatPlanPct(exitPlan.trailing_stop_pct) || formatPercentFromEntry(trailingStop, entry),
   };
 }
 
@@ -1587,9 +1641,13 @@ function exitPlanFromSource(source?: Record<string, unknown>) {
   return {
     entry_price: row.entry_price ?? row.entry,
     stop_loss: row.stop_loss ?? raw.StopLoss,
+    stop_loss_pct: percentFromEntry(row.stop_loss ?? raw.StopLoss, row.entry_price ?? row.entry),
     take_profit_1: row.take_profit_1 ?? raw.TakeProfit1,
+    take_profit_1_pct: percentFromEntry(row.take_profit_1 ?? raw.TakeProfit1, row.entry_price ?? row.entry),
     take_profit_2: row.take_profit_2 ?? raw.TakeProfit2,
+    take_profit_2_pct: percentFromEntry(row.take_profit_2 ?? raw.TakeProfit2, row.entry_price ?? row.entry),
     trailing_stop: row.trailing_stop ?? raw.TrailingStop,
+    trailing_stop_pct: percentFromEntry(row.trailing_stop ?? raw.TrailingStop, row.entry_price ?? row.entry),
     hold_min_days: raw.HoldMinDays,
     hold_preferred_days: raw.HoldPreferredDays,
     hold_max_days: raw.HoldMaxDays || 15,

@@ -87,20 +87,66 @@ def reason_label(reason_code: str) -> str:
     return REASON_LABELS.get(reason_code, reason_code)
 
 
+def display_name(item: dict) -> str:
+    return str(item.get("name") or item.get("Name") or item.get("code") or item.get("Code") or "종목명 확인 불가")
+
+
+def _float_value(value) -> float | None:
+    if value in {None, ""}:
+        return None
+    try:
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def pct_from_entry(target, entry) -> float | None:
+    target_value = _float_value(target)
+    entry_value = _float_value(entry)
+    if target_value is None or entry_value is None or entry_value <= 0:
+        return None
+    return round((target_value / entry_value - 1) * 100, 2)
+
+
+def format_pct(value: float | None) -> str:
+    if value is None:
+        return "-"
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:.2f}%"
+
+
 def exit_plan_from_source(source: dict) -> dict:
     raw = source.get("raw") or {}
+    entry_price = source.get("entry_price") or source.get("entry")
+    stop_loss = source.get("stop_loss")
+    take_profit_1 = source.get("take_profit_1")
+    take_profit_2 = source.get("take_profit_2")
+    trailing_stop = source.get("trailing_stop")
     return {
-        "entry_price": source.get("entry_price") or source.get("entry"),
-        "stop_loss": source.get("stop_loss"),
-        "take_profit_1": source.get("take_profit_1"),
-        "take_profit_2": source.get("take_profit_2"),
-        "trailing_stop": source.get("trailing_stop"),
+        "entry_price": entry_price,
+        "stop_loss": stop_loss,
+        "stop_loss_pct": pct_from_entry(stop_loss, entry_price),
+        "take_profit_1": take_profit_1,
+        "take_profit_1_pct": pct_from_entry(take_profit_1, entry_price),
+        "take_profit_2": take_profit_2,
+        "take_profit_2_pct": pct_from_entry(take_profit_2, entry_price),
+        "trailing_stop": trailing_stop,
+        "trailing_stop_pct": pct_from_entry(trailing_stop, entry_price),
         "hold_min_days": raw.get("HoldMinDays"),
         "hold_preferred_days": raw.get("HoldPreferredDays"),
         "hold_max_days": raw.get("HoldMaxDays", 15),
         "planned_entry_window": "14:30-15:20",
         "planned_manage_window": "09:20-15:20",
     }
+
+
+def action_plan_summary(source: dict) -> str:
+    plan = exit_plan_from_source(source)
+    return (
+        f"손절 {format_pct(plan.get('stop_loss_pct'))} / "
+        f"1차 {format_pct(plan.get('take_profit_1_pct'))} / "
+        f"2차 {format_pct(plan.get('take_profit_2_pct'))}"
+    )
 
 
 async def get_price_safe(client, code: str) -> int | None:
@@ -316,7 +362,7 @@ async def sync_positions_with_balance(user_id: str, broker_account_id: str | Non
             reason,
             {"holding": holding, "previous_remaining_qty": expected_qty, "patch": patch},
         )
-        actions.append({"action": "SYNC", "code": code, "qty": actual_qty, "price": int((holding or {}).get("current_price") or 0), "reason": reason_label(reason)})
+        actions.append({"action": "SYNC", "code": code, "name": display_name(position), "qty": actual_qty, "price": int((holding or {}).get("current_price") or 0), "reason": reason_label(reason), "plan": action_plan_summary(position)})
     return actions
 
 
@@ -375,7 +421,7 @@ async def reconcile_pending_orders(
                 )
                 await insert_trade_log(user_id, broker_account_id, "BUY", signal or order, entry_price, qty, "OrderFilled", raw)
                 open_codes.add(code)
-            actions.append({"action": "FILL", "code": code, "qty": int(order.get("qty") or 0), "price": int(order.get("price") or 0), "reason": reason_label("OrderFilled")})
+            actions.append({"action": "FILL", "code": code, "name": display_name(order), "qty": int(order.get("qty") or 0), "price": int(order.get("price") or 0), "reason": reason_label("OrderFilled"), "plan": action_plan_summary((raw.get("expected_position") if isinstance(raw, dict) else None) or order)})
             continue
 
         if not should_cancel:
@@ -394,12 +440,12 @@ async def reconcile_pending_orders(
             raw = {**raw, "cancel_response": cancel_response, "canceled_at": now_kst().isoformat()}
             await mark_pending_order(int(order["id"]), "CANCELED", raw)
             await insert_trade_log(user_id, broker_account_id, side, order, int(float(order.get("price") or 0)), int(order.get("qty") or 0), "OrderCanceled", raw)
-            actions.append({"action": "CANCEL", "code": code, "qty": int(order.get("qty") or 0), "price": int(float(order.get("price") or 0)), "reason": reason_label("OrderCanceled")})
+            actions.append({"action": "CANCEL", "code": code, "name": display_name(order), "qty": int(order.get("qty") or 0), "price": int(float(order.get("price") or 0)), "reason": reason_label("OrderCanceled"), "plan": action_plan_summary((raw.get("expected_position") if isinstance(raw, dict) else None) or order)})
         except Exception as exc:
             raw = {**raw, "cancel_error": str(exc), "cancel_failed_at": now_kst().isoformat()}
             await mark_pending_order(int(order["id"]), "CANCEL_FAILED", raw)
             await insert_trade_log(user_id, broker_account_id, side, order, int(float(order.get("price") or 0)), int(order.get("qty") or 0), "OrderCancelFailed", raw)
-            actions.append({"action": "CANCEL_FAILED", "code": code, "qty": int(order.get("qty") or 0), "price": int(float(order.get("price") or 0)), "reason": reason_label("OrderCancelFailed")})
+            actions.append({"action": "CANCEL_FAILED", "code": code, "name": display_name(order), "qty": int(order.get("qty") or 0), "price": int(float(order.get("price") or 0)), "reason": reason_label("OrderCancelFailed"), "plan": action_plan_summary((raw.get("expected_position") if isinstance(raw, dict) else None) or order)})
 
     return actions
 
@@ -490,7 +536,7 @@ async def manage_positions(user_id: str, broker_account_id: str | None, client, 
         if dry_run:
             await rest.patch("positions", filters={"id": f"eq.{position['id']}"}, payload=patch)
             await insert_trade_log(user_id, broker_account_id, "SELL", position, current_price, sell_qty, reason, {"order": response, "strategy": strategy, "patch": patch})
-            actions.append({"action": "SELL", "code": position["code"], "qty": sell_qty, "price": current_price, "reason": reason_label(reason)})
+            actions.append({"action": "SELL", "code": position["code"], "name": display_name(position), "qty": sell_qty, "price": current_price, "reason": reason_label(reason), "plan": action_plan_summary(position)})
         else:
             await insert_pending_order(
                 user_id,
@@ -504,7 +550,7 @@ async def manage_positions(user_id: str, broker_account_id: str | None, client, 
                 raw={"position": position, "patch": patch, "strategy": strategy, "previous_remaining_qty": remaining_qty},
             )
             await insert_trade_log(user_id, broker_account_id, "SELL", position, current_price, sell_qty, "OrderPending", {"order": response, "strategy": strategy, "exit_reason": reason, "patch": patch})
-            actions.append({"action": "SELL_ORDER", "code": position["code"], "qty": sell_qty, "price": current_price, "reason": f"{reason_label(reason)} 주문 접수"})
+            actions.append({"action": "SELL_ORDER", "code": position["code"], "name": display_name(position), "qty": sell_qty, "price": current_price, "reason": f"{reason_label(reason)} 주문 접수", "plan": action_plan_summary(position)})
 
     return actions
 
@@ -605,7 +651,7 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
                 reason,
                 {"quote": quote, "order": response, "signal_raw": raw},
             )
-            actions.append({"action": "BUY", "code": signal["code"], "qty": qty, "price": current_price, "reason": reason_label(reason)})
+            actions.append({"action": "BUY", "code": signal["code"], "name": display_name(signal), "qty": qty, "price": current_price, "reason": reason_label(reason), "plan": action_plan_summary(position_payload)})
         else:
             await insert_pending_order(
                 user_id,
@@ -628,7 +674,7 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
                 "OrderPending",
                 {"quote": quote, "order": response, "signal_raw": raw, "entry_reason": reason},
             )
-            actions.append({"action": "BUY_ORDER", "code": signal["code"], "qty": qty, "price": current_price, "reason": reason_label("OrderPending")})
+            actions.append({"action": "BUY_ORDER", "code": signal["code"], "name": display_name(signal), "qty": qty, "price": current_price, "reason": reason_label("OrderPending"), "plan": action_plan_summary(position_payload)})
         blocked_codes.add(signal["code"])
 
     return actions
@@ -658,7 +704,7 @@ async def run_watch_tick_for_user(credentials: dict, *, test_mode: bool = False,
 
     if actions:
         lines = [f"KOSPI bot actions: {len(actions)}"]
-        lines.extend(f"{item['action']} {item['code']} qty {item['qty']} @ {item['price']:,} {item['reason']}" for item in actions)
+        lines.extend(f"{item['action']} {item.get('name') or item['code']} qty {item['qty']} @ {item['price']:,} {item['reason']} ({item.get('plan') or '-'})" for item in actions)
         await send_telegram_message_with_bot(credentials.get("telegram_bot_token"), credentials.get("telegram_chat_id"), "\n".join(lines))
 
     return {
