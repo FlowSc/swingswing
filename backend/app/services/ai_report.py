@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.core.config import get_settings
+from app.services.company_profile import enrich_company_profile
 from app.services.emailer import send_admin_email_result
 from app.services.supabase_rest import SupabaseRest
 
@@ -548,11 +549,13 @@ def build_report_title_line(signals: list[dict], trade_date_text: str, report_ty
 
 
 def select_report_input_fields(signal: dict, rank: int) -> dict:
+    code = signal.get("Code")
+    company_profile = enrich_company_profile(code, normalize_company_profile(signal.get("CompanyProfile")))
     return {
         "rank": rank,
         "name": signal.get("Name"),
-        "code": signal.get("Code"),
-        "company_profile": normalize_company_profile(signal.get("CompanyProfile")),
+        "code": code,
+        "company_profile": normalize_company_profile(company_profile),
         "score": signal.get("Score"),
         "entry_price": signal.get("Entry"),
         "stop_loss": signal.get("StopLoss"),

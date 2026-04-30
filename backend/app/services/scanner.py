@@ -10,6 +10,7 @@ import pandas as pd
 
 from app.core.config import get_settings
 from app.services.ai_report import send_daily_signal_report
+from app.services.company_profile import company_profile_from_row, enrich_company_profile
 from app.services.supabase_rest import SupabaseRest
 from app.services.telegram import send_telegram_message
 
@@ -302,22 +303,8 @@ def market_return_20d(base_date: date) -> float:
     return float(close.iloc[-1] / close.iloc[-21] - 1) * 100
 
 
-def _optional_text(row: pd.Series, columns: tuple[str, ...]) -> str | None:
-    for column in columns:
-        if column in row.index and pd.notna(row[column]) and str(row[column]).strip():
-            return str(row[column]).strip()
-    return None
-
-
 def _company_profile_from_row(row: pd.Series, universe: str) -> dict:
-    return {
-        "market": _optional_text(row, ("Market", "시장구분", "MarketName")) or universe,
-        "sector": _optional_text(row, ("Sector", "섹터", "업종", "Industry")) or "제공 데이터 기준 확인 불가",
-        "industry": _optional_text(row, ("Industry", "산업", "업종명", "Dept")) or "제공 데이터 기준 확인 불가",
-        "business_summary": _optional_text(row, ("BusinessSummary", "Summary", "사업내용", "Description")) or "제공 데이터 기준 확인 불가",
-        "market_cap": int(row["Marcap"]) if "Marcap" in row.index and pd.notna(row["Marcap"]) else None,
-        "shares": int(row["Stocks"]) if "Stocks" in row.index and pd.notna(row["Stocks"]) else None,
-    }
+    return company_profile_from_row(row, universe)
 
 
 def _normalize_listing(listing: pd.DataFrame, universe: str) -> pd.DataFrame:
@@ -348,6 +335,10 @@ def load_scan_universe() -> pd.DataFrame:
         pass
 
     universe = pd.concat(frames, ignore_index=True).drop_duplicates("Code")
+    universe["CompanyProfile"] = universe.apply(
+        lambda row: enrich_company_profile(row["Code"], row.get("CompanyProfile") or {}),
+        axis=1,
+    )
     logger.warning("Loaded scan universe: %s symbols", len(universe))
     return universe
 
