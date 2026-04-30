@@ -998,6 +998,19 @@ function Dashboard({ session }: { session: Session }) {
             row,
           })}
         />
+        {isScanAdmin && (
+          <DataPanel
+            title={selectedSignalDate ? `${selectedSignalDate} AI 리포트 상태` : "AI 리포트 상태"}
+            rows={aiReports.map(normalizeAiReportStatusRow)}
+            columns={["report_kind_ko", "name", "code", "status_ko", "created_at", "started_at", "finished_at", "error"]}
+            maxRows={20}
+            headerAction={(
+              <button className="ghost small" type="button" disabled={pending === "signalsRefresh" || !selectedSignalDate} onClick={refreshSignalsOnly}>
+                {pending === "signalsRefresh" ? "갱신 중" : "새로고침"}
+              </button>
+            )}
+          />
+        )}
         <DataPanel
           title="와쳐 실행 로그"
           rows={watcherRuns.map(normalizeWatcherRunRow)}
@@ -2153,6 +2166,18 @@ function normalizeWatcherRunRow(row: WatcherRun): Record<string, unknown> {
   };
 }
 
+function normalizeAiReportStatusRow(row: AiReportStatus): Record<string, unknown> {
+  return {
+    ...row,
+    report_kind_ko: translateReportType(row.report_type),
+    status_ko: translateReportStatus(row.status),
+    created_at: formatDateTime(row.created_at),
+    started_at: formatDateTime(row.started_at),
+    finished_at: formatDateTime(row.finished_at),
+    error: row.error || "",
+  };
+}
+
 function enrichTradeLogRow(
   row: Record<string, unknown>,
   positions: Array<Record<string, unknown>>,
@@ -2246,6 +2271,28 @@ function translateWatcherSkipReason(reason: unknown) {
     unrealized_loss_limit: "미실현손실 한도 도달",
     market_crash_filter: "시장 급락 신규 매수 차단",
     completed: "실행 완료",
+  };
+  return map[value] || value || "-";
+}
+
+function translateReportType(type: unknown) {
+  const value = String(type || "");
+  const map: Record<string, string> = {
+    daily: "종합 리포트",
+    signal: "개별 리포트",
+    daily_blog: "종합 블로그",
+    signal_blog: "개별 블로그",
+  };
+  return map[value] || value || "-";
+}
+
+function translateReportStatus(status: unknown) {
+  const value = String(status || "");
+  const map: Record<string, string> = {
+    queued: "대기 중",
+    running: "작성 중",
+    completed: "완료",
+    failed: "실패",
   };
   return map[value] || value || "-";
 }

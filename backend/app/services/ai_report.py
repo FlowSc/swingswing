@@ -482,6 +482,8 @@ async def process_queued_ai_reports(limit: int = 1) -> list[dict]:
         order="created_at.asc",
         limit=limit,
     )
+    if not rows:
+        logger.info("AI report worker: no queued reports")
     results: list[dict] = []
     for row in rows:
         results.append(await process_ai_report_row(row))
@@ -492,6 +494,13 @@ async def process_ai_report_row(row: dict) -> dict:
     rest = SupabaseRest()
     report_id = row["id"]
     started_at = now_iso()
+    logger.warning(
+        "AI report worker claiming: id=%s type=%s code=%s trade_date=%s",
+        report_id,
+        row.get("report_type"),
+        row.get("code"),
+        row.get("trade_date"),
+    )
     claimed = await rest.patch(
         "ai_reports",
         filters={"id": f"eq.{report_id}", "status": "eq.queued"},
@@ -506,6 +515,7 @@ async def process_ai_report_row(row: dict) -> dict:
     report_type = row.get("report_type") or "daily"
     report_result = await generate_daily_signal_report_result(signals, trade_date, report_type=report_type)
     if not report_result["ok"]:
+        logger.warning("AI report worker failed: id=%s stage=%s error=%s", report_id, report_result["stage"], report_result["error"])
         await rest.patch(
             "ai_reports",
             filters={"id": f"eq.{report_id}"},
@@ -517,6 +527,7 @@ async def process_ai_report_row(row: dict) -> dict:
         )
         return {"id": report_id, "status": "failed", "error": report_result["error"]}
 
+    logger.warning("AI report worker completed: id=%s type=%s code=%s", report_id, report_type, row.get("code"))
     await rest.patch(
         "ai_reports",
         filters={"id": f"eq.{report_id}"},
