@@ -1689,7 +1689,7 @@ function SignalDetail({
         ["섹터", companyProfile.sector],
         ["업종", companyProfile.industry],
         ["사업 요약", companyProfile.business_summary],
-        ["시가총액", companyProfile.market_cap],
+        ["시가총액", formatMarketCap(companyProfile.market_cap)],
       ]} />
       <DetailSection title="매매 계획" items={[
         ["매수가", row.entry],
@@ -1959,6 +1959,16 @@ function formatCell(value: unknown) {
   if (value === null || value === undefined) return "-";
   if (typeof value === "number") return value.toLocaleString("ko-KR");
   return String(value);
+}
+
+function formatMarketCap(value: unknown) {
+  const numeric = numericValue(value);
+  if (numeric === null || numeric <= 0) return formatCell(value);
+  const trillion = Math.floor(numeric / 1_000_000_000_000);
+  const hundredMillion = Math.round((numeric % 1_000_000_000_000) / 100_000_000);
+  if (trillion > 0 && hundredMillion > 0) return `${trillion}조 ${hundredMillion.toLocaleString("ko-KR")}억 원`;
+  if (trillion > 0) return `${trillion}조 원`;
+  return `${Math.round(numeric / 100_000_000).toLocaleString("ko-KR")}억 원`;
 }
 
 function numericValue(value: unknown): number | null {

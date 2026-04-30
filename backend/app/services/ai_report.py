@@ -36,6 +36,7 @@ REPORT_INSTRUCTIONS = """
 - 문체는 전문적이지만 일반 투자자도 이해할 수 있게 쓴다.
 - 문장 어미는 딱딱한 보고서체 대신 "~했습니다", "~볼 수 있습니다", "~확인했습니다"처럼 부드러운 설명체로 작성한다.
 - 독자에게 말하듯 자연스럽게 설명하되, 과장된 홍보 문구는 쓰지 않는다.
+- 시가총액은 제공된 축약 표기만 사용하고, 원 단위 숫자와 조/억 단위 해석을 한 문장에서 반복하지 않는다.
 - 한자를 사용하지 않는다. 예: "乖離"가 아니라 "괴리" 또는 "이격"이라고 쓴다.
 - 전문용어가 나오면 처음 등장하는 문단에서 괄호로 쉬운 설명을 붙인다. 예: RSI(최근 가격 상승/하락 압력을 숫자로 보여주는 지표), ATR(주가가 하루에 평균적으로 얼마나 흔들리는지 보는 변동성 지표), 일목균형표(추세 전환과 지지/저항을 함께 보는 보조지표), 볼린저 밴드(가격이 평균에서 얼마나 벌어졌는지 보는 변동성 지표).
 - 각 섹션마다 숫자만 나열하지 말고 "이 값이 초보 투자자에게 어떤 의미인지"를 1~2문장으로 풀어서 설명한다.
@@ -140,6 +141,7 @@ SIGNAL_REPORT_INSTRUCTIONS = """
 - 개별 기업 하나만 다루며, 다른 후보 비교표나 핵심 후보 요약표는 절대 작성하지 않는다.
 - 문장 어미는 딱딱한 보고서체 대신 "~했습니다", "~볼 수 있습니다", "~확인했습니다"처럼 부드러운 설명체로 작성한다.
 - 독자에게 말하듯 자연스럽게 설명하되, 과장된 홍보 문구는 쓰지 않는다.
+- 시가총액은 제공된 축약 표기만 사용하고, 원 단위 숫자와 조/억 단위 해석을 한 문장에서 반복하지 않는다.
 - 한자를 사용하지 않는다. 예: "乖離"가 아니라 "괴리" 또는 "이격"이라고 쓴다.
 - 전문용어가 나오면 처음 등장하는 문단에서 괄호로 쉬운 설명을 붙인다. 예: RSI(최근 가격 상승/하락 압력을 숫자로 보여주는 지표), ATR(주가가 하루에 평균적으로 얼마나 흔들리는지 보는 변동성 지표), 일목균형표(추세 전환과 지지/저항을 함께 보는 보조지표), 볼린저 밴드(가격이 평균에서 얼마나 벌어졌는지 보는 변동성 지표).
 - 각 섹션마다 숫자만 나열하지 말고 "이 값이 초보 투자자에게 어떤 의미인지"를 1~2문장으로 풀어서 설명한다.
@@ -663,8 +665,26 @@ def normalize_company_profile(value: object) -> dict:
         "sector": profile.get("sector") or "제공 데이터 기준 확인 불가",
         "industry": profile.get("industry") or "제공 데이터 기준 확인 불가",
         "business_summary": profile.get("business_summary") or "제공 데이터 기준 확인 불가",
-        "market_cap": profile.get("market_cap") or "제공 데이터 기준 확인 불가",
+        "market_cap": format_market_cap(profile.get("market_cap")),
     }
+
+
+def format_market_cap(value: object) -> str:
+    if value in {None, "", "제공 데이터 기준 확인 불가"}:
+        return "제공 데이터 기준 확인 불가"
+    try:
+        numeric = int(float(str(value).replace(",", "").replace("원", "").strip()))
+    except (TypeError, ValueError):
+        return str(value)
+    if numeric <= 0:
+        return "제공 데이터 기준 확인 불가"
+    trillion = numeric // 1_000_000_000_000
+    hundred_million = round((numeric % 1_000_000_000_000) / 100_000_000)
+    if trillion and hundred_million:
+        return f"{trillion}조 {hundred_million:,}억 원"
+    if trillion:
+        return f"{trillion}조 원"
+    return f"{round(numeric / 100_000_000):,}억 원"
 
 
 def extract_output_text(data: dict) -> str:
