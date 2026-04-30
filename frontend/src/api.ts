@@ -249,6 +249,11 @@ export const api = {
     const suffix = tradeDate ? `?trade_date=${encodeURIComponent(tradeDate)}` : "";
     return request<{ sent: boolean; trade_date: string; signals: number }>(`/bot/reports/daily${suffix}`, session, { method: "POST" });
   },
+  sendSignalReport: (session: Session, payload: { trade_date: string; code: string }) =>
+    request<{ sent: boolean; trade_date: string; code: string; name?: string }>("/bot/reports/signal", session, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   watchTick: (session: Session, payload: { test_mode: boolean; dry_run: boolean }) =>
     request("/bot/watch-tick", session, { method: "POST", body: JSON.stringify(payload) }),
   todaySignals: (session: Session) => request<Array<Record<string, unknown>>>("/signals/today", session),

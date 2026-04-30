@@ -706,6 +706,10 @@ th {
   transform: translateY(-1px);
 }
 
+.detail-action {
+  width: fit-content;
+}
+
 .detail-section {
   padding: 16px;
   border: 1px solid var(--line);

@@ -330,6 +330,19 @@ function Dashboard({ session }: { session: Session }) {
     );
   }
 
+  async function sendSingleSignalReport(row: Record<string, unknown>) {
+    const code = String(row.code || "").padStart(6, "0");
+    if (!selectedSignalDate || !code) {
+      setStatus({ type: "error", message: "리포트를 생성할 시그널 날짜 또는 종목코드가 없습니다." });
+      return;
+    }
+    await run(
+      "signalReport",
+      () => api.sendSignalReport(session, { trade_date: selectedSignalDate, code }),
+      "개별 기업 AI 리포트 메일 발송 완료:",
+    );
+  }
+
   async function refresh() {
     try {
       const [brokerResult, accountResult, strategyResult, dateResult, positionResult, logResult, dashboardResult] = await Promise.all([
@@ -618,7 +631,15 @@ function Dashboard({ session }: { session: Session }) {
         )}
       </div>
       <AutoTradingRules strategy={strategy} mode={brokerStatus?.mode} liveOrderEnabled={brokerStatus?.live_order_enabled || false} serverLiveTradingAllowed={brokerStatus?.server_live_trading_allowed || false} />
-      {detail && <DetailOverlay detail={detail} onClose={() => setDetail(null)} />}
+      {detail && (
+        <DetailOverlay
+          detail={detail}
+          isScanAdmin={isScanAdmin}
+          pending={pending}
+          onSendSignalReport={sendSingleSignalReport}
+          onClose={() => setDetail(null)}
+        />
+      )}
     </section>
   );
 }
@@ -925,6 +946,7 @@ function labelForPending(key: string) {
     signals: "시그널 조회",
     backtest: "백테스트",
     report: "AI 리포트 생성/메일 발송",
+    signalReport: "개별 기업 AI 리포트 생성/메일 발송",
   };
   return labels[key] || "요청";
 }
@@ -1058,7 +1080,19 @@ function DataPanel({
   );
 }
 
-function DetailOverlay({ detail, onClose }: { detail: DetailSelection; onClose: () => void }) {
+function DetailOverlay({
+  detail,
+  isScanAdmin,
+  pending,
+  onSendSignalReport,
+  onClose,
+}: {
+  detail: DetailSelection;
+  isScanAdmin: boolean;
+  pending: string | null;
+  onSendSignalReport: (row: Record<string, unknown>) => void;
+  onClose: () => void;
+}) {
   const detailLabel =
     detail.kind === "signal" ? "시그널 상세"
       : detail.kind === "log" ? "매매 로그 상세"
@@ -1074,7 +1108,14 @@ function DetailOverlay({ detail, onClose }: { detail: DetailSelection; onClose: 
           </div>
           <button className="ghost small" onClick={onClose}>닫기</button>
         </div>
-        {detail.kind === "signal" && <SignalDetail row={detail.row} />}
+        {detail.kind === "signal" && (
+          <SignalDetail
+            row={detail.row}
+            isScanAdmin={isScanAdmin}
+            pending={pending === "signalReport"}
+            onSendReport={() => onSendSignalReport(detail.row)}
+          />
+        )}
         {detail.kind === "log" && <TradeLogDetail row={detail.row} />}
         {detail.kind === "position" && <PositionDetail row={detail.row} />}
         {detail.kind === "decision" && <DecisionDetail row={detail.row} />}
@@ -1083,7 +1124,17 @@ function DetailOverlay({ detail, onClose }: { detail: DetailSelection; onClose: 
   );
 }
 
-function SignalDetail({ row }: { row: Record<string, unknown> }) {
+function SignalDetail({
+  row,
+  isScanAdmin,
+  pending,
+  onSendReport,
+}: {
+  row: Record<string, unknown>;
+  isScanAdmin: boolean;
+  pending: boolean;
+  onSendReport: () => void;
+}) {
   const raw = asRecord(row.raw);
   const companyProfile = asRecord(raw.CompanyProfile);
   const code = String(row.code || "").padStart(6, "0");
@@ -1093,6 +1144,11 @@ function SignalDetail({ row }: { row: Record<string, unknown> }) {
       <a className="naver-link" href={naverUrl} target="_blank" rel="noreferrer">
         네이버 증권으로 가기
       </a>
+      {isScanAdmin && (
+        <button className="primary detail-action" type="button" disabled={pending} onClick={onSendReport}>
+          {pending ? "개별 리포트 생성/발송 중..." : "이 기업 AI 리포트 메일 보내기"}
+        </button>
+      )}
       <DetailSection title="기업 개요" items={[
         ["시장", companyProfile.market || raw.Universe],
         ["섹터", companyProfile.sector],

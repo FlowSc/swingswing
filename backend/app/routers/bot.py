@@ -2,6 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
@@ -15,6 +16,11 @@ from app.services.watcher import run_watch_tick_for_user
 
 
 router = APIRouter(prefix="/bot", tags=["bot"])
+
+
+class SingleSignalReportIn(BaseModel):
+    trade_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    code: str = Field(pattern=r"^\d{6}$")
 
 
 def require_scan_admin(user: CurrentUser) -> None:
@@ -160,6 +166,30 @@ async def send_daily_report(
     signals = [shared_signal_record_to_signal(row) for row in rows]
     sent = await send_daily_signal_report(signals, datetime.fromisoformat(target_date).date())
     return {"sent": sent, "trade_date": target_date, "signals": len(signals)}
+
+
+@router.post("/reports/signal")
+async def send_single_signal_report(
+    payload: SingleSignalReportIn,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    require_scan_admin(user)
+    rows = await SupabaseRest().select(
+        "shared_signals",
+        filters={"trade_date": f"eq.{payload.trade_date}", "code": f"eq.{payload.code}"},
+        limit=1,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Signal not found for report date and code.")
+
+    signal = shared_signal_record_to_signal(rows[0])
+    sent = await send_daily_signal_report([signal], datetime.fromisoformat(payload.trade_date).date())
+    return {
+        "sent": sent,
+        "trade_date": payload.trade_date,
+        "code": payload.code,
+        "name": signal.get("Name"),
+    }
 
 
 @router.post("/watch-tick")
