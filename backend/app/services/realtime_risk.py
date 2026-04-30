@@ -78,6 +78,18 @@ def _parse_execution_strength(fields: list[str]) -> float | None:
     return candidates[0] if candidates else None
 
 
+def _parse_execution_price(fields: list[str]) -> int | None:
+    if len(fields) > 2:
+        value = _float(fields[2])
+        if value is not None and value > 0:
+            return int(value)
+    for item in fields[2:8]:
+        value = _float(item)
+        if value is not None and value > 100:
+            return int(value)
+    return None
+
+
 def _parse_orderbook(fields: list[str]) -> tuple[float | None, float | None]:
     if len(fields) < 43:
         return None, None
@@ -93,6 +105,49 @@ def _parse_orderbook(fields: list[str]) -> tuple[float | None, float | None]:
         mid = (ask_price + bid_price) / 2
         spread_pct = (ask_price - bid_price) / mid if mid > 0 else None
     return bid_ask_ratio, spread_pct
+
+
+async def collect_realtime_prices(client: Any, codes: list[str], duration_seconds: float) -> dict[str, dict[str, Any]]:
+    if not codes:
+        return {}
+    approval_key = await client.approval_key()
+    normalized_codes = [str(code).zfill(6) for code in codes]
+    prices: dict[str, dict[str, Any]] = {}
+    try:
+        async with websockets.connect(client.config.websocket_url, ping_interval=20, close_timeout=1) as websocket:
+            for code in normalized_codes:
+                await websocket.send(_subscribe_payload(approval_key, EXECUTION_TR_ID, code))
+            deadline = asyncio.get_running_loop().time() + max(1.0, duration_seconds)
+            while asyncio.get_running_loop().time() < deadline:
+                try:
+                    message = await asyncio.wait_for(websocket.recv(), timeout=max(0.1, deadline - asyncio.get_running_loop().time()))
+                except asyncio.TimeoutError:
+                    break
+                if not isinstance(message, str):
+                    continue
+                tr_id, fields = _parse_realtime_message(message)
+                if tr_id != EXECUTION_TR_ID or not fields:
+                    continue
+                code = str(fields[0] if fields else "").zfill(6)
+                if code not in normalized_codes:
+                    continue
+                price = _parse_execution_price(fields)
+                if not price:
+                    continue
+                prices[code] = {
+                    "current_price": price,
+                    "ask_price": 0,
+                    "bid_price": price,
+                    "day_high": price,
+                    "day_low": price,
+                    "accumulated_volume": 0,
+                    "vi_active": 0,
+                    "price_source": "websocket_execution",
+                    "received_at": asyncio.get_running_loop().time(),
+                }
+    except Exception as exc:
+        logger.warning("Realtime position price collection failed: codes=%s error=%s", normalized_codes, exc)
+    return prices
 
 
 async def check_realtime_entry_risk(client: Any, code: str, strategy: dict) -> RealtimeRiskResult:
@@ -152,4 +207,3 @@ async def check_realtime_entry_risk(client: Any, code: str, strategy: dict) -> R
     if spread_pct is not None and spread_pct > max_spread_pct:
         return RealtimeRiskResult(False, "realtime_spread_wide", strength, bid_ask_ratio, spread_pct, samples, raw)
     return RealtimeRiskResult(True, "passed", strength, bid_ask_ratio, spread_pct, samples, raw)
-

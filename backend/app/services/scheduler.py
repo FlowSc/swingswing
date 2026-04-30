@@ -10,7 +10,7 @@ from app.services.broker_credentials import list_enabled_broker_credentials
 from app.services.ai_report import process_queued_ai_reports
 from app.services.scanner import scan_and_store_for_user
 from app.services.supabase_rest import SupabaseRest
-from app.services.watcher import run_watch_tick_for_user
+from app.services.watcher import run_realtime_position_watch_for_user, run_watch_tick_for_user
 
 
 _scheduler: AsyncIOScheduler | None = None
@@ -34,6 +34,15 @@ async def intraday_watch_job() -> None:
             logger.exception("Intraday watcher failed: user_id=%s account_id=%s", credentials.get("user_id"), credentials.get("id"))
 
 
+async def realtime_position_watch_job() -> None:
+    credentials_rows = await list_enabled_broker_credentials()
+    for credentials in credentials_rows:
+        try:
+            await run_realtime_position_watch_for_user(credentials, dry_run=False)
+        except Exception:
+            logger.exception("Realtime position watcher failed: user_id=%s account_id=%s", credentials.get("user_id"), credentials.get("id"))
+
+
 async def ai_report_worker_job() -> None:
     results = await process_queued_ai_reports(limit=1)
     for result in results:
@@ -50,6 +59,15 @@ def start_scheduler() -> None:
     scheduler = AsyncIOScheduler(timezone=timezone)
     scheduler.add_job(daily_scan_job, "cron", day_of_week="mon-fri", hour=13, minute=30)
     scheduler.add_job(intraday_watch_job, "cron", day_of_week="mon-fri", hour="9-15", minute="*/5")
+    scheduler.add_job(
+        realtime_position_watch_job,
+        "cron",
+        day_of_week="mon-fri",
+        hour="9-15",
+        minute="*",
+        max_instances=1,
+        coalesce=True,
+    )
     if settings.ai_report_worker_enabled:
         scheduler.add_job(
             ai_report_worker_job,

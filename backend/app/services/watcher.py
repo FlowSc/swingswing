@@ -24,7 +24,7 @@ from app.services.sizing import (
     DEFAULT_CAPITAL,
     calculate_order_qty,
 )
-from app.services.realtime_risk import check_realtime_entry_risk
+from app.services.realtime_risk import check_realtime_entry_risk, collect_realtime_prices
 from app.services.strategy_settings import get_strategy_settings
 from app.services.supabase_rest import SupabaseRest
 from app.services.telegram import send_telegram_message_with_bot
@@ -878,6 +878,7 @@ async def manage_positions(
     *,
     test_mode: bool,
     dry_run: bool,
+    quote_overrides: dict[str, dict] | None = None,
     diagnostics: dict | None = None,
 ) -> list[dict]:
     manage_window_open = in_window(MANAGE_START, MANAGE_END, test_mode=test_mode)
@@ -895,7 +896,9 @@ async def manage_positions(
         if position["code"] in pending_sells:
             continue
 
-        quote = await get_quote_safe(client, position["code"])
+        quote = (quote_overrides or {}).get(str(position["code"]).zfill(6))
+        if quote is None:
+            quote = await get_quote_safe(client, position["code"])
         if quote is None:
             continue
         current_price = quote["current_price"]
@@ -1313,4 +1316,66 @@ async def run_watch_tick_for_user(credentials: dict, *, test_mode: bool = False,
         "live_order_enabled": bool(credentials.get("live_order_enabled")),
         "server_live_trading_allowed": settings.allow_live_trading,
         "orders_allowed": not dry_run and (not is_live or allow_live_orders),
+    }
+
+
+async def run_realtime_position_watch_for_user(credentials: dict, *, dry_run: bool = False) -> dict:
+    settings = get_settings()
+    user_id = credentials["user_id"]
+    broker_account_id = credentials.get("id")
+    is_live = (credentials.get("mode") or "paper") == "live"
+    allow_live_orders = bool(credentials.get("live_order_enabled")) and settings.allow_live_trading
+    client = client_from_credentials(credentials, enable_orders=not dry_run, allow_live_orders=allow_live_orders)
+    actions: list[dict] = []
+    diagnostics: dict = {
+        "run_at": now_kst().isoformat(),
+        "mode": credentials.get("mode") or "paper",
+        "dry_run": dry_run,
+        "realtime_position_watch": True,
+        "orders_allowed": not dry_run and (not is_live or allow_live_orders),
+        "manage_window_open": in_window(MANAGE_START, MANAGE_END, test_mode=False),
+    }
+    if not diagnostics["manage_window_open"]:
+        return {"user_id": user_id, "broker_account_id": broker_account_id, "actions": [], "action_count": 0, "diagnostics": diagnostics}
+
+    try:
+        positions = await open_positions(user_id, broker_account_id)
+        diagnostics["open_positions_count"] = len(positions)
+        if not positions:
+            diagnostics["skip_reason"] = "no_open_positions"
+            return {"user_id": user_id, "broker_account_id": broker_account_id, "actions": [], "action_count": 0, "diagnostics": diagnostics}
+
+        codes = [str(position["code"]).zfill(6) for position in positions]
+        quote_overrides = await collect_realtime_prices(client, codes, settings.kis_position_realtime_watch_seconds)
+        diagnostics["realtime_codes"] = codes
+        diagnostics["realtime_quotes_count"] = len(quote_overrides)
+        if not quote_overrides:
+            diagnostics["skip_reason"] = "no_realtime_quotes"
+            return {"user_id": user_id, "broker_account_id": broker_account_id, "actions": [], "action_count": 0, "diagnostics": diagnostics}
+
+        actions.extend(await manage_positions(user_id, broker_account_id, client, positions, test_mode=False, dry_run=dry_run, quote_overrides=quote_overrides, diagnostics=diagnostics))
+        diagnostics["stage"] = "completed"
+    except Exception as exc:
+        diagnostics["skip_reason"] = "realtime_position_watch_error"
+        diagnostics["error"] = str(exc)
+        logger.exception("Realtime position watch failed: user_id=%s account_id=%s", user_id, broker_account_id)
+        raise
+    finally:
+        diagnostics["action_count"] = len(actions)
+        diagnostics["sell_order_count"] = len([item for item in actions if str(item.get("action", "")).startswith("SELL")])
+        diagnostics["actions"] = actions
+        if actions:
+            await insert_watcher_run(user_id, broker_account_id, diagnostics)
+
+    if actions:
+        lines = [f"KOSPI realtime position actions: {len(actions)}"]
+        lines.extend(f"{item['action']} {item.get('name') or item['code']} qty {item['qty']} @ {item['price']:,} {item['reason']} ({item.get('plan') or '-'})" for item in actions)
+        await send_telegram_message_with_bot(credentials.get("telegram_bot_token"), credentials.get("telegram_chat_id"), "\n".join(lines))
+
+    return {
+        "user_id": user_id,
+        "broker_account_id": broker_account_id,
+        "actions": actions,
+        "action_count": len(actions),
+        "diagnostics": diagnostics,
     }
