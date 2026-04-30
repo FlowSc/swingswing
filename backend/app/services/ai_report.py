@@ -33,7 +33,7 @@ REPORT_INSTRUCTIONS = """
 작성 형식:
 
 <article>
-<h1>오늘의 스윙 후보 리포트</h1>
+<h1>{작성일} 스윙 후보 리포트</h1>
 
 <h2>1. 시장 및 전략 요약</h2>
 - 오늘 후보군이 어떤 성격인지 요약한다.
@@ -375,9 +375,11 @@ def now_iso() -> str:
 
 def build_report_prompt(signals: list[dict], trade_date: date) -> str:
     selected = [select_report_input_fields(signal, index) for index, signal in enumerate(signals, start=1)]
+    trade_date_text = trade_date.isoformat()
     sections = [
-        f"작성일: {trade_date.isoformat()}",
-        "아래 데이터는 오늘 스윙봇 상위 점수 종목에서 리포트 작성에 필요한 필드만 선별한 값이다.",
+        f"작성일: {trade_date_text}",
+        f"리포트 제목은 반드시 <h1>{trade_date_text} 스윙 후보 리포트</h1>로 작성한다.",
+        "아래 데이터는 해당 거래일의 스윙봇 상위 점수 종목에서 리포트 작성에 필요한 필드만 선별한 값이다.",
         "필드 설명:",
         "- company_profile: 시장, 섹터, 업종, 사업요약, 시가총액 등 기업 개요 정보",
         "- score: 스캐너 종합 점수",
