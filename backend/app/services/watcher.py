@@ -37,6 +37,8 @@ REASON_LABELS = {
     "TimeExit": "최대 보유기간 도달",
     "TakeProfit1": "1차 익절가 도달",
     "TakeProfit2": "2차 익절가 도달",
+    "BreakEvenStop": "1차 익절 후 본전 손절",
+    "KijunExit": "일목 기준선 이탈",
     "AlreadyHeld": "이미 보유 중인 종목",
     "ScoreBelowMinimum": "전략 최소 점수 미달",
     "BelowEntryBand": "현재가가 진입 허용 하단보다 낮음",
@@ -127,7 +129,7 @@ def passes_intraday_entry_filter(signal: dict, quote: dict[str, int], strategy: 
         return False, "BelowKijun"
     if strategy.get("use_bb_upper_filter", True) and current_price > bb_upper:
         return False, "AboveBBUpper"
-    if day_high > 0 and current_price < day_high * (1 - float(strategy["max_pullback_from_day_high"])):
+    if strategy.get("use_day_candle_filter", False) and day_high > 0 and current_price < day_high * (1 - float(strategy["max_pullback_from_day_high"])):
         return False, "PulledBackFromDayHigh"
     return True, "IntradayEntry"
 
@@ -241,6 +243,7 @@ async def manage_positions(user_id: str, broker_account_id: str | None, client, 
 
     actions: list[dict] = []
     rest = SupabaseRest()
+    strategy = await get_strategy_settings(user_id)
     for position in positions:
         current_price = await get_price_safe(client, position["code"])
         if current_price is None:
@@ -252,10 +255,13 @@ async def manage_positions(user_id: str, broker_account_id: str | None, client, 
             continue
 
         stop_loss = float(position["stop_loss"])
+        entry_price = float(position["entry_price"])
         tp1 = float(position["take_profit_1"])
         tp2 = float(position["take_profit_2"])
         trailing_stop = float(position["trailing_stop"])
-        hold_max_days = int((position.get("raw") or {}).get("HoldMaxDays", 15))
+        raw = position.get("raw") or {}
+        hold_max_days = int(raw.get("HoldMaxDays", 15))
+        kijun = float(raw.get("Kijun") or 0)
         held_days = days_held(position.get("entry_date"))
         reason: str | None = None
         sell_qty = 0
@@ -263,6 +269,14 @@ async def manage_positions(user_id: str, broker_account_id: str | None, client, 
 
         if current_price <= stop_loss:
             reason = "StopLoss"
+            sell_qty = remaining_qty
+            patch = {"remaining_qty": 0, "status": "CLOSED"}
+        elif strategy.get("use_breakeven_after_tp1", False) and position.get("take_profit_1_done") and current_price <= entry_price:
+            reason = "BreakEvenStop"
+            sell_qty = remaining_qty
+            patch = {"remaining_qty": 0, "status": "CLOSED"}
+        elif strategy.get("use_kijun_exit", False) and kijun > 0 and current_price < kijun:
+            reason = "KijunExit"
             sell_qty = remaining_qty
             patch = {"remaining_qty": 0, "status": "CLOSED"}
         elif current_price <= trailing_stop and (position.get("take_profit_1_done") or position.get("take_profit_2_done")):
@@ -277,6 +291,8 @@ async def manage_positions(user_id: str, broker_account_id: str | None, client, 
             reason = "TakeProfit1"
             sell_qty = min(max(1, int(int(position["qty"]) * 0.3)), remaining_qty)
             patch = {"remaining_qty": remaining_qty - sell_qty, "take_profit_1_done": True}
+            if strategy.get("use_breakeven_after_tp1", False):
+                patch["stop_loss"] = max(stop_loss, entry_price)
         elif not position.get("take_profit_2_done") and current_price >= tp2:
             reason = "TakeProfit2"
             sell_qty = min(max(1, int(int(position["qty"]) * 0.3)), remaining_qty)
@@ -289,7 +305,7 @@ async def manage_positions(user_id: str, broker_account_id: str | None, client, 
         if patch.get("remaining_qty", remaining_qty) <= 0:
             patch["status"] = "CLOSED"
         await rest.patch("positions", filters={"id": f"eq.{position['id']}"}, payload=patch)
-        await insert_trade_log(user_id, broker_account_id, "SELL", position, current_price, sell_qty, reason, {"order": response})
+        await insert_trade_log(user_id, broker_account_id, "SELL", position, current_price, sell_qty, reason, {"order": response, "strategy": strategy, "patch": patch})
         actions.append({"action": "SELL", "code": position["code"], "qty": sell_qty, "price": current_price, "reason": reason_label(reason)})
 
     return actions

@@ -28,6 +28,9 @@ class StrategySettingsIn(BaseModel):
     max_pullback_from_day_high: float = Field(ge=0, le=0.3)
     use_kijun_filter: bool = True
     use_bb_upper_filter: bool = True
+    use_day_candle_filter: bool = False
+    use_breakeven_after_tp1: bool = False
+    use_kijun_exit: bool = False
 
 
 class StrategySettingsOut(StrategySettingsIn):

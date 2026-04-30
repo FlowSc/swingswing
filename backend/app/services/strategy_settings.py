@@ -19,6 +19,9 @@ PRESETS: dict[str, dict] = {
         "max_pullback_from_day_high": 0.02,
         "use_kijun_filter": True,
         "use_bb_upper_filter": True,
+        "use_day_candle_filter": False,
+        "use_breakeven_after_tp1": False,
+        "use_kijun_exit": False,
     },
     "balanced": {
         "preset": "balanced",
@@ -33,6 +36,9 @@ PRESETS: dict[str, dict] = {
         "max_pullback_from_day_high": 0.03,
         "use_kijun_filter": True,
         "use_bb_upper_filter": True,
+        "use_day_candle_filter": False,
+        "use_breakeven_after_tp1": False,
+        "use_kijun_exit": False,
     },
     "aggressive": {
         "preset": "aggressive",
@@ -47,6 +53,9 @@ PRESETS: dict[str, dict] = {
         "max_pullback_from_day_high": 0.04,
         "use_kijun_filter": True,
         "use_bb_upper_filter": True,
+        "use_day_candle_filter": False,
+        "use_breakeven_after_tp1": False,
+        "use_kijun_exit": False,
     },
 }
 

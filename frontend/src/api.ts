@@ -240,6 +240,9 @@ export type StrategySettings = {
   max_pullback_from_day_high: number;
   use_kijun_filter: boolean;
   use_bb_upper_filter: boolean;
+  use_day_candle_filter: boolean;
+  use_breakeven_after_tp1: boolean;
+  use_kijun_exit: boolean;
 };
 
 export const api = {

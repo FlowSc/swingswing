@@ -44,6 +44,9 @@ const strategyPresets: Record<StrategyPreset, StrategySettings> = {
     max_pullback_from_day_high: 0.02,
     use_kijun_filter: true,
     use_bb_upper_filter: true,
+    use_day_candle_filter: false,
+    use_breakeven_after_tp1: false,
+    use_kijun_exit: false,
   },
   balanced: {
     preset: "balanced",
@@ -58,6 +61,9 @@ const strategyPresets: Record<StrategyPreset, StrategySettings> = {
     max_pullback_from_day_high: 0.03,
     use_kijun_filter: true,
     use_bb_upper_filter: true,
+    use_day_candle_filter: false,
+    use_breakeven_after_tp1: false,
+    use_kijun_exit: false,
   },
   aggressive: {
     preset: "aggressive",
@@ -72,6 +78,9 @@ const strategyPresets: Record<StrategyPreset, StrategySettings> = {
     max_pullback_from_day_high: 0.04,
     use_kijun_filter: true,
     use_bb_upper_filter: true,
+    use_day_candle_filter: false,
+    use_breakeven_after_tp1: false,
+    use_kijun_exit: false,
   },
 };
 
@@ -793,6 +802,7 @@ function StrategyPanel({
           <span>최대 보유 {strategy.max_open_positions}종목 · 하루 신규 {strategy.max_new_positions_per_day}종목</span>
           <span>종목당 {formatPct(strategy.position_capital_pct)} 이하 · 리스크 {formatPct(strategy.risk_per_trade_pct)} 이하</span>
           <span>최소 주문금액 {Number(strategy.min_order_amount).toLocaleString()}원</span>
+          <span>추가 필터: 당일 캔들 {strategy.use_day_candle_filter ? "ON" : "OFF"} · 본전 손절 {strategy.use_breakeven_after_tp1 ? "ON" : "OFF"} · 기준선 이탈 매도 {strategy.use_kijun_exit ? "ON" : "OFF"}</span>
         </div>
       )}
 
@@ -858,6 +868,18 @@ function StrategyPanel({
         <label className="check-row">
           <input type="checkbox" checked={strategy.use_bb_upper_filter} onChange={(event) => onChange({ ...strategy, use_bb_upper_filter: event.target.checked })} />
           볼린저 상단 필터 사용
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={strategy.use_day_candle_filter} onChange={(event) => onChange({ ...strategy, use_day_candle_filter: event.target.checked })} />
+          당일 캔들 위치 필터 사용
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={strategy.use_breakeven_after_tp1} onChange={(event) => onChange({ ...strategy, use_breakeven_after_tp1: event.target.checked })} />
+          1차 익절 후 본전 손절 사용
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={strategy.use_kijun_exit} onChange={(event) => onChange({ ...strategy, use_kijun_exit: event.target.checked })} />
+          일목 기준선 이탈 매도 사용
         </label>
       </div>
       <button className="primary strategy-save" type="button" disabled={pending} onClick={onSave}>
@@ -971,7 +993,7 @@ function AutoTradingRules({
           <li>점수 높은 순서로 확인하되 장중 가격 필터 통과 필요</li>
           <li>현재가가 진입가 {formatPct(strategy.min_entry_discount - 1)}~+{formatPct(strategy.max_entry_premium - 1)} 범위 안</li>
           <li>일목 기준선 필터 {strategy.use_kijun_filter ? "사용" : "미사용"}, 볼린저 상단 필터 {strategy.use_bb_upper_filter ? "사용" : "미사용"}</li>
-          <li>당일 고점 대비 {formatPct(strategy.max_pullback_from_day_high)} 이상 밀리면 제외</li>
+          <li>당일 캔들 위치 필터 {strategy.use_day_candle_filter ? `사용: 고점 대비 ${formatPct(strategy.max_pullback_from_day_high)} 이상 밀리면 제외` : "미사용"}</li>
         </ul>
       </div>
       <div>
@@ -991,6 +1013,8 @@ function AutoTradingRules({
           <li>손절가 도달 시 전량 매도</li>
           <li>1차/2차 익절가 도달 시 일부 매도</li>
           <li>익절 후 추적 손절 도달 시 잔량 매도</li>
+          <li>1차 익절 후 본전 손절 {strategy.use_breakeven_after_tp1 ? "사용" : "미사용"}</li>
+          <li>일목 기준선 이탈 매도 {strategy.use_kijun_exit ? "사용" : "미사용"}</li>
           <li>최대 보유일 도달 시 전량 매도</li>
         </ul>
       </div>

@@ -97,6 +97,9 @@ create table if not exists strategy_settings (
   max_pullback_from_day_high numeric not null default 0.03,
   use_kijun_filter boolean not null default true,
   use_bb_upper_filter boolean not null default true,
+  use_day_candle_filter boolean not null default false,
+  use_breakeven_after_tp1 boolean not null default false,
+  use_kijun_exit boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -194,6 +197,9 @@ alter table broker_credentials add column if not exists live_order_enabled boole
 alter table scan_runs add column if not exists started_at timestamptz;
 alter table broker_accounts add column if not exists access_token_enc text;
 alter table broker_accounts add column if not exists access_token_expires_at timestamptz;
+alter table strategy_settings add column if not exists use_day_candle_filter boolean not null default false;
+alter table strategy_settings add column if not exists use_breakeven_after_tp1 boolean not null default false;
+alter table strategy_settings add column if not exists use_kijun_exit boolean not null default false;
 alter table ai_reports add column if not exists status text not null default 'queued';
 alter table ai_reports add column if not exists error text;
 alter table ai_reports add column if not exists started_at timestamptz;
