@@ -247,10 +247,10 @@ export const api = {
   latestScanRun: (session: Session) => request<ScanRun | null>("/bot/scan-runs/latest", session),
   sendDailyReport: (session: Session, tradeDate?: string) => {
     const suffix = tradeDate ? `?trade_date=${encodeURIComponent(tradeDate)}` : "";
-    return request<{ sent: boolean; trade_date: string; signals: number; stage?: string; error?: string | null }>(`/bot/reports/daily${suffix}`, session, { method: "POST" });
+    return request<{ saved: boolean; trade_date: string; signals: number; stage?: string; error?: string | null; report_id?: number; title?: string }>(`/bot/reports/daily${suffix}`, session, { method: "POST" });
   },
   sendSignalReport: (session: Session, payload: { trade_date: string; code: string }) =>
-    request<{ sent: boolean; trade_date: string; code: string; name?: string; stage?: string; error?: string | null }>("/bot/reports/signal", session, {
+    request<{ saved: boolean; trade_date: string; code: string; name?: string; stage?: string; error?: string | null; report_id?: number; title?: string }>("/bot/reports/signal", session, {
       method: "POST",
       body: JSON.stringify(payload),
     }),

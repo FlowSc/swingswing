@@ -153,8 +153,23 @@ create table if not exists trade_decision_logs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists ai_reports (
+  id bigint generated always as identity primary key,
+  trade_date date not null,
+  report_type text not null,
+  code text not null default 'ALL',
+  name text,
+  title text not null,
+  markdown text not null,
+  raw jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
 create unique index if not exists uq_trade_decision_logs_daily_reason
   on trade_decision_logs (decision_date, user_id, broker_account_id, code, reason_code);
+
+create unique index if not exists uq_ai_reports_daily_type_code
+  on ai_reports (trade_date, report_type, code);
 
 create index if not exists idx_signals_trade_date_user on signals (trade_date, user_id);
 create index if not exists idx_shared_signals_trade_date on shared_signals (trade_date, score desc);
@@ -163,6 +178,7 @@ create index if not exists idx_positions_user_status on positions (user_id, stat
 create index if not exists idx_trade_logs_user_created_at on trade_logs (user_id, created_at desc);
 create index if not exists idx_trade_decision_logs_user_date on trade_decision_logs (user_id, decision_date, created_at desc);
 create index if not exists idx_broker_accounts_user_active on broker_accounts (user_id, is_active);
+create index if not exists idx_ai_reports_trade_date on ai_reports (trade_date desc, report_type, code);
 
 alter table positions add column if not exists take_profit_1_done boolean not null default false;
 alter table positions add column if not exists take_profit_2_done boolean not null default false;
@@ -231,6 +247,7 @@ alter table strategy_settings enable row level security;
 alter table positions enable row level security;
 alter table trade_logs enable row level security;
 alter table trade_decision_logs enable row level security;
+alter table ai_reports enable row level security;
 
 drop policy if exists "Users can read own broker credentials" on broker_credentials;
 create policy "Users can read own broker credentials"
@@ -276,3 +293,8 @@ drop policy if exists "Users can read own trade decision logs" on trade_decision
 create policy "Users can read own trade decision logs"
   on trade_decision_logs for select
   using (auth.uid() = user_id);
+
+drop policy if exists "Authenticated users can read ai reports" on ai_reports;
+create policy "Authenticated users can read ai reports"
+  on ai_reports for select
+  using (auth.uid() is not null);

@@ -326,7 +326,7 @@ function Dashboard({ session }: { session: Session }) {
     await run(
       "report",
       () => api.sendDailyReport(session, selectedSignalDate || undefined),
-      "AI 리포트 메일 발송 완료:",
+      "AI 리포트 생성/DB 저장 완료:",
     );
   }
 
@@ -339,7 +339,7 @@ function Dashboard({ session }: { session: Session }) {
     await run(
       "signalReport",
       () => api.sendSignalReport(session, { trade_date: selectedSignalDate, code }),
-      "개별 기업 AI 리포트 메일 발송 완료:",
+      "개별 기업 AI 리포트 생성/DB 저장 완료:",
     );
   }
 
@@ -550,7 +550,7 @@ function Dashboard({ session }: { session: Session }) {
                 {pending === "scan" ? "스캔 중... 100개씩 처리" : "오늘 시그널 스캔"}
               </button>
               <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendReport}>
-                {pending === "report" ? "리포트 생성/발송 중..." : "AI 리포트 생성해서 메일 보내기"}
+                {pending === "report" ? "리포트 생성/저장 중..." : "AI 리포트 생성해서 DB 저장"}
               </button>
             </>
           ) : (
@@ -945,8 +945,8 @@ function labelForPending(key: string) {
     scan: "오늘 시그널 스캔",
     signals: "시그널 조회",
     backtest: "백테스트",
-    report: "AI 리포트 생성/메일 발송",
-    signalReport: "개별 기업 AI 리포트 생성/메일 발송",
+    report: "AI 리포트 생성/DB 저장",
+    signalReport: "개별 기업 AI 리포트 생성/DB 저장",
   };
   return labels[key] || "요청";
 }
@@ -1146,7 +1146,7 @@ function SignalDetail({
       </a>
       {isScanAdmin && (
         <button className="primary detail-action" type="button" disabled={pending} onClick={onSendReport}>
-          {pending ? "개별 리포트 생성/발송 중..." : "이 기업 AI 리포트 메일 보내기"}
+          {pending ? "개별 리포트 생성/저장 중..." : "이 기업 AI 리포트 DB 저장"}
         </button>
       )}
       <DetailSection title="기업 개요" items={[

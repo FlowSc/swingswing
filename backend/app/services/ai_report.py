@@ -7,6 +7,7 @@ import httpx
 
 from app.core.config import get_settings
 from app.services.emailer import send_admin_email_result
+from app.services.supabase_rest import SupabaseRest
 
 
 logger = logging.getLogger(__name__)
@@ -153,7 +154,7 @@ async def generate_daily_signal_report_result(signals: list[dict], trade_date: d
 
 
 async def send_daily_signal_report(signals: list[dict], trade_date: date) -> bool:
-    return (await send_daily_signal_report_result(signals, trade_date))["sent"]
+    return (await create_daily_signal_report_result(signals, trade_date, report_type="daily"))["saved"]
 
 
 async def send_daily_signal_report_result(signals: list[dict], trade_date: date) -> dict:
@@ -164,6 +165,42 @@ async def send_daily_signal_report_result(signals: list[dict], trade_date: date)
     subject = f"[스윙봇] {trade_date.isoformat()} 상위 시그널 AI 리포트"
     email_result = await send_admin_email_result(subject, report)
     return {"sent": email_result["sent"], "stage": email_result["stage"], "error": email_result["error"]}
+
+
+async def create_daily_signal_report_result(
+    signals: list[dict],
+    trade_date: date,
+    *,
+    report_type: str,
+    code: str | None = None,
+    name: str | None = None,
+) -> dict:
+    report_result = await generate_daily_signal_report_result(signals, trade_date)
+    if not report_result["ok"]:
+        return {"saved": False, "stage": report_result["stage"], "error": report_result["error"], "report_id": None}
+
+    markdown = report_result["report"]
+    title_name = name or ("상위 시그널" if report_type == "daily" else "개별 종목")
+    title = f"{trade_date.isoformat()} {title_name} AI 리포트"
+    rows = await SupabaseRest().upsert(
+        "ai_reports",
+        {
+            "trade_date": trade_date.isoformat(),
+            "report_type": report_type,
+            "code": code or "ALL",
+            "name": name,
+            "title": title,
+            "markdown": markdown,
+            "raw": {
+                "signals_count": len(signals),
+                "model": get_settings().ai_report_model,
+                "codes": [signal.get("Code") for signal in signals],
+            },
+        },
+        on_conflict="trade_date,report_type,code",
+    )
+    row = rows[0] if rows else {}
+    return {"saved": True, "stage": "db", "error": None, "report_id": row.get("id"), "title": row.get("title")}
 
 
 def build_report_prompt(signals: list[dict], trade_date: date) -> str:
