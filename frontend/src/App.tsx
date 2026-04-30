@@ -875,7 +875,7 @@ function Dashboard({ session }: { session: Session }) {
         <DataPanel
           title={selectedSignalDate ? `${selectedSignalDate} 시그널` : "시그널"}
           rows={signals.map(enrichPlanPercentRow)}
-          columns={["score", "기존조건", "name", "entry", "stop_loss", "stop_loss_pct", "take_profit_2", "take_profit_2_pct", "code"]}
+          columns={["score", "핵심군", "name", "entry", "stop_loss", "stop_loss_pct", "take_profit_2", "take_profit_2_pct", "code"]}
           maxRows={30}
           headerAction={signalDates.length > 0 ? (
             <div className="panel-actions">
@@ -1732,7 +1732,7 @@ function SignalDetail({
         ["20일 거래대금", raw.TradingValue20D],
         ["시장 필터", `${formatCell(raw.MarketFilter)} / ${isPassed(raw.MarketFilterPassed) ? "통과" : "미통과"}`],
         ["유니버스", raw.Universe],
-        ["기존 제한 유니버스", isCoreUniverseSignal(raw) ? translateCoreUniverse(raw.CoreUniverseType) : "해당 없음"],
+        ["핵심군", isCoreUniverseSignal(raw) ? translateCoreUniverse(raw.CoreUniverseType) : "해당 없음"],
         ["5일 수익률", `${formatCell(raw["Ret_5D(%)"])}%`],
         ["20일 수익률", `${formatCell(raw["Ret_20D(%)"])}%`],
         ["시장 20일 수익률", `${formatCell(raw["MarketRet_20D(%)"])}%`],
@@ -2038,7 +2038,7 @@ function enrichPlanPercentRow(row: Record<string, unknown>) {
   const trailingStop = row.trailing_stop ?? exitPlan.trailing_stop ?? raw.TrailingStop;
   return {
     ...row,
-    기존조건: isCoreUniverseSignal(raw) ? translateCoreUniverse(raw.CoreUniverseType) : "전종목",
+    핵심군: isCoreUniverseSignal(raw) ? translateCoreUniverse(raw.CoreUniverseType) : "전종목",
     stop_loss_pct: formatPlanPct(exitPlan.stop_loss_pct) || formatPercentFromEntry(stopLoss, entry),
     take_profit_1_pct: formatPlanPct(exitPlan.take_profit_1_pct) || formatPercentFromEntry(takeProfit1, entry),
     take_profit_2_pct: formatPlanPct(exitPlan.take_profit_2_pct) || formatPercentFromEntry(takeProfit2, entry),
@@ -2179,9 +2179,9 @@ function translateReasons(reasons: unknown) {
     "Bull cloud pullback support": "양운 위 눌림목 지지",
     "Bear cloud breakout pressure": "음운 돌파 직전 수급",
     "KOSPI above MA5": "코스피 5일선 위",
-    "KOSPI_TOP1000": "코스피 시총 상위 1000",
-    KOSPI_TOP500: "코스피 시총 상위 1000",
-    KOSDAQ150: "코스닥150 구성",
+    "KOSPI_TOP1000": "KOSPI1000",
+    KOSPI_TOP500: "KOSPI1000",
+    KOSDAQ150: "KOSDAQ150 구성",
     "Core universe": "기존 제한 유니버스 해당",
   };
   return value.split(",").map((item) => map[item.trim()] || item.trim()).filter(Boolean).join(", ");
@@ -2198,9 +2198,9 @@ function isPassed(value: unknown) {
 function translateCoreUniverse(value: unknown) {
   const type = String(value || "");
   const map: Record<string, string> = {
-    KOSPI_TOP1000: "코스피 시총 상위 1000",
-    KOSPI_TOP500: "코스피 시총 상위 1000",
-    KOSDAQ150: "코스닥150",
+    KOSPI_TOP1000: "KOSPI1000",
+    KOSPI_TOP500: "KOSPI1000",
+    KOSDAQ150: "KOSDAQ150",
   };
   return map[type] || type || "해당 없음";
 }
