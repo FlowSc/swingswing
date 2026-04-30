@@ -206,6 +206,22 @@ export type BacktestResult = {
   trades: BacktestTrade[];
 };
 
+export type AiReport = {
+  id: number;
+  trade_date: string;
+  report_type: "daily" | "signal";
+  code: string;
+  name?: string | null;
+  title: string;
+  status: "queued" | "running" | "completed" | "failed";
+  markdown?: string;
+  html?: string;
+  error?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+};
+
 export type StrategyPreset = "conservative" | "balanced" | "aggressive";
 
 export type StrategySettings = {
@@ -254,6 +270,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  getAiReport: (session: Session, payload: { trade_date: string; report_type: "daily" | "signal"; code?: string }) => {
+    const params = new URLSearchParams({ trade_date: payload.trade_date, report_type: payload.report_type });
+    if (payload.code) params.set("code", payload.code);
+    return request<AiReport>(`/bot/reports?${params.toString()}`, session);
+  },
   watchTick: (session: Session, payload: { test_mode: boolean; dry_run: boolean }) =>
     request("/bot/watch-tick", session, { method: "POST", body: JSON.stringify(payload) }),
   todaySignals: (session: Session) => request<Array<Record<string, unknown>>>("/signals/today", session),

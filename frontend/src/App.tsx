@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import {
   api,
+  type AiReport,
   type BacktestResult,
   type BrokerAccount,
   type BrokerPayload,
@@ -343,6 +344,58 @@ function Dashboard({ session }: { session: Session }) {
     );
   }
 
+  async function downloadDailyReport() {
+    if (!selectedSignalDate) {
+      setStatus({ type: "error", message: "다운로드할 리포트 날짜가 없습니다." });
+      return;
+    }
+    await downloadReport({
+      key: "reportDownload",
+      payload: { trade_date: selectedSignalDate, report_type: "daily" as const },
+    });
+  }
+
+  async function downloadSingleSignalReport(row: Record<string, unknown>) {
+    const code = String(row.code || "").padStart(6, "0");
+    const tradeDate = String(row.trade_date || selectedSignalDate || "");
+    if (!tradeDate || !code) {
+      setStatus({ type: "error", message: "다운로드할 리포트 날짜 또는 종목코드가 없습니다." });
+      return;
+    }
+    await downloadReport({
+      key: "signalReportDownload",
+      payload: { trade_date: tradeDate, report_type: "signal" as const, code },
+    });
+  }
+
+  async function downloadReport({
+    key,
+    payload,
+  }: {
+    key: string;
+    payload: { trade_date: string; report_type: "daily" | "signal"; code?: string };
+  }) {
+    setPending(key);
+    setStatus({ type: "info", message: `${labelForPending(key)} 실행 중...` });
+    try {
+      const report = await api.getAiReport(session, payload);
+      if (report.status !== "completed") {
+        setStatus({ type: "info", message: `리포트가 아직 완료되지 않았습니다. 현재 상태: ${report.status}` });
+        return;
+      }
+      if (!report.html) {
+        setStatus({ type: "error", message: "완료된 리포트에 HTML 내용이 없습니다." });
+        return;
+      }
+      downloadHtmlReport(report);
+      setStatus({ type: "info", message: `리포트 다운로드 완료: ${report.title}` });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? cleanErrorMessage(error.message) : String(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function refresh() {
     try {
       const [brokerResult, accountResult, strategyResult, dateResult, positionResult, logResult, dashboardResult] = await Promise.all([
@@ -552,6 +605,9 @@ function Dashboard({ session }: { session: Session }) {
               <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendReport}>
                 {pending === "report" ? "리포트 생성 요청 중..." : "AI 리포트 생성 요청"}
               </button>
+              <button disabled={pending !== null || !selectedSignalDate} onClick={downloadDailyReport}>
+                {pending === "reportDownload" ? "종합 리포트 확인 중..." : "종합 리포트 다운로드"}
+              </button>
             </>
           ) : (
             <p className="command-copy">스캔 실행은 관리자만 가능하고, 사용자는 생성된 오늘 시그널만 조회합니다.</p>
@@ -637,6 +693,7 @@ function Dashboard({ session }: { session: Session }) {
           isScanAdmin={isScanAdmin}
           pending={pending}
           onSendSignalReport={sendSingleSignalReport}
+          onDownloadSignalReport={downloadSingleSignalReport}
           onClose={() => setDetail(null)}
         />
       )}
@@ -947,6 +1004,8 @@ function labelForPending(key: string) {
     backtest: "백테스트",
     report: "AI 리포트 생성 큐 등록",
     signalReport: "개별 기업 AI 리포트 생성 큐 등록",
+    reportDownload: "종합 리포트 다운로드",
+    signalReportDownload: "개별 리포트 다운로드",
   };
   return labels[key] || "요청";
 }
@@ -1018,6 +1077,41 @@ function cleanErrorMessage(message: string) {
   }
 }
 
+function downloadHtmlReport(report: AiReport) {
+  const html = report.html || "";
+  const documentHtml = `<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(report.title)}</title>
+</head>
+<body>
+${html}
+</body>
+</html>`;
+  const blob = new Blob([documentHtml], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${sanitizeFilename(`${report.trade_date}_${report.code}_${report.name || report.report_type}_ai_report`)}.html`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function sanitizeFilename(value: string) {
+  return value.replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, "_");
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function DataPanel({
   title,
   rows,
@@ -1085,12 +1179,14 @@ function DetailOverlay({
   isScanAdmin,
   pending,
   onSendSignalReport,
+  onDownloadSignalReport,
   onClose,
 }: {
   detail: DetailSelection;
   isScanAdmin: boolean;
   pending: string | null;
   onSendSignalReport: (row: Record<string, unknown>) => void;
+  onDownloadSignalReport: (row: Record<string, unknown>) => void;
   onClose: () => void;
 }) {
   const detailLabel =
@@ -1113,7 +1209,9 @@ function DetailOverlay({
             row={detail.row}
             isScanAdmin={isScanAdmin}
             pending={pending === "signalReport"}
+            downloadPending={pending === "signalReportDownload"}
             onSendReport={() => onSendSignalReport(detail.row)}
+            onDownloadReport={() => onDownloadSignalReport(detail.row)}
           />
         )}
         {detail.kind === "log" && <TradeLogDetail row={detail.row} />}
@@ -1128,12 +1226,16 @@ function SignalDetail({
   row,
   isScanAdmin,
   pending,
+  downloadPending,
   onSendReport,
+  onDownloadReport,
 }: {
   row: Record<string, unknown>;
   isScanAdmin: boolean;
   pending: boolean;
+  downloadPending: boolean;
   onSendReport: () => void;
+  onDownloadReport: () => void;
 }) {
   const raw = asRecord(row.raw);
   const companyProfile = asRecord(raw.CompanyProfile);
@@ -1145,9 +1247,14 @@ function SignalDetail({
         네이버 증권으로 가기
       </a>
       {isScanAdmin && (
-        <button className="primary detail-action" type="button" disabled={pending} onClick={onSendReport}>
-          {pending ? "개별 리포트 생성 요청 중..." : "이 기업 AI 리포트 생성 요청"}
-        </button>
+        <>
+          <button className="primary detail-action" type="button" disabled={pending} onClick={onSendReport}>
+            {pending ? "개별 리포트 생성 요청 중..." : "이 기업 AI 리포트 생성 요청"}
+          </button>
+          <button className="detail-action" type="button" disabled={downloadPending} onClick={onDownloadReport}>
+            {downloadPending ? "리포트 확인 중..." : "개별 리포트 다운로드"}
+          </button>
+        </>
       )}
       <DetailSection title="기업 개요" items={[
         ["시장", companyProfile.market || raw.Universe],

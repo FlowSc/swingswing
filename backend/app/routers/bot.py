@@ -202,6 +202,30 @@ async def send_single_signal_report(
     }
 
 
+@router.get("/reports")
+async def get_report(
+    trade_date: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    report_type: str = Query(pattern=r"^(daily|signal)$"),
+    code: str | None = Query(None, pattern=r"^\d{6}$"),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    require_scan_admin(user)
+    filters = {
+        "trade_date": f"eq.{trade_date}",
+        "report_type": f"eq.{report_type}",
+        "code": f"eq.{code or 'ALL'}",
+    }
+    rows = await SupabaseRest().select(
+        "ai_reports",
+        filters=filters,
+        order="created_at.desc",
+        limit=1,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="AI report not found.")
+    return rows[0]
+
+
 @router.post("/watch-tick")
 async def watch_tick(
     payload: WatchTickIn,
