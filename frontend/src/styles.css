@@ -317,6 +317,10 @@ a {
   margin-bottom: 14px;
 }
 
+.daily-panel .metric-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .metric-card {
   display: grid;
   gap: 5px;
