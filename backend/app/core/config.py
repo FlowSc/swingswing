@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     allow_live_trading: bool = False
     scan_admin_email: str = "zelatool@gmail.com"
     signup_invite_code: str | None = None
+    kis_realtime_filter_timeout_seconds: float = 3.0
 
     model_config = SettingsConfigDict(
         env_file=".env",

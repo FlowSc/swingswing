@@ -5,6 +5,8 @@ import logging
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+import FinanceDataReader as fdr
+
 from app.core.config import get_settings
 from app.services.kis import (
     client_from_credentials,
@@ -21,6 +23,7 @@ from app.services.sizing import (
     DEFAULT_CAPITAL,
     calculate_order_qty,
 )
+from app.services.realtime_risk import check_realtime_entry_risk
 from app.services.strategy_settings import get_strategy_settings
 from app.services.supabase_rest import SupabaseRest
 from app.services.telegram import send_telegram_message_with_bot
@@ -35,6 +38,7 @@ QUOTE_DELAY_SECONDS = 1.0
 QUOTE_ERROR_BACKOFF_SECONDS = 3.0
 OPEN_PENDING_STATUSES = {"OPEN", "PARTIAL", "CANCEL_FAILED"}
 STRATEGY_SELL_COOLDOWN_MINUTES = 30
+STOP_LOSS_AGGRESSIVE_TICKS = 3
 REASON_LABELS = {
     "IntradayEntry": "장중 진입 조건 충족",
     "StopLoss": "손절가 도달",
@@ -51,6 +55,7 @@ REASON_LABELS = {
     "BelowKijun": "현재가가 일목 기준선 아래",
     "AboveBBUpper": "현재가가 볼린저 상단 위",
     "PulledBackFromDayHigh": "당일 고점 대비 과도하게 밀림",
+    "StoppedOutToday": "당일 손절 종목 재매수 금지",
     "PendingOrderExists": "미체결 주문 대기 중",
     "OrderPending": "주문 접수 후 체결 대기",
     "OrderFilled": "주문/계좌 기준 체결 확인",
@@ -63,6 +68,12 @@ REASON_LABELS = {
     "InvalidQuote": "현재가 값 비정상",
     "SizingRejected": "수량/리스크/최소주문금액 조건 미충족",
     "StrategySellCooldown": "매수 직후 전략 매도 쿨다운",
+    "DailyLossLimit": "하루 손실 한도 도달",
+    "MarketCrashFilter": "시장 급락 신규 매수 차단",
+    "RealtimeStrengthWeak": "실시간 체결강도 약함",
+    "RealtimeBidDepthWeak": "실시간 매수 호가잔량 약함",
+    "RealtimeSpreadWide": "실시간 호가 스프레드 과다",
+    "RealtimeCheckFailed": "실시간 체결/호가 확인 실패",
 }
 
 
@@ -111,6 +122,15 @@ def in_strategy_sell_cooldown(position: dict) -> bool:
 
 def reason_label(reason_code: str) -> str:
     return REASON_LABELS.get(reason_code, reason_code)
+
+
+def realtime_reason_code(reason: str) -> str:
+    return {
+        "realtime_strength_weak": "RealtimeStrengthWeak",
+        "realtime_bid_depth_weak": "RealtimeBidDepthWeak",
+        "realtime_spread_wide": "RealtimeSpreadWide",
+        "realtime_check_failed": "RealtimeCheckFailed",
+    }.get(reason, "RealtimeCheckFailed")
 
 
 def display_name(item: dict) -> str:
@@ -215,6 +235,128 @@ def sell_order_price(quote: dict[str, int]) -> int:
     if bid_price > 0:
         return bid_price
     return max(tick_size(current_price), current_price - tick_size(current_price))
+
+
+def price_ticks_below(price: int, ticks: int) -> int:
+    result = max(0, int(price))
+    for _ in range(max(0, ticks)):
+        result = max(tick_size(result), result - tick_size(result))
+    return result
+
+
+def stop_loss_order_price(quote: dict[str, int]) -> int:
+    current_price = int(quote.get("current_price") or 0)
+    bid_price = int(quote.get("bid_price") or 0)
+    base_price = bid_price if bid_price > 0 else current_price
+    if base_price <= 0:
+        return 0
+    return price_ticks_below(base_price, STOP_LOSS_AGGRESSIVE_TICKS)
+
+
+def sell_order_policy(reason: str, quote: dict[str, int]) -> dict[str, int | str]:
+    if reason == "StopLoss":
+        return {
+            "type": "aggressive_stop_limit",
+            "base": "best_bid" if int(quote.get("bid_price") or 0) > 0 else "current_price",
+            "slippage_ticks": STOP_LOSS_AGGRESSIVE_TICKS,
+        }
+    return {"type": "best_bid_limit", "base": "best_bid_or_current_minus_one_tick", "slippage_ticks": 0}
+
+
+def exit_order_price(reason: str, quote: dict[str, int]) -> int:
+    if reason == "StopLoss":
+        return stop_loss_order_price(quote)
+    return sell_order_price(quote)
+
+
+def estimate_exit_cost_pct(strategy: dict) -> float:
+    return max(0.0, float(strategy.get("commission_tax_pct") or 0))
+
+
+def realized_loss_today(logs: list[dict]) -> int:
+    loss = 0
+    for row in logs:
+        if row.get("action") != "SELL":
+            continue
+        raw = row.get("raw") or {}
+        if not isinstance(raw, dict):
+            continue
+        if raw.get("reason_code") == "OrderPending":
+            continue
+        realized_pnl = raw.get("realized_pnl")
+        try:
+            value = int(float(str(realized_pnl)))
+        except (TypeError, ValueError):
+            continue
+        if value < 0:
+            loss += abs(value)
+    return loss
+
+
+async def today_trade_logs(user_id: str, broker_account_id: str | None) -> list[dict]:
+    start_at = datetime.combine(now_kst().date(), time.min, tzinfo=ZoneInfo(get_settings().timezone)).isoformat()
+    filters = {"user_id": f"eq.{user_id}", "created_at": f"gte.{start_at}"}
+    if broker_account_id:
+        filters["broker_account_id"] = f"eq.{broker_account_id}"
+    return await SupabaseRest().select("trade_logs", filters=filters, order="created_at.desc", limit=300)
+
+
+async def today_stopped_out_codes(user_id: str, broker_account_id: str | None) -> set[str]:
+    logs = await today_trade_logs(user_id, broker_account_id)
+    codes: set[str] = set()
+    for row in logs:
+        if row.get("action") != "SELL":
+            continue
+        raw = row.get("raw") or {}
+        if not isinstance(raw, dict):
+            continue
+        if raw.get("reason_code") == "StopLoss":
+            code = row.get("code")
+            if code:
+                codes.add(str(code).zfill(6))
+    return codes
+
+
+async def daily_loss_limit_reached(user_id: str, broker_account_id: str | None, total_equity: int, strategy: dict, diagnostics: dict | None = None) -> bool:
+    if not strategy.get("use_daily_loss_limit", True):
+        return False
+    limit = int(max(total_equity, 1) * float(strategy.get("daily_loss_limit_pct") or 0))
+    if limit <= 0:
+        return False
+    loss = realized_loss_today(await today_trade_logs(user_id, broker_account_id))
+    if diagnostics is not None:
+        diagnostics["daily_realized_loss"] = loss
+        diagnostics["daily_loss_limit_amount"] = limit
+    return loss >= limit
+
+
+def market_intraday_return_pct() -> float | None:
+    start = now_kst().date() - timedelta(days=7)
+    try:
+        frame = fdr.DataReader("KS11", start=start)
+    except Exception as exc:
+        logger.warning("Market crash filter skipped: failed to load KS11: %s", exc)
+        return None
+    if frame is None or frame.empty:
+        return None
+    last = frame.dropna().iloc[-1]
+    open_price = float(last.get("Open") or 0)
+    close_price = float(last.get("Close") or 0)
+    if open_price <= 0 or close_price <= 0:
+        return None
+    return close_price / open_price - 1
+
+
+async def market_crash_filter_triggered(strategy: dict, diagnostics: dict | None = None) -> bool:
+    if not strategy.get("use_market_crash_filter", True):
+        return False
+    market_return = await asyncio.to_thread(market_intraday_return_pct)
+    if diagnostics is not None:
+        diagnostics["market_intraday_return_pct"] = market_return
+        diagnostics["market_crash_limit_pct"] = float(strategy.get("market_crash_limit_pct") or 0)
+    if market_return is None:
+        return False
+    return market_return <= float(strategy.get("market_crash_limit_pct") or -0.02)
 
 
 async def get_quote_safe(client, code: str) -> dict[str, int] | None:
@@ -586,6 +728,9 @@ async def reconcile_pending_orders(
                 )
                 await insert_trade_log(user_id, broker_account_id, "BUY", signal or order, entry_price, qty, "OrderFilled", raw)
                 open_codes.add(code)
+            elif side == "SELL":
+                position = (raw.get("position") if isinstance(raw, dict) else None) or order
+                await insert_trade_log(user_id, broker_account_id, "SELL", position, int(raw.get("avg_price") or order.get("price") or 0), int(raw.get("filled_qty") or order.get("qty") or 0), "OrderFilled", raw)
             actions.append({"action": "FILL", "code": code, "name": display_name(order), "qty": int(order.get("qty") or 0), "price": int(order.get("price") or 0), "reason": reason_label("OrderFilled"), "plan": action_plan_summary((raw.get("expected_position") if isinstance(raw, dict) else None) or order)})
             continue
 
@@ -715,14 +860,21 @@ async def manage_positions(
         if not reason or sell_qty <= 0:
             continue
 
-        order_price = sell_order_price(quote)
+        order_price = exit_order_price(reason, quote)
+        order_policy = sell_order_policy(reason, quote)
+        gross_pnl = (order_price - entry_price) * sell_qty
+        cost_amount = order_price * sell_qty * estimate_exit_cost_pct(strategy)
+        realized_pnl = gross_pnl - cost_amount
         response = await place_sell(client, position, sell_qty, order_price, reason=reason, dry_run=dry_run)
         if patch.get("remaining_qty", remaining_qty) <= 0:
             patch["status"] = "CLOSED"
+        action_reason = reason_label(reason)
+        if order_policy.get("type") == "aggressive_stop_limit":
+            action_reason = f"{action_reason} (공격적 지정가 {order_policy['slippage_ticks']}틱)"
         if dry_run:
             await rest.patch("positions", filters={"id": f"eq.{position['id']}"}, payload=patch)
-            await insert_trade_log(user_id, broker_account_id, "SELL", position, order_price, sell_qty, reason, {"quote": quote, "trigger_price": current_price, "order": response, "strategy": strategy, "patch": patch})
-            actions.append({"action": "SELL", "code": position["code"], "name": display_name(position), "qty": sell_qty, "price": order_price, "reason": reason_label(reason), "plan": action_plan_summary(position)})
+            await insert_trade_log(user_id, broker_account_id, "SELL", position, order_price, sell_qty, reason, {"quote": quote, "trigger_price": current_price, "order": response, "order_policy": order_policy, "strategy": strategy, "patch": patch, "gross_pnl": gross_pnl, "cost_amount": cost_amount, "realized_pnl": realized_pnl})
+            actions.append({"action": "SELL", "code": position["code"], "name": display_name(position), "qty": sell_qty, "price": order_price, "reason": action_reason, "plan": action_plan_summary(position)})
         else:
             await insert_pending_order(
                 user_id,
@@ -733,10 +885,10 @@ async def manage_positions(
                 price=order_price,
                 response=response,
                 reason=reason,
-                raw={"position": position, "quote": quote, "trigger_price": current_price, "patch": patch, "strategy": strategy, "previous_remaining_qty": remaining_qty},
+                raw={"position": position, "quote": quote, "trigger_price": current_price, "order_policy": order_policy, "patch": patch, "strategy": strategy, "previous_remaining_qty": remaining_qty, "gross_pnl": gross_pnl, "cost_amount": cost_amount, "realized_pnl": realized_pnl},
             )
-            await insert_trade_log(user_id, broker_account_id, "SELL", position, order_price, sell_qty, "OrderPending", {"quote": quote, "trigger_price": current_price, "order": response, "strategy": strategy, "exit_reason": reason, "patch": patch})
-            actions.append({"action": "SELL_ORDER", "code": position["code"], "name": display_name(position), "qty": sell_qty, "price": order_price, "reason": f"{reason_label(reason)} 주문 접수", "plan": action_plan_summary(position)})
+            await insert_trade_log(user_id, broker_account_id, "SELL", position, order_price, sell_qty, "OrderPending", {"quote": quote, "trigger_price": current_price, "order": response, "order_policy": order_policy, "strategy": strategy, "exit_reason": reason, "patch": patch, "gross_pnl": gross_pnl, "cost_amount": cost_amount, "realized_pnl": realized_pnl})
+            actions.append({"action": "SELL_ORDER", "code": position["code"], "name": display_name(position), "qty": sell_qty, "price": order_price, "reason": f"{action_reason} 주문 접수", "plan": action_plan_summary(position)})
 
     return actions
 
@@ -773,12 +925,23 @@ async def enter_positions(
     cash = extract_cash(balance)
     total_equity = extract_total_equity(balance)
     strategy = await get_strategy_settings(user_id)
+    if await daily_loss_limit_reached(user_id, broker_account_id, total_equity, strategy, diagnostics):
+        if diagnostics is not None:
+            diagnostics["skip_reason"] = "daily_loss_limit"
+        logger.warning("Watcher enter skipped: daily loss limit reached user_id=%s account_id=%s", user_id, broker_account_id)
+        return []
+    if await market_crash_filter_triggered(strategy, diagnostics):
+        if diagnostics is not None:
+            diagnostics["skip_reason"] = "market_crash_filter"
+        logger.warning("Watcher enter skipped: market crash filter triggered user_id=%s account_id=%s", user_id, broker_account_id)
+        return []
     kis_codes = kis_holding_codes(balance)
     open_codes = {position["code"] for position in positions}
     pending_orders = await open_pending_orders(user_id, broker_account_id)
     pending_codes = {order["code"] for order in pending_orders}
     pending_buy_codes = {order["code"] for order in pending_orders if order.get("side") == "BUY"}
     today_codes = await today_entry_codes(user_id, broker_account_id)
+    stopped_out_codes = await today_stopped_out_codes(user_id, broker_account_id) if strategy.get("use_stoploss_reentry_block", True) else set()
     today_used_codes = today_codes | pending_buy_codes
     blocked_codes = open_codes | kis_codes | pending_codes
     held_or_pending_codes = open_codes | kis_codes | pending_codes
@@ -796,6 +959,7 @@ async def enter_positions(
                 "pending_orders_count": len(pending_codes),
                 "today_entry_count": len(today_codes),
                 "today_pending_buy_count": len(pending_buy_codes),
+                "today_stopped_out_count": len(stopped_out_codes),
                 "remaining_daily_slots": remaining_daily_slots,
                 "available_slots": available_slots,
                 "affordable_slots": affordable_slots,
@@ -837,6 +1001,9 @@ async def enter_positions(
             break
 
         score = float(signal.get("score") or 0)
+        if signal["code"] in stopped_out_codes:
+            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "StoppedOutToday", raw={"strategy": strategy})
+            continue
         if signal["code"] in blocked_codes:
             reason = "PendingOrderExists" if signal["code"] in pending_codes else "AlreadyHeld"
             await insert_decision_log(user_id, broker_account_id, "SKIP", signal, reason, raw={"strategy": strategy})
@@ -858,6 +1025,22 @@ async def enter_positions(
         passed, reason = passes_intraday_entry_filter(signal, quote, strategy)
         if not passed:
             await insert_decision_log(user_id, broker_account_id, "SKIP", signal, reason, price=current_price, raw={"quote": quote, "strategy": strategy})
+            continue
+
+        realtime_result = await check_realtime_entry_risk(client, signal["code"], strategy)
+        realtime_raw = {
+            "reason": realtime_result.reason,
+            "strength": realtime_result.strength,
+            "bid_ask_ratio": realtime_result.bid_ask_ratio,
+            "spread_pct": realtime_result.spread_pct,
+            "samples": realtime_result.samples,
+            "raw": realtime_result.raw,
+        }
+        if realtime_result.reason == "realtime_check_failed":
+            logger.warning("Realtime filter failed open: code=%s result=%s", signal["code"], realtime_raw)
+        elif not realtime_result.ok:
+            reason_code = realtime_reason_code(realtime_result.reason)
+            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, reason_code, price=current_price, raw={"quote": quote, "realtime": realtime_raw, "strategy": strategy})
             continue
 
         sizing_signal = {**signal, "entry": order_price}
@@ -891,7 +1074,7 @@ async def enter_positions(
             "status": "OPEN",
             "take_profit_1_done": False,
             "take_profit_2_done": False,
-            "raw": {**raw, "intraday_quote": quote, "trigger_price": current_price, "kis_order_response": response, "sizing": sizing},
+            "raw": {**raw, "intraday_quote": quote, "realtime": realtime_raw, "trigger_price": current_price, "kis_order_response": response, "sizing": sizing},
         }
         if dry_run:
             await rest.insert("positions", position_payload)
@@ -903,7 +1086,7 @@ async def enter_positions(
                 order_price,
                 qty,
                 reason,
-                {"quote": quote, "trigger_price": current_price, "order": response, "signal_raw": raw},
+                {"quote": quote, "realtime": realtime_raw, "trigger_price": current_price, "order": response, "signal_raw": raw},
             )
             actions.append({"action": "BUY", "code": signal["code"], "name": display_name(signal), "qty": qty, "price": order_price, "reason": reason_label(reason), "plan": action_plan_summary(position_payload)})
         else:
@@ -916,7 +1099,7 @@ async def enter_positions(
                 price=order_price,
                 response=response,
                 reason=reason,
-                raw={"signal": signal, "quote": quote, "trigger_price": current_price, "signal_raw": raw, "sizing": sizing, "expected_position": position_payload},
+                raw={"signal": signal, "quote": quote, "realtime": realtime_raw, "trigger_price": current_price, "signal_raw": raw, "sizing": sizing, "expected_position": position_payload},
             )
             await insert_trade_log(
                 user_id,
@@ -926,7 +1109,7 @@ async def enter_positions(
                 order_price,
                 qty,
                 "OrderPending",
-                {"quote": quote, "trigger_price": current_price, "order": response, "signal_raw": raw, "entry_reason": reason},
+                {"quote": quote, "realtime": realtime_raw, "trigger_price": current_price, "order": response, "signal_raw": raw, "entry_reason": reason},
             )
             actions.append({"action": "BUY_ORDER", "code": signal["code"], "name": display_name(signal), "qty": qty, "price": order_price, "reason": reason_label("OrderPending"), "plan": action_plan_summary(position_payload)})
         blocked_codes.add(signal["code"])

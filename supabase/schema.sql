@@ -102,6 +102,16 @@ create table if not exists strategy_settings (
   use_day_candle_filter boolean not null default false,
   use_breakeven_after_tp1 boolean not null default false,
   use_kijun_exit boolean not null default false,
+  use_daily_loss_limit boolean not null default true,
+  daily_loss_limit_pct numeric not null default 0.03,
+  use_market_crash_filter boolean not null default true,
+  market_crash_limit_pct numeric not null default -0.02,
+  commission_tax_pct numeric not null default 0.002,
+  use_realtime_liquidity_filter boolean not null default true,
+  min_realtime_strength numeric not null default 75,
+  min_bid_ask_ratio numeric not null default 0.65,
+  max_realtime_spread_pct numeric not null default 0.012,
+  use_stoploss_reentry_block boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -254,6 +264,16 @@ alter table broker_credentials add column if not exists telegram_bot_token_enc t
 alter table strategy_settings add column if not exists use_day_candle_filter boolean not null default false;
 alter table strategy_settings add column if not exists use_breakeven_after_tp1 boolean not null default false;
 alter table strategy_settings add column if not exists use_kijun_exit boolean not null default false;
+alter table strategy_settings add column if not exists use_daily_loss_limit boolean not null default true;
+alter table strategy_settings add column if not exists daily_loss_limit_pct numeric not null default 0.03;
+alter table strategy_settings add column if not exists use_market_crash_filter boolean not null default true;
+alter table strategy_settings add column if not exists market_crash_limit_pct numeric not null default -0.02;
+alter table strategy_settings add column if not exists commission_tax_pct numeric not null default 0.002;
+alter table strategy_settings add column if not exists use_realtime_liquidity_filter boolean not null default true;
+alter table strategy_settings add column if not exists min_realtime_strength numeric not null default 75;
+alter table strategy_settings add column if not exists min_bid_ask_ratio numeric not null default 0.65;
+alter table strategy_settings add column if not exists max_realtime_spread_pct numeric not null default 0.012;
+alter table strategy_settings add column if not exists use_stoploss_reentry_block boolean not null default true;
 alter table ai_reports add column if not exists status text not null default 'queued';
 alter table ai_reports add column if not exists error text;
 alter table ai_reports add column if not exists started_at timestamptz;

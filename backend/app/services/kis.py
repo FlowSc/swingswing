@@ -12,6 +12,8 @@ from app.core.config import get_settings
 
 PAPER_BASE_URL = "https://openapivts.koreainvestment.com:29443"
 LIVE_BASE_URL = "https://openapi.koreainvestment.com:9443"
+PAPER_WS_URL = "ws://ops.koreainvestment.com:31000"
+LIVE_WS_URL = "ws://ops.koreainvestment.com:21000"
 TOKEN_REFRESH_BUFFER = timedelta(minutes=5)
 
 TR_ID = {
@@ -48,6 +50,10 @@ class KisConfig:
     @property
     def base_url(self) -> str:
         return LIVE_BASE_URL if self.mode == "live" else PAPER_BASE_URL
+
+    @property
+    def websocket_url(self) -> str:
+        return LIVE_WS_URL if self.mode == "live" else PAPER_WS_URL
 
 
 class KisClient:
@@ -119,6 +125,18 @@ class KisClient:
         value = data.get("HASH")
         if not value:
             raise RuntimeError("KIS hashkey response did not include HASH.")
+        return value
+
+    async def approval_key(self) -> str:
+        payload = {
+            "grant_type": "client_credentials",
+            "appkey": self.config.app_key,
+            "secretkey": self.config.app_secret,
+        }
+        data = await self._request("POST", "/oauth2/Approval", json=payload)
+        value = data.get("approval_key")
+        if not value:
+            raise RuntimeError("KIS approval response did not include approval_key.")
         return value
 
     async def auth_headers(self, tr_id: str, *, hashkey: str | None = None) -> dict[str, str]:
