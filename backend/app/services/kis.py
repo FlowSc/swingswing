@@ -192,6 +192,8 @@ class KisClient:
         end_date: str | None = None,
         code: str = "",
         order_no: str = "",
+        ctx_area_fk100: str = "",
+        ctx_area_nk100: str = "",
     ) -> dict[str, Any]:
         target_date = now_kst().date().strftime("%Y%m%d")
         params = {
@@ -207,8 +209,8 @@ class KisClient:
             "ODNO": order_no,
             "INQR_DVSN_3": "00",
             "INQR_DVSN_1": "",
-            "CTX_AREA_FK100": "",
-            "CTX_AREA_NK100": "",
+            "CTX_AREA_FK100": ctx_area_fk100,
+            "CTX_AREA_NK100": ctx_area_nk100,
         }
         return await self._request(
             "GET",
@@ -216,6 +218,54 @@ class KisClient:
             headers=await self.auth_headers(TR_ID[self.config.mode]["order_inquiry"]),
             params=params,
         )
+
+    async def inquire_daily_orders_all(
+        self,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        code: str = "",
+        order_no: str = "",
+        max_pages: int = 10,
+    ) -> dict[str, Any]:
+        merged: dict[str, Any] = {"output1": [], "output": []}
+        ctx_fk = ""
+        ctx_nk = ""
+        pages = 0
+        last_payload: dict[str, Any] = {}
+        while pages < max(1, max_pages):
+            payload = await self.inquire_daily_orders(
+                start_date=start_date,
+                end_date=end_date,
+                code=code,
+                order_no=order_no,
+                ctx_area_fk100=ctx_fk,
+                ctx_area_nk100=ctx_nk,
+            )
+            pages += 1
+            last_payload = payload
+            rows = parse_order_rows(payload)
+            merged["output1"].extend(rows)
+
+            output2 = payload.get("output2")
+            cursor_source = output2[0] if isinstance(output2, list) and output2 else output2 if isinstance(output2, dict) else payload
+            next_fk = str(_field(cursor_source or {}, "ctx_area_fk100", "CTX_AREA_FK100") or "")
+            next_nk = str(_field(cursor_source or {}, "ctx_area_nk100", "CTX_AREA_NK100") or "")
+            if not next_fk and not next_nk:
+                break
+            if next_fk == ctx_fk and next_nk == ctx_nk:
+                break
+            ctx_fk, ctx_nk = next_fk, next_nk
+
+        merged.update(
+            {
+                "rt_cd": last_payload.get("rt_cd"),
+                "msg_cd": last_payload.get("msg_cd"),
+                "msg1": last_payload.get("msg1"),
+                "pagination": {"pages": pages, "row_count": len(merged["output1"])},
+            }
+        )
+        return merged
 
     async def place_cash_order(self, *, code: str, side: str, qty: int, price: int, order_type: str = "00") -> dict[str, Any]:
         if not self.config.enable_orders:

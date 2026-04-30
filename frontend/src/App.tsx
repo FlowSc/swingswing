@@ -881,6 +881,9 @@ function Dashboard({ session }: { session: Session }) {
           title="매매 로그"
           rows={logs.map(normalizeTradeLogRow).map(enrichPlanPercentRow)}
           columns={["action_ko", "name", "price", "qty", "stop_loss_pct", "take_profit_2_pct", "reason_ko", "created_at"]}
+          className="trade-log-panel"
+          pagination
+          pageSize={12}
           headerAction={(
             <button className="ghost small" type="button" disabled={pending === "logsRefresh"} onClick={refreshTradeLogsOnly}>
               {pending === "logsRefresh" ? "갱신 중" : "새로고침"}
@@ -1480,6 +1483,9 @@ function DataPanel({
   headerAction,
   initialRows = 10,
   maxRows = 10,
+  pageSize = 10,
+  pagination = false,
+  className = "",
 }: {
   title: string;
   rows: Array<Record<string, unknown>>;
@@ -1488,17 +1494,26 @@ function DataPanel({
   headerAction?: React.ReactNode;
   initialRows?: number;
   maxRows?: number;
+  pageSize?: number;
+  pagination?: boolean;
+  className?: string;
 }) {
   const [visibleRows, setVisibleRows] = useState(initialRows);
+  const [page, setPage] = useState(1);
   const cappedMaxRows = Math.min(maxRows, rows.length);
-  const displayRows = rows.slice(0, Math.min(visibleRows, cappedMaxRows));
+  const totalPages = pagination ? Math.max(1, Math.ceil(rows.length / pageSize)) : 1;
+  const normalizedPage = Math.min(page, totalPages);
+  const displayRows = pagination
+    ? rows.slice((normalizedPage - 1) * pageSize, normalizedPage * pageSize)
+    : rows.slice(0, Math.min(visibleRows, cappedMaxRows));
 
   useEffect(() => {
     setVisibleRows(initialRows);
+    setPage(1);
   }, [initialRows, rows.length, title]);
 
   return (
-    <section className="panel data-panel">
+    <section className={`panel data-panel ${className}`.trim()}>
       <div className="data-panel-head">
         <h2>{title}</h2>
         {headerAction}
@@ -1523,10 +1538,24 @@ function DataPanel({
               ))}
             </tbody>
           </table>
-          {visibleRows < cappedMaxRows && (
+          {!pagination && visibleRows < cappedMaxRows && (
             <button className="ghost table-more" type="button" onClick={() => setVisibleRows(cappedMaxRows)}>
               더보기 {cappedMaxRows - visibleRows}개
             </button>
+          )}
+          {pagination && totalPages > 1 && (
+            <div className="table-pagination">
+              {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (
+                <button
+                  key={pageNumber}
+                  className={pageNumber === normalizedPage ? "active" : ""}
+                  type="button"
+                  onClick={() => setPage(pageNumber)}
+                >
+                  {pageNumber}
+                </button>
+              ))}
+            </div>
           )}
         </div>
       )}

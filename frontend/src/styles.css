@@ -549,6 +549,15 @@ a {
   min-height: 240px;
 }
 
+.trade-log-panel {
+  grid-column: span 2;
+  min-height: 420px;
+}
+
+.trade-log-panel .table-wrap {
+  min-height: 350px;
+}
+
 .data-panel-head {
   display: flex;
   align-items: center;
@@ -625,6 +634,31 @@ a {
 .table-more {
   margin-top: 12px;
   width: 100%;
+}
+
+.table-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.table-pagination button {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.table-pagination button.active {
+  border-color: var(--green);
+  background: var(--lime);
+  color: var(--ink);
 }
 
 table {
@@ -765,6 +799,10 @@ th {
   .two,
   .three {
     grid-template-columns: 1fr;
+  }
+
+  .trade-log-panel {
+    grid-column: auto;
   }
 
   .page {

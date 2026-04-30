@@ -666,7 +666,7 @@ async def reconcile_pending_orders(
     order_inquiry_error: str | None = None
     if not dry_run:
         try:
-            order_payload = await client.inquire_daily_orders()
+            order_payload = await client.inquire_daily_orders_all()
         except Exception as exc:
             order_inquiry_error = str(exc)
             logger.warning("KIS order inquiry failed. Falling back to balance reconciliation: %s", exc)
