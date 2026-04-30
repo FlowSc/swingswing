@@ -27,6 +27,8 @@ SCAN_UNIVERSE_LIMITED = "limited"
 SCAN_UNIVERSE_ALL = "all"
 RSI_MIN = 30
 RSI_MAX_EXCLUSIVE = 56
+CLOUD_RSI_MIN = 35
+CLOUD_RSI_MAX_EXCLUSIVE = 72
 MIN_RET_20D = 3
 MAX_RET_20D = 25
 MAX_STOP_PCT = 10.0
@@ -251,13 +253,15 @@ def score_swing_setup(
         score -= penalty
         reasons.extend(penalty_reasons)
 
-    if tenkan <= kijun:
+    is_cloud_pattern = cloud_pullback_support or bearish_cloud_breakout_pressure
+    rsi_ok = RSI_MIN <= rsi < RSI_MAX_EXCLUSIVE
+    cloud_rsi_ok = CLOUD_RSI_MIN <= rsi < CLOUD_RSI_MAX_EXCLUSIVE
+
+    if tenkan <= kijun and not bearish_cloud_breakout_pressure:
         return None
     if bb_expansion < MIN_BB_WIDTH_EXPANSION_HARD_PCT:
         return None
-    if not (RSI_MIN <= rsi < RSI_MAX_EXCLUSIVE):
-        return None
-    if not market_filter_ok:
+    if not (rsi_ok or (is_cloud_pattern and cloud_rsi_ok)):
         return None
     if vol20 < MIN_VOLUME_20D:
         return None
