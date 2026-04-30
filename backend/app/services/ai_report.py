@@ -40,10 +40,10 @@ REPORT_INSTRUCTIONS = """
 - 스윙 관점에서 변동성, 거래량, 추세 전환 신호가 있는지 설명한다.
 - 단, 시장 전체 전망을 임의로 단정하지 않는다.
 
-<h2>2. 핵심 후보 요약표</h2>
-HTML table로 작성한다.
+<h2>2. 핵심 후보 요약</h2>
+표를 사용하지 말고 후보별 <h3>와 <ul><li> 구조로 작성한다.
 
-표 컬럼:
+각 후보에 포함할 항목:
 - 순위
 - 종목명
 - 코드
@@ -109,6 +109,70 @@ HTML table로 작성한다.
 - 전체 리포트는 HTML fragment만 출력한다.
 """.strip()
 
+SIGNAL_REPORT_INSTRUCTIONS = """
+너는 한국 주식 시장을 분석하는 스윙 트레이딩 개별 종목 리포트 작성자다.
+
+너의 역할:
+- 제공된 정량 데이터만 근거로 사용한다.
+- 외부 뉴스, 루머, 재무정보, 공시 내용을 임의로 만들지 않는다.
+- 매수 추천, 수익 보장, 확정적 상승 표현을 사용하지 않는다.
+- 투자 판단은 독자 책임이라는 유의 문구를 포함한다.
+- 네이버 블로그에 바로 복사해 붙여넣을 수 있는 한국어 HTML 형식으로 작성한다.
+- 개별 기업 하나만 다루며, 다른 후보 비교표나 핵심 후보 요약표는 절대 작성하지 않는다.
+- 전체 3,000자 이상으로 상세하게 작성한다.
+- 출력은 <article>, <h1>, <h2>, <h3>, <p>, <ul>, <li>, <strong>만 사용한다.
+- <table>, <thead>, <tbody>, <tr>, <th>, <td>는 사용하지 않는다.
+- <html>, <head>, <body>, <script>, <style> 태그는 사용하지 않는다.
+- ```html 같은 코드펜스나 설명 문장은 출력하지 않는다.
+
+작성 형식:
+
+<article>
+<h1>{작성일} 종목명 스윙 분석 리포트</h1>
+
+<h2>1. 기업 개요</h2>
+- 제공된 company_profile 데이터를 기반으로 어떤 시장에 속한 기업인지 설명한다.
+- sector, industry, business_summary가 있으면 어떤 사업을 주력으로 하는지 설명한다.
+- 제공 데이터가 부족하면 추측하지 말고 "제공 데이터 기준 확인 불가"라고 쓴다.
+
+<h2>2. 스윙 후보로 포착된 이유</h2>
+- 점수, RSI, 일목균형표, 볼린저 밴드, 거래량, 거래대금, 상대강도를 각각 해석한다.
+- 단순 나열하지 말고 조건들이 서로 어떤 의미로 연결되는지 설명한다.
+
+<h2>3. 기술적 분석</h2>
+- RSI 위치를 해석한다.
+- 일목균형표 전환선/기준선 관계와 돌파 이후 경과일을 설명한다.
+- 볼린저 밴드 폭과 확장률을 기반으로 변동성 확대 여부를 설명한다.
+- 5일/20일 수익률, 시장 대비 상대강도, MA20 거리, 52주 저점 대비 위치를 설명한다.
+
+<h2>4. 거래량과 수급 확인</h2>
+- 거래량 증가 배율과 거래대금 증가 배율을 설명한다.
+- 거래대금 수준이 스윙 매매에 주는 의미를 설명한다.
+
+<h2>5. 매매 시나리오</h2>
+- 진입가는 관찰 기준 가격으로 설명한다.
+- 손절가, 1차 익절, 2차 익절, 추적 손절의 역할을 설명한다.
+- 최소 보유일, 권장 보유일, 최대 보유일을 설명한다.
+- 조건 미충족 시 매수를 피해야 하는 기준을 설명한다.
+
+<h2>6. 리스크 체크</h2>
+- 손절폭, ATR 비율, 갭 상승, 윗꼬리, 과열 가능성을 설명한다.
+- 조건이 훼손될 경우 제외해야 한다고 설명한다.
+
+<h2>7. 블로그용 결론</h2>
+- 과장 없이 2~3문단으로 정리한다.
+
+<h2>8. 투자 유의사항</h2>
+아래 문구를 반드시 포함한다.
+
+본 리포트는 자동화된 정량 조건을 바탕으로 작성된 참고용 분석 자료입니다. 특정 종목의 매수 또는 매도를 권유하는 투자 자문이 아니며, 모든 투자 판단과 책임은 투자자 본인에게 있습니다. 주식 투자는 원금 손실 가능성이 있습니다.
+
+추가 규칙:
+- "무조건", "확실히", "급등", "대박", "보장" 같은 표현은 사용하지 않는다.
+- "매수해야 한다" 대신 "관찰할 수 있다", "조건 충족 여부를 확인할 필요가 있다"라고 표현한다.
+- 전체 리포트는 HTML fragment만 출력한다.
+""".strip()
+
 
 async def generate_daily_signal_report(signals: list[dict], trade_date: date) -> str | None:
     result = await generate_daily_signal_report_result(signals, trade_date, report_type="daily")
@@ -125,10 +189,10 @@ async def generate_daily_signal_report_result(signals: list[dict], trade_date: d
         return {"ok": False, "stage": "input", "error": "No signals provided", "report": None}
 
     top_n = 1 if report_type == "signal" else max(1, min(int(settings.ai_report_top_n or 3), len(signals)))
-    prompt = build_report_prompt(signals[:top_n], trade_date)
+    prompt = build_report_prompt(signals[:top_n], trade_date, report_type=report_type)
     payload = {
         "model": settings.ai_report_model,
-        "instructions": REPORT_INSTRUCTIONS,
+        "instructions": SIGNAL_REPORT_INSTRUCTIONS if report_type == "signal" else REPORT_INSTRUCTIONS,
         "input": prompt,
         "max_output_tokens": 9000 if report_type == "signal" else 6500,
     }
@@ -373,12 +437,13 @@ def now_iso() -> str:
     return datetime.now(ZoneInfo(get_settings().timezone)).isoformat()
 
 
-def build_report_prompt(signals: list[dict], trade_date: date) -> str:
+def build_report_prompt(signals: list[dict], trade_date: date, report_type: str = "daily") -> str:
     selected = [select_report_input_fields(signal, index) for index, signal in enumerate(signals, start=1)]
     trade_date_text = trade_date.isoformat()
+    title_line = build_report_title_line(selected, trade_date_text, report_type)
     sections = [
         f"작성일: {trade_date_text}",
-        f"리포트 제목은 반드시 <h1>{trade_date_text} 스윙 후보 리포트</h1>로 작성한다.",
+        title_line,
         "아래 데이터는 해당 거래일의 스윙봇 상위 점수 종목에서 리포트 작성에 필요한 필드만 선별한 값이다.",
         "필드 설명:",
         "- company_profile: 시장, 섹터, 업종, 사업요약, 시가총액 등 기업 개요 정보",
@@ -401,6 +466,14 @@ def build_report_prompt(signals: list[dict], trade_date: date) -> str:
     for item in selected:
         sections.append(format_signal_for_prompt(item))
     return "\n".join(sections)
+
+
+def build_report_title_line(signals: list[dict], trade_date_text: str, report_type: str) -> str:
+    if report_type == "signal" and signals:
+        name = signals[0].get("name") or "개별 종목"
+        code = signals[0].get("code") or ""
+        return f"리포트 제목은 반드시 <h1>{trade_date_text} {name}({code}) 스윙 분석 리포트</h1>로 작성한다."
+    return f"리포트 제목은 반드시 <h1>{trade_date_text} 스윙 후보 리포트</h1>로 작성한다."
 
 
 def select_report_input_fields(signal: dict, rank: int) -> dict:
