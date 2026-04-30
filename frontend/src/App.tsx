@@ -54,8 +54,11 @@ const strategyPresets: Record<StrategyPreset, StrategySettings> = {
     use_day_candle_filter: false,
     use_breakeven_after_tp1: false,
     use_kijun_exit: false,
+    use_kijun_reentry_block: true,
     use_daily_loss_limit: true,
     daily_loss_limit_pct: 0.02,
+    use_unrealized_loss_limit: true,
+    unrealized_loss_limit_pct: 0.03,
     use_market_crash_filter: true,
     market_crash_limit_pct: -0.02,
     commission_tax_pct: 0.002,
@@ -64,6 +67,7 @@ const strategyPresets: Record<StrategyPreset, StrategySettings> = {
     min_bid_ask_ratio: 0.7,
     max_realtime_spread_pct: 0.01,
     use_stoploss_reentry_block: true,
+    use_vi_filter: true,
   },
   balanced: {
     preset: "balanced",
@@ -81,8 +85,11 @@ const strategyPresets: Record<StrategyPreset, StrategySettings> = {
     use_day_candle_filter: false,
     use_breakeven_after_tp1: false,
     use_kijun_exit: false,
+    use_kijun_reentry_block: true,
     use_daily_loss_limit: true,
     daily_loss_limit_pct: 0.03,
+    use_unrealized_loss_limit: true,
+    unrealized_loss_limit_pct: 0.04,
     use_market_crash_filter: true,
     market_crash_limit_pct: -0.02,
     commission_tax_pct: 0.002,
@@ -91,6 +98,7 @@ const strategyPresets: Record<StrategyPreset, StrategySettings> = {
     min_bid_ask_ratio: 0.65,
     max_realtime_spread_pct: 0.012,
     use_stoploss_reentry_block: true,
+    use_vi_filter: true,
   },
   aggressive: {
     preset: "aggressive",
@@ -108,8 +116,11 @@ const strategyPresets: Record<StrategyPreset, StrategySettings> = {
     use_day_candle_filter: false,
     use_breakeven_after_tp1: false,
     use_kijun_exit: false,
+    use_kijun_reentry_block: true,
     use_daily_loss_limit: true,
     daily_loss_limit_pct: 0.04,
+    use_unrealized_loss_limit: true,
+    unrealized_loss_limit_pct: 0.05,
     use_market_crash_filter: true,
     market_crash_limit_pct: -0.025,
     commission_tax_pct: 0.002,
@@ -118,6 +129,7 @@ const strategyPresets: Record<StrategyPreset, StrategySettings> = {
     min_bid_ask_ratio: 0.6,
     max_realtime_spread_pct: 0.015,
     use_stoploss_reentry_block: true,
+    use_vi_filter: true,
   },
 };
 
@@ -1028,8 +1040,8 @@ function StrategyPanel({
           <span>최대 보유 {strategy.max_open_positions}종목 · 하루 신규 {strategy.max_new_positions_per_day}종목</span>
           <span>종목당 {formatPct(strategy.position_capital_pct)} 이하 · 리스크 {formatPct(strategy.risk_per_trade_pct)} 이하</span>
           <span>최소 주문금액 {Number(strategy.min_order_amount).toLocaleString()}원</span>
-          <span>킬스위치: 일손실 {strategy.use_daily_loss_limit ? formatPct(strategy.daily_loss_limit_pct) : "OFF"} · 시장급락 {strategy.use_market_crash_filter ? formatPct(strategy.market_crash_limit_pct) : "OFF"}</span>
-          <span>추가 필터: 손절 재매수 차단 {strategy.use_stoploss_reentry_block ? "ON" : "OFF"} · 실시간 호가/체결 {strategy.use_realtime_liquidity_filter ? "ON" : "OFF"} · 당일 캔들 {strategy.use_day_candle_filter ? "ON" : "OFF"} · 본전 손절 {strategy.use_breakeven_after_tp1 ? "ON" : "OFF"} · 기준선 이탈 매도 {strategy.use_kijun_exit ? "ON" : "OFF"}</span>
+          <span>킬스위치: 일손실 {strategy.use_daily_loss_limit ? formatPct(strategy.daily_loss_limit_pct) : "OFF"} · 미실현손실 {strategy.use_unrealized_loss_limit ? formatPct(strategy.unrealized_loss_limit_pct) : "OFF"} · 시장급락 {strategy.use_market_crash_filter ? formatPct(strategy.market_crash_limit_pct) : "OFF"}</span>
+          <span>추가 필터: 손절 재매수 차단 {strategy.use_stoploss_reentry_block ? "ON" : "OFF"} · 기준선 이탈 재매수 차단 {strategy.use_kijun_reentry_block ? "ON" : "OFF"} · VI 차단 {strategy.use_vi_filter ? "ON" : "OFF"} · 실시간 호가/체결 {strategy.use_realtime_liquidity_filter ? "ON" : "OFF"} · 당일 캔들 {strategy.use_day_candle_filter ? "ON" : "OFF"} · 본전 손절 {strategy.use_breakeven_after_tp1 ? "ON" : "OFF"} · 기준선 이탈 매도 {strategy.use_kijun_exit ? "ON" : "OFF"}</span>
         </div>
       )}
 
@@ -1090,6 +1102,10 @@ function StrategyPanel({
           <input type="number" step="0.005" value={strategy.daily_loss_limit_pct} onChange={(event) => updateNumber("daily_loss_limit_pct", event.target.value)} />
         </label>
         <label>
+          미실현손실 제한
+          <input type="number" step="0.005" value={strategy.unrealized_loss_limit_pct} onChange={(event) => updateNumber("unrealized_loss_limit_pct", event.target.value)} />
+        </label>
+        <label>
           시장 급락 차단 기준
           <input type="number" step="0.005" value={strategy.market_crash_limit_pct} onChange={(event) => updateNumber("market_crash_limit_pct", event.target.value)} />
         </label>
@@ -1133,8 +1149,16 @@ function StrategyPanel({
           일목 기준선 이탈 매도 사용
         </label>
         <label className="check-row">
+          <input type="checkbox" checked={strategy.use_kijun_reentry_block} onChange={(event) => onChange({ ...strategy, use_kijun_reentry_block: event.target.checked })} />
+          당일 기준선 이탈 매도 종목 재매수 금지
+        </label>
+        <label className="check-row">
           <input type="checkbox" checked={strategy.use_daily_loss_limit} onChange={(event) => onChange({ ...strategy, use_daily_loss_limit: event.target.checked })} />
           하루 손실 제한 사용
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={strategy.use_unrealized_loss_limit} onChange={(event) => onChange({ ...strategy, use_unrealized_loss_limit: event.target.checked })} />
+          미실현손실 제한 사용
         </label>
         <label className="check-row">
           <input type="checkbox" checked={strategy.use_market_crash_filter} onChange={(event) => onChange({ ...strategy, use_market_crash_filter: event.target.checked })} />
@@ -1147,6 +1171,10 @@ function StrategyPanel({
         <label className="check-row">
           <input type="checkbox" checked={strategy.use_stoploss_reentry_block} onChange={(event) => onChange({ ...strategy, use_stoploss_reentry_block: event.target.checked })} />
           당일 손절 종목 재매수 금지
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={strategy.use_vi_filter} onChange={(event) => onChange({ ...strategy, use_vi_filter: event.target.checked })} />
+          VI 발동 종목 매수 차단
         </label>
       </div>
       <button className="primary strategy-save" type="button" disabled={pending} onClick={onSave}>
@@ -1259,9 +1287,12 @@ function AutoTradingRules({
           <li>14:30~15:20 사이에만 신규 매수</li>
           <li>하루 신규 매수 {strategy.max_new_positions_per_day}종목 제한은 오늘 체결 포지션과 미체결 매수 주문을 합산해서 적용</li>
           <li>하루 손실 제한 {strategy.use_daily_loss_limit ? `사용: 실현손실 ${formatPct(strategy.daily_loss_limit_pct)} 도달 시 신규 매수 중단` : "미사용"}</li>
+          <li>미실현손실 제한 {strategy.use_unrealized_loss_limit ? `사용: 보유종목 평가손실 ${formatPct(strategy.unrealized_loss_limit_pct)} 도달 시 신규 매수 중단` : "미사용"}</li>
           <li>시장 급락 차단 {strategy.use_market_crash_filter ? `사용: 코스피 당일 수익률 ${formatPct(strategy.market_crash_limit_pct)} 이하이면 신규 매수 중단` : "미사용"}</li>
           <li>실시간 필터 {strategy.use_realtime_liquidity_filter ? `사용: 체결강도 ${strategy.min_realtime_strength} 이상, 매수/매도 잔량비 ${strategy.min_bid_ask_ratio} 이상, 스프레드 ${formatPct(strategy.max_realtime_spread_pct)} 이하` : "미사용"}</li>
           <li>당일 손절 종목 재매수 금지 {strategy.use_stoploss_reentry_block ? "사용" : "미사용"}</li>
+          <li>당일 기준선 이탈 매도 종목 재매수 금지 {strategy.use_kijun_reentry_block ? "사용" : "미사용"}</li>
+          <li>VI 발동 종목 매수 차단 {strategy.use_vi_filter ? "사용" : "미사용"}</li>
           <li>점수 높은 순서로 확인하되 장중 가격 필터 통과 필요</li>
           <li>현재가가 진입가 {formatPct(strategy.min_entry_discount - 1)}~+{formatPct(strategy.max_entry_premium - 1)} 범위 안</li>
           <li>일목 기준선 필터 {strategy.use_kijun_filter ? "사용" : "미사용"}, 볼린저 상단 필터 {strategy.use_bb_upper_filter ? "사용" : "미사용"}</li>
@@ -1283,7 +1314,7 @@ function AutoTradingRules({
       <div>
         <strong>매도 조건</strong>
         <ul>
-          <li>09:20~15:20 동안 5분 단위 감시</li>
+          <li>09:00~15:20 동안 5분 단위 감시</li>
           <li>손절가 도달 시 전량 매도</li>
           <li>매수 후 30분 동안은 손절을 제외한 전략성 매도 제한</li>
           <li>1차/2차 익절가 도달 시 일부 매도</li>
@@ -1293,6 +1324,7 @@ function AutoTradingRules({
           <li>최대 보유일 도달 시 전량 매도</li>
           <li>일반 매도 주문가는 최우선 매수호가 기준, 호가가 없으면 현재가보다 1틱 아래로 주문</li>
           <li>손절 매도는 체결 우선으로 최우선 매수호가보다 3틱 낮은 공격적 지정가로 주문</li>
+          <li>손절 주문이 미체결이면 다음 와쳐 주기에서 최대 3회까지 5틱, 7틱, 9틱 낮춰 재주문</li>
           <li>부분체결/전체체결은 KIS 주문조회와 계좌 잔고를 같이 확인해서 반영</li>
         </ul>
       </div>
@@ -1672,13 +1704,14 @@ function TradeLogDetail({ row }: { row: Record<string, unknown> }) {
         ["권장 보유", `${formatCell(exitPlan.hold_min_days)}-${formatCell(exitPlan.hold_preferred_days)}일`],
         ["최대 보유", `${formatCell(exitPlan.hold_max_days)}일`],
         ["매입 시간", exitPlan.planned_entry_window || "14:30-15:20"],
-        ["관리 시간", exitPlan.planned_manage_window || "09:20-15:20"],
+        ["관리 시간", exitPlan.planned_manage_window || "09:00-15:20"],
       ]} />
       <DetailSection title="장중 확인값" items={[
         ["현재가", quote.current_price],
         ["당일 고가", quote.day_high],
         ["당일 저가", quote.day_low],
         ["누적 거래량", quote.accumulated_volume],
+        ["VI 발동", Number(quote.vi_active || 0) > 0 ? "예" : "아니오"],
         ["주문 정책", formatOrderPolicy(raw.order_policy)],
         ["주문 응답", raw.order ? "저장됨" : "-"],
       ]} />
@@ -1744,6 +1777,7 @@ function DecisionDetail({ row }: { row: Record<string, unknown> }) {
         ["당일 고가", quote.day_high],
         ["당일 저가", quote.day_low],
         ["누적 거래량", quote.accumulated_volume],
+        ["VI 발동", Number(quote.vi_active || 0) > 0 ? "예" : "아니오"],
         ["호가 기준", quote.price_source],
       ]} />
       <DetailSection title="실시간 호가/체결" items={[
@@ -1792,9 +1826,13 @@ function WatcherRunDetail({ row }: { row: Record<string, unknown> }) {
         ["오늘 진입 종목", row.today_entry_count],
         ["오늘 미체결 매수", row.today_pending_buy_count],
         ["오늘 손절 차단 종목", raw.today_stopped_out_count],
+        ["오늘 기준선 이탈 차단 종목", raw.today_kijun_exit_count],
         ["오늘 남은 신규 슬롯", row.remaining_daily_slots],
         ["하루 실현손실", raw.daily_realized_loss],
         ["하루 손실 한도금액", raw.daily_loss_limit_amount],
+        ["미실현 손익", raw.unrealized_pnl],
+        ["미실현 손실", raw.unrealized_loss],
+        ["미실현 손실 한도금액", raw.unrealized_loss_limit_amount],
         ["코스피 당일 수익률", raw.market_intraday_return_pct === undefined || raw.market_intraday_return_pct === null ? "-" : formatPct(Number(raw.market_intraday_return_pct))],
         ["보유 가능 슬롯", row.available_slots],
         ["금액 기준 슬롯", row.affordable_slots],
@@ -1817,10 +1855,13 @@ function WatcherRunDetail({ row }: { row: Record<string, unknown> }) {
         ["종목당 비중", strategy.position_capital_pct],
         ["최소 주문금액", strategy.min_order_amount],
         ["하루 손실 제한", strategy.use_daily_loss_limit ? formatPct(Number(strategy.daily_loss_limit_pct || 0)) : "미사용"],
+        ["미실현손실 제한", strategy.use_unrealized_loss_limit ? formatPct(Number(strategy.unrealized_loss_limit_pct || 0)) : "미사용"],
         ["시장 급락 차단", strategy.use_market_crash_filter ? formatPct(Number(strategy.market_crash_limit_pct || 0)) : "미사용"],
         ["세금/수수료율", formatPct(Number(strategy.commission_tax_pct || 0))],
         ["실시간 필터", strategy.use_realtime_liquidity_filter ? "사용" : "미사용"],
         ["당일 손절 재매수 금지", strategy.use_stoploss_reentry_block ? "사용" : "미사용"],
+        ["기준선 이탈 재매수 금지", strategy.use_kijun_reentry_block ? "사용" : "미사용"],
+        ["VI 매수 차단", strategy.use_vi_filter ? "사용" : "미사용"],
         ["최소 체결강도", strategy.min_realtime_strength],
         ["최소 매수/매도 잔량비", strategy.min_bid_ask_ratio],
         ["최대 호가 스프레드", strategy.max_realtime_spread_pct],
@@ -1974,7 +2015,7 @@ function exitPlanFromSource(source?: Record<string, unknown>) {
     hold_preferred_days: raw.HoldPreferredDays,
     hold_max_days: raw.HoldMaxDays || 15,
     planned_entry_window: "14:30-15:20",
-    planned_manage_window: "09:20-15:20",
+    planned_manage_window: "09:00-15:20",
   };
 }
 
@@ -1983,6 +2024,7 @@ function translateReason(reason: unknown) {
   const map: Record<string, string> = {
     IntradayEntry: "장중 진입 조건 충족",
     StopLoss: "손절가 도달",
+    StopLossRepriced: "손절 미체결 재주문",
     TrailingStop: "추적 손절가 도달",
     TimeExit: "최대 보유기간 도달",
     MaxHold: "최대 보유 후 청산",
@@ -1993,9 +2035,12 @@ function translateReason(reason: unknown) {
     BelowEntryBand: "현재가가 진입 허용 하단보다 낮음",
     AboveEntryBand: "현재가가 진입 허용 상단보다 높음",
     BelowKijun: "현재가가 일목 기준선 아래",
+    KijunExit: "일목 기준선 이탈",
+    KijunExitedToday: "당일 기준선 이탈 매도 종목 재진입 금지",
     AboveBBUpper: "현재가가 볼린저 상단 위",
     PulledBackFromDayHigh: "당일 고점 대비 과도하게 밀림",
     StoppedOutToday: "당일 손절 종목 재매수 금지",
+    VolatilityInterruption: "VI 발동 종목 매수 차단",
     RealtimeStrengthWeak: "실시간 체결강도 약함",
     RealtimeBidDepthWeak: "실시간 매수 호가잔량 약함",
     RealtimeSpreadWide: "실시간 호가 스프레드 과다",
@@ -2006,6 +2051,7 @@ function translateReason(reason: unknown) {
     InvalidQuote: "현재가 값 비정상",
     SizingRejected: "수량/리스크/최소주문금액 조건 미충족",
     StrategySellCooldown: "매수 직후 전략 매도 쿨다운",
+    UnrealizedLossLimit: "미실현손실 한도 도달",
   };
   return map[value] || value || "-";
 }
@@ -2019,6 +2065,7 @@ function translateWatcherSkipReason(reason: unknown) {
     no_buy_order_created: "조건 충족 종목 없음",
     watcher_error: "와쳐 실행 오류",
     daily_loss_limit: "하루 손실 한도 도달",
+    unrealized_loss_limit: "미실현손실 한도 도달",
     market_crash_filter: "시장 급락 신규 매수 차단",
     completed: "실행 완료",
   };

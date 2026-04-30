@@ -12,6 +12,7 @@ from app.services.kis import (
     client_from_credentials,
     extract_cash,
     extract_total_equity,
+    extract_unrealized_pnl,
     kis_holding_codes,
     find_order_execution,
     parse_holdings,
@@ -32,22 +33,26 @@ from app.services.telegram import send_telegram_message_with_bot
 logger = logging.getLogger(__name__)
 ENTRY_START = time(14, 30)
 ENTRY_END = time(15, 20)
-MANAGE_START = time(9, 20)
+MANAGE_START = time(9, 0)
 MANAGE_END = time(15, 20)
 QUOTE_DELAY_SECONDS = 1.0
 QUOTE_ERROR_BACKOFF_SECONDS = 3.0
 OPEN_PENDING_STATUSES = {"OPEN", "PARTIAL", "CANCEL_FAILED"}
 STRATEGY_SELL_COOLDOWN_MINUTES = 30
 STOP_LOSS_AGGRESSIVE_TICKS = 3
+STOP_LOSS_REORDER_EXTRA_TICKS = 2
+STOP_LOSS_REORDER_MAX_ATTEMPTS = 3
 REASON_LABELS = {
     "IntradayEntry": "장중 진입 조건 충족",
     "StopLoss": "손절가 도달",
+    "StopLossRepriced": "손절 미체결 재주문",
     "TrailingStop": "추적 손절가 도달",
     "TimeExit": "최대 보유기간 도달",
     "TakeProfit1": "1차 익절가 도달",
     "TakeProfit2": "2차 익절가 도달",
     "BreakEvenStop": "1차 익절 후 본전 손절",
     "KijunExit": "일목 기준선 이탈",
+    "KijunExitedToday": "당일 기준선 이탈 매도 종목 재진입 금지",
     "AlreadyHeld": "이미 보유 중인 종목",
     "ScoreBelowMinimum": "전략 최소 점수 미달",
     "BelowEntryBand": "현재가가 진입 허용 하단보다 낮음",
@@ -56,6 +61,7 @@ REASON_LABELS = {
     "AboveBBUpper": "현재가가 볼린저 상단 위",
     "PulledBackFromDayHigh": "당일 고점 대비 과도하게 밀림",
     "StoppedOutToday": "당일 손절 종목 재매수 금지",
+    "VolatilityInterruption": "VI 발동 종목 매수 차단",
     "PendingOrderExists": "미체결 주문 대기 중",
     "OrderPending": "주문 접수 후 체결 대기",
     "OrderFilled": "주문/계좌 기준 체결 확인",
@@ -69,6 +75,7 @@ REASON_LABELS = {
     "SizingRejected": "수량/리스크/최소주문금액 조건 미충족",
     "StrategySellCooldown": "매수 직후 전략 매도 쿨다운",
     "DailyLossLimit": "하루 손실 한도 도달",
+    "UnrealizedLossLimit": "미실현손실 한도 도달",
     "MarketCrashFilter": "시장 급락 신규 매수 차단",
     "RealtimeStrengthWeak": "실시간 체결강도 약함",
     "RealtimeBidDepthWeak": "실시간 매수 호가잔량 약함",
@@ -182,7 +189,7 @@ def exit_plan_from_source(source: dict) -> dict:
         "hold_preferred_days": raw.get("HoldPreferredDays"),
         "hold_max_days": raw.get("HoldMaxDays", 15),
         "planned_entry_window": "14:30-15:20",
-        "planned_manage_window": "09:20-15:20",
+        "planned_manage_window": "09:00-15:20",
     }
 
 
@@ -244,21 +251,21 @@ def price_ticks_below(price: int, ticks: int) -> int:
     return result
 
 
-def stop_loss_order_price(quote: dict[str, int]) -> int:
+def stop_loss_order_price(quote: dict[str, int], ticks: int = STOP_LOSS_AGGRESSIVE_TICKS) -> int:
     current_price = int(quote.get("current_price") or 0)
     bid_price = int(quote.get("bid_price") or 0)
     base_price = bid_price if bid_price > 0 else current_price
     if base_price <= 0:
         return 0
-    return price_ticks_below(base_price, STOP_LOSS_AGGRESSIVE_TICKS)
+    return price_ticks_below(base_price, ticks)
 
 
-def sell_order_policy(reason: str, quote: dict[str, int]) -> dict[str, int | str]:
+def sell_order_policy(reason: str, quote: dict[str, int], ticks: int = STOP_LOSS_AGGRESSIVE_TICKS) -> dict[str, int | str]:
     if reason == "StopLoss":
         return {
             "type": "aggressive_stop_limit",
             "base": "best_bid" if int(quote.get("bid_price") or 0) > 0 else "current_price",
-            "slippage_ticks": STOP_LOSS_AGGRESSIVE_TICKS,
+            "slippage_ticks": ticks,
         }
     return {"type": "best_bid_limit", "base": "best_bid_or_current_minus_one_tick", "slippage_ticks": 0}
 
@@ -302,6 +309,14 @@ async def today_trade_logs(user_id: str, broker_account_id: str | None) -> list[
 
 
 async def today_stopped_out_codes(user_id: str, broker_account_id: str | None) -> set[str]:
+    return await today_exit_reason_codes(user_id, broker_account_id, {"StopLoss"})
+
+
+async def today_kijun_exit_codes(user_id: str, broker_account_id: str | None) -> set[str]:
+    return await today_exit_reason_codes(user_id, broker_account_id, {"KijunExit"})
+
+
+async def today_exit_reason_codes(user_id: str, broker_account_id: str | None, reasons: set[str]) -> set[str]:
     logs = await today_trade_logs(user_id, broker_account_id)
     codes: set[str] = set()
     for row in logs:
@@ -310,7 +325,7 @@ async def today_stopped_out_codes(user_id: str, broker_account_id: str | None) -
         raw = row.get("raw") or {}
         if not isinstance(raw, dict):
             continue
-        if raw.get("reason_code") == "StopLoss":
+        if raw.get("reason_code") in reasons or raw.get("exit_reason") in reasons:
             code = row.get("code")
             if code:
                 codes.add(str(code).zfill(6))
@@ -328,6 +343,21 @@ async def daily_loss_limit_reached(user_id: str, broker_account_id: str | None, 
         diagnostics["daily_realized_loss"] = loss
         diagnostics["daily_loss_limit_amount"] = limit
     return loss >= limit
+
+
+async def unrealized_loss_limit_reached(balance: dict, total_equity: int, strategy: dict, diagnostics: dict | None = None) -> bool:
+    if not strategy.get("use_unrealized_loss_limit", True):
+        return False
+    limit = int(max(total_equity, 1) * float(strategy.get("unrealized_loss_limit_pct") or 0))
+    if limit <= 0:
+        return False
+    unrealized_pnl = await asyncio.to_thread(extract_unrealized_pnl, balance)
+    unrealized_loss = abs(min(unrealized_pnl, 0))
+    if diagnostics is not None:
+        diagnostics["unrealized_pnl"] = unrealized_pnl
+        diagnostics["unrealized_loss"] = unrealized_loss
+        diagnostics["unrealized_loss_limit_amount"] = limit
+    return unrealized_loss >= limit
 
 
 def market_intraday_return_pct() -> float | None:
@@ -385,6 +415,8 @@ def passes_intraday_entry_filter(signal: dict, quote: dict[str, int], strategy: 
         return False, "BelowKijun"
     if strategy.get("use_bb_upper_filter", True) and current_price > bb_upper:
         return False, "AboveBBUpper"
+    if strategy.get("use_vi_filter", True) and int(quote.get("vi_active") or 0) > 0:
+        return False, "VolatilityInterruption"
     if strategy.get("use_day_candle_filter", False) and day_high > 0 and current_price < day_high * (1 - float(strategy["max_pullback_from_day_high"])):
         return False, "PulledBackFromDayHigh"
     return True, "IntradayEntry"
@@ -734,6 +766,72 @@ async def reconcile_pending_orders(
             actions.append({"action": "FILL", "code": code, "name": display_name(order), "qty": int(order.get("qty") or 0), "price": int(order.get("price") or 0), "reason": reason_label("OrderFilled"), "plan": action_plan_summary((raw.get("expected_position") if isinstance(raw, dict) else None) or order)})
             continue
 
+        reason_code = raw.get("reason_code") if isinstance(raw, dict) else None
+        reprice_attempts = int((raw.get("stop_loss_reprice_attempts") if isinstance(raw, dict) else 0) or 0)
+        if (
+            side == "SELL"
+            and reason_code == "StopLoss"
+            and not dry_run
+            and reprice_attempts < STOP_LOSS_REORDER_MAX_ATTEMPTS
+            and order.get("order_no")
+        ):
+            cancel_response = None
+            try:
+                quote = await get_quote_safe(client, code)
+                if not quote:
+                    raise RuntimeError("quote unavailable for stop-loss reprice")
+                cancel_response = await client.cancel_order(
+                    order_org_no=order.get("order_org_no") or "",
+                    order_no=order.get("order_no") or "",
+                    qty=int(order.get("qty") or 0),
+                    price=int(float(order.get("price") or 0)),
+                )
+                reprice_ticks = STOP_LOSS_AGGRESSIVE_TICKS + ((reprice_attempts + 1) * STOP_LOSS_REORDER_EXTRA_TICKS)
+                new_price = stop_loss_order_price(quote, reprice_ticks)
+                if new_price <= 0:
+                    raise RuntimeError("invalid stop-loss reprice")
+                source = (raw.get("position") if isinstance(raw, dict) else None) or order
+                new_raw = {
+                    **raw,
+                    "quote": quote,
+                    "previous_order_id": order["id"],
+                    "previous_order_no": order.get("order_no"),
+                    "previous_price": int(float(order.get("price") or 0)),
+                    "stop_loss_reprice_attempts": reprice_attempts + 1,
+                    "order_policy": sell_order_policy("StopLoss", quote, reprice_ticks),
+                    "repriced_at": now_kst().isoformat(),
+                }
+                response = await place_sell(client, source, int(order.get("qty") or 0), new_price, reason="StopLoss", dry_run=False)
+                await mark_pending_order(
+                    int(order["id"]),
+                    "REPLACED",
+                    {**raw, "cancel_response": cancel_response, "replacement_price": new_price, "replaced_at": now_kst().isoformat()},
+                )
+                await insert_pending_order(
+                    user_id,
+                    broker_account_id,
+                    side="SELL",
+                    source=source,
+                    qty=int(order.get("qty") or 0),
+                    price=new_price,
+                    response=response,
+                    reason="StopLoss",
+                    raw=new_raw,
+                )
+                await insert_trade_log(user_id, broker_account_id, "ORDER", source, new_price, int(order.get("qty") or 0), "StopLossRepriced", {"old_order": order, "cancel_response": cancel_response, "new_order": response, **new_raw})
+                actions.append({"action": "REPRICE", "code": code, "name": display_name(order), "qty": int(order.get("qty") or 0), "price": new_price, "reason": reason_label("StopLossRepriced"), "plan": action_plan_summary(source)})
+                continue
+            except Exception as exc:
+                raw = {**raw, "stop_loss_reprice_error": str(exc), "stop_loss_reprice_failed_at": now_kst().isoformat()}
+                if cancel_response:
+                    raw = {**raw, "cancel_response": cancel_response}
+                    await mark_pending_order(int(order["id"]), "CANCELED", raw)
+                else:
+                    await mark_pending_order(int(order["id"]), "CANCEL_FAILED", raw)
+                await insert_trade_log(user_id, broker_account_id, "ORDER", order, int(float(order.get("price") or 0)), int(order.get("qty") or 0), "OrderCancelFailed", raw)
+                actions.append({"action": "REPRICE_FAILED", "code": code, "name": display_name(order), "qty": int(order.get("qty") or 0), "price": int(float(order.get("price") or 0)), "reason": reason_label("OrderCancelFailed"), "plan": action_plan_summary(order)})
+                continue
+
         if not should_cancel:
             continue
 
@@ -930,6 +1028,11 @@ async def enter_positions(
             diagnostics["skip_reason"] = "daily_loss_limit"
         logger.warning("Watcher enter skipped: daily loss limit reached user_id=%s account_id=%s", user_id, broker_account_id)
         return []
+    if await unrealized_loss_limit_reached(balance, total_equity, strategy, diagnostics):
+        if diagnostics is not None:
+            diagnostics["skip_reason"] = "unrealized_loss_limit"
+        logger.warning("Watcher enter skipped: unrealized loss limit reached user_id=%s account_id=%s", user_id, broker_account_id)
+        return []
     if await market_crash_filter_triggered(strategy, diagnostics):
         if diagnostics is not None:
             diagnostics["skip_reason"] = "market_crash_filter"
@@ -942,6 +1045,7 @@ async def enter_positions(
     pending_buy_codes = {order["code"] for order in pending_orders if order.get("side") == "BUY"}
     today_codes = await today_entry_codes(user_id, broker_account_id)
     stopped_out_codes = await today_stopped_out_codes(user_id, broker_account_id) if strategy.get("use_stoploss_reentry_block", True) else set()
+    kijun_exit_codes = await today_kijun_exit_codes(user_id, broker_account_id) if strategy.get("use_kijun_reentry_block", True) else set()
     today_used_codes = today_codes | pending_buy_codes
     blocked_codes = open_codes | kis_codes | pending_codes
     held_or_pending_codes = open_codes | kis_codes | pending_codes
@@ -960,6 +1064,7 @@ async def enter_positions(
                 "today_entry_count": len(today_codes),
                 "today_pending_buy_count": len(pending_buy_codes),
                 "today_stopped_out_count": len(stopped_out_codes),
+                "today_kijun_exit_count": len(kijun_exit_codes),
                 "remaining_daily_slots": remaining_daily_slots,
                 "available_slots": available_slots,
                 "affordable_slots": affordable_slots,
@@ -1003,6 +1108,9 @@ async def enter_positions(
         score = float(signal.get("score") or 0)
         if signal["code"] in stopped_out_codes:
             await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "StoppedOutToday", raw={"strategy": strategy})
+            continue
+        if signal["code"] in kijun_exit_codes:
+            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "KijunExitedToday", raw={"strategy": strategy})
             continue
         if signal["code"] in blocked_codes:
             reason = "PendingOrderExists" if signal["code"] in pending_codes else "AlreadyHeld"

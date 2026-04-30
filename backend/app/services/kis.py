@@ -352,6 +352,18 @@ def _parse_int_field(output: dict[str, Any], *keys: str) -> int:
 
 def parse_quote(payload: dict[str, Any]) -> dict[str, int]:
     output = payload.get("output", {})
+    vi_code = str(
+        _field(
+            output,
+            "vi_cls_code",
+            "VI_CLS_CODE",
+            "vi_kind_code",
+            "VI_KIND_CODE",
+            "vi_knd_code",
+            "VI_KND_CODE",
+        )
+        or ""
+    ).strip()
     return {
         "current_price": _parse_int_field(output, "stck_prpr", "STCK_PRPR"),
         "ask_price": _parse_int_field(output, "askp1", "ASKP1", "stck_askp1", "STCK_ASKP1", "askp", "ASKP"),
@@ -359,6 +371,7 @@ def parse_quote(payload: dict[str, Any]) -> dict[str, int]:
         "day_high": _parse_int_field(output, "stck_hgpr", "STCK_HGPR"),
         "day_low": _parse_int_field(output, "stck_lwpr", "STCK_LWPR"),
         "accumulated_volume": _parse_int_field(output, "acml_vol", "ACML_VOL"),
+        "vi_active": 1 if vi_code and vi_code not in {"0", "00", "N", "n"} else 0,
     }
 
 
@@ -446,6 +459,33 @@ def extract_total_equity(balance: dict[str, Any]) -> int:
         return max(int(float(str(raw_value).replace(",", ""))), 1)
     except ValueError:
         return 10_000_000
+
+
+def _parse_balance_number(row: dict[str, Any], *keys: str) -> float:
+    for key in keys:
+        value = row.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            return float(str(value).replace(",", ""))
+        except ValueError:
+            continue
+    return 0.0
+
+
+def extract_unrealized_pnl(balance: dict[str, Any]) -> int:
+    total = 0.0
+    for item in balance.get("output1", []):
+        direct = _parse_balance_number(item, "evlu_pfls_amt", "EVLU_PFLS_AMT")
+        if direct:
+            total += direct
+            continue
+        qty = _parse_balance_number(item, "hldg_qty", "HLDG_QTY")
+        avg_price = _parse_balance_number(item, "pchs_avg_pric", "PCHS_AVG_PRIC")
+        current_price = _parse_balance_number(item, "prpr", "PRPR", "now_pric", "NOW_PRIC")
+        if qty > 0 and avg_price > 0 and current_price > 0:
+            total += (current_price - avg_price) * qty
+    return int(total)
 
 
 def kis_holding_codes(balance: dict[str, Any]) -> set[str]:

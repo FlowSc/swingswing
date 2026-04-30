@@ -279,8 +279,11 @@ export type StrategySettings = {
   use_day_candle_filter: boolean;
   use_breakeven_after_tp1: boolean;
   use_kijun_exit: boolean;
+  use_kijun_reentry_block: boolean;
   use_daily_loss_limit: boolean;
   daily_loss_limit_pct: number;
+  use_unrealized_loss_limit: boolean;
+  unrealized_loss_limit_pct: number;
   use_market_crash_filter: boolean;
   market_crash_limit_pct: number;
   commission_tax_pct: number;
@@ -289,6 +292,7 @@ export type StrategySettings = {
   min_bid_ask_ratio: number;
   max_realtime_spread_pct: number;
   use_stoploss_reentry_block: boolean;
+  use_vi_filter: boolean;
 };
 
 export const api = {
