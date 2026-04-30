@@ -6,7 +6,7 @@ from datetime import date
 import httpx
 
 from app.core.config import get_settings
-from app.services.emailer import send_admin_email
+from app.services.emailer import send_admin_email_result
 
 
 logger = logging.getLogger(__name__)
@@ -104,12 +104,18 @@ Markdown 표로 작성한다.
 
 
 async def generate_daily_signal_report(signals: list[dict], trade_date: date) -> str | None:
+    result = await generate_daily_signal_report_result(signals, trade_date)
+    return result.get("report") if result.get("ok") else None
+
+
+async def generate_daily_signal_report_result(signals: list[dict], trade_date: date) -> dict:
     settings = get_settings()
     if not settings.openai_api_key:
-        logger.info("AI report skipped: OPENAI_API_KEY is not configured")
-        return None
+        message = "OPENAI_API_KEY is not configured"
+        logger.info("AI report skipped: %s", message)
+        return {"ok": False, "stage": "openai_config", "error": message, "report": None}
     if not signals:
-        return None
+        return {"ok": False, "stage": "input", "error": "No signals provided", "report": None}
 
     top_n = max(1, min(int(settings.ai_report_top_n or 3), len(signals)))
     prompt = build_report_prompt(signals[:top_n], trade_date)
@@ -130,22 +136,34 @@ async def generate_daily_signal_report(signals: list[dict], trade_date: date) ->
                 },
                 json=payload,
             )
-            response.raise_for_status()
-    except Exception:
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                body = response.text[:1000]
+                raise RuntimeError(f"OpenAI HTTP error {response.status_code}: {body}") from exc
+    except Exception as exc:
         logger.exception("AI report generation failed")
-        return None
+        return {"ok": False, "stage": "openai", "error": str(exc), "report": None}
 
     data = response.json()
     text = data.get("output_text") or extract_output_text(data)
-    return text.strip() if text else None
+    if not text or not text.strip():
+        return {"ok": False, "stage": "openai", "error": "OpenAI response did not contain output text", "report": None}
+    return {"ok": True, "stage": "openai", "error": None, "report": text.strip()}
 
 
 async def send_daily_signal_report(signals: list[dict], trade_date: date) -> bool:
-    report = await generate_daily_signal_report(signals, trade_date)
-    if not report:
-        return False
+    return (await send_daily_signal_report_result(signals, trade_date))["sent"]
+
+
+async def send_daily_signal_report_result(signals: list[dict], trade_date: date) -> dict:
+    report_result = await generate_daily_signal_report_result(signals, trade_date)
+    if not report_result["ok"]:
+        return {"sent": False, "stage": report_result["stage"], "error": report_result["error"]}
+    report = report_result["report"]
     subject = f"[스윙봇] {trade_date.isoformat()} 상위 시그널 AI 리포트"
-    return await send_admin_email(subject, report)
+    email_result = await send_admin_email_result(subject, report)
+    return {"sent": email_result["sent"], "stage": email_result["stage"], "error": email_result["error"]}
 
 
 def build_report_prompt(signals: list[dict], trade_date: date) -> str:

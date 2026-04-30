@@ -8,7 +8,7 @@ from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
 from app.schemas.bot import BotControlIn, BotControlOut, StrategySettingsIn, StrategySettingsOut, WatchTickIn
 from app.services.broker_credentials import get_broker_credentials, get_decrypted_broker_credentials, set_bot_enabled
-from app.services.ai_report import send_daily_signal_report
+from app.services.ai_report import send_daily_signal_report, send_daily_signal_report_result
 from app.services.scanner import finalize_chunked_scan, prepare_chunked_scan_state, process_scan_chunk
 from app.services.strategy_settings import get_strategy_settings, save_strategy_settings
 from app.services.supabase_rest import SupabaseRest
@@ -164,8 +164,8 @@ async def send_daily_report(
         raise HTTPException(status_code=404, detail="No shared signals found for report date.")
 
     signals = [shared_signal_record_to_signal(row) for row in rows]
-    sent = await send_daily_signal_report(signals, datetime.fromisoformat(target_date).date())
-    return {"sent": sent, "trade_date": target_date, "signals": len(signals)}
+    result = await send_daily_signal_report_result(signals, datetime.fromisoformat(target_date).date())
+    return {"trade_date": target_date, "signals": len(signals), **result}
 
 
 @router.post("/reports/signal")
@@ -183,12 +183,12 @@ async def send_single_signal_report(
         raise HTTPException(status_code=404, detail="Signal not found for report date and code.")
 
     signal = shared_signal_record_to_signal(rows[0])
-    sent = await send_daily_signal_report([signal], datetime.fromisoformat(payload.trade_date).date())
+    result = await send_daily_signal_report_result([signal], datetime.fromisoformat(payload.trade_date).date())
     return {
-        "sent": sent,
         "trade_date": payload.trade_date,
         "code": payload.code,
         "name": signal.get("Name"),
+        **result,
     }
 
 
