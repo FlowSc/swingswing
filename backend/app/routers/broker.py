@@ -2,12 +2,13 @@ from fastapi import APIRouter, Depends
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
-from app.schemas.broker import BrokerAccountOut, BrokerCredentialIn, BrokerCredentialOut, BrokerStatusOut, KisAccountOut, KisHoldingOut
+from app.schemas.broker import BrokerAccountOut, BrokerCredentialIn, BrokerCredentialOut, BrokerStatusOut, KisAccountOut, KisHoldingOut, TelegramSettingsIn
 from app.services.broker_credentials import (
     get_broker_credentials,
     get_decrypted_broker_credentials,
     list_broker_accounts,
     save_broker_credentials,
+    save_telegram_settings,
     set_active_broker_account,
 )
 from app.services.kis import client_from_credentials, extract_cash, extract_total_equity
@@ -107,6 +108,15 @@ async def save_kis_credentials(
     user: CurrentUser = Depends(get_current_user),
 ) -> BrokerCredentialOut:
     row = await save_broker_credentials(user.id, payload)
+    return account_out(row)
+
+
+@router.put("/telegram", response_model=BrokerCredentialOut)
+async def save_telegram(
+    payload: TelegramSettingsIn,
+    user: CurrentUser = Depends(get_current_user),
+) -> BrokerCredentialOut:
+    row = await save_telegram_settings(user.id, payload)
     return account_out(row)
 
 

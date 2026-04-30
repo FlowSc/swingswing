@@ -12,6 +12,7 @@ import {
   type KisAccount,
   type StrategyPreset,
   type StrategySettings,
+  type TelegramSettingsPayload,
   type TradeDecisionLog,
 } from "./api";
 import { supabase } from "./supabase";
@@ -28,6 +29,9 @@ const emptyBroker: BrokerPayload = {
   kis_account_product_code: "01",
   mode: "paper",
   live_order_enabled: false,
+};
+
+const emptyTelegramSettings: TelegramSettingsPayload = {
   telegram_bot_token: "",
   telegram_chat_id: "",
 };
@@ -208,6 +212,7 @@ function AuthCard() {
 
 function Dashboard({ session }: { session: Session }) {
   const [broker, setBroker] = useState<BrokerPayload>(emptyBroker);
+  const [telegramSettings, setTelegramSettings] = useState<TelegramSettingsPayload>(emptyTelegramSettings);
   const [editingBroker, setEditingBroker] = useState(false);
   const [status, setStatus] = useState<Status>({ type: "idle", message: "" });
   const [brokerStatus, setBrokerStatus] = useState<BrokerStatus | null>(null);
@@ -442,9 +447,8 @@ function Dashboard({ session }: { session: Session }) {
           kis_account_product_code: brokerResult.account_product_code || "01",
           mode: brokerResult.mode || "paper",
           live_order_enabled: brokerResult.live_order_enabled || false,
-          telegram_bot_token: "",
-          telegram_chat_id: brokerResult.telegram_chat_id || "",
         }));
+        setTelegramSettings({ telegram_bot_token: "", telegram_chat_id: brokerResult.telegram_chat_id || "" });
         setEditingBroker(false);
       }
       setSignals(signalResult);
@@ -462,8 +466,14 @@ function Dashboard({ session }: { session: Session }) {
     setKisAccount(null);
     setAutoLoadedAccountKey("");
     await run("broker", () => api.saveBroker(session, broker), "KIS 정보 저장 완료:");
-    setBroker((current) => ({ ...current, kis_app_key: "", kis_app_secret: "", telegram_bot_token: "" }));
+    setBroker((current) => ({ ...current, kis_app_key: "", kis_app_secret: "" }));
     setEditingBroker(false);
+  }
+
+  async function saveTelegram(event: React.FormEvent) {
+    event.preventDefault();
+    await run("telegram", () => api.saveTelegramSettings(session, telegramSettings), "매매 알림 저장 완료:");
+    setTelegramSettings((current) => ({ ...current, telegram_bot_token: "" }));
   }
 
   async function activateBrokerAccount(accountId: string) {
@@ -600,26 +610,38 @@ function Dashboard({ session }: { session: Session }) {
                   실전 주문을 이 계정에서 허용
                 </label>
               )}
-              <label>
-                매매 알림 Telegram Bot Token
-                <input
-                  value={broker.telegram_bot_token || ""}
-                  onChange={(event) => setBroker({ ...broker, telegram_bot_token: event.target.value })}
-                  placeholder="매수/매도 알림을 받을 개인 봇 토큰"
-                />
-                <small>이미 저장된 토큰은 다시 표시하지 않습니다. 비워두면 기존 토큰을 유지합니다.</small>
-              </label>
-              <label>
-                매매 알림 Telegram Chat ID
-                <input
-                  value={broker.telegram_chat_id || ""}
-                  onChange={(event) => setBroker({ ...broker, telegram_chat_id: event.target.value })}
-                  placeholder="예: 6583699681"
-                />
-              </label>
               <button className="primary" disabled={pending === "broker"}>{pending === "broker" ? "저장 중..." : "저장"}</button>
             </>
           )}
+        </form>
+
+        <form className="panel" onSubmit={saveTelegram}>
+          <div className="section-title">
+            <h2>매매 알림</h2>
+          </div>
+          <p className="command-copy">KIS 키와 별도로 저장합니다. 매수/매도 알림과 shared signal 알림을 받을 개인 텔레그램 봇 설정입니다.</p>
+          <label>
+            Telegram Bot Token
+            <input
+              value={telegramSettings.telegram_bot_token || ""}
+              onChange={(event) => setTelegramSettings({ ...telegramSettings, telegram_bot_token: event.target.value })}
+              placeholder="개인 봇 토큰"
+              disabled={!brokerStatus?.configured}
+            />
+            <small>이미 저장된 토큰은 다시 표시하지 않습니다. 비워두면 기존 토큰을 유지합니다.</small>
+          </label>
+          <label>
+            Telegram Chat ID
+            <input
+              value={telegramSettings.telegram_chat_id || ""}
+              onChange={(event) => setTelegramSettings({ ...telegramSettings, telegram_chat_id: event.target.value })}
+              placeholder="예: 6583699681"
+              disabled={!brokerStatus?.configured}
+            />
+          </label>
+          <button className="primary" disabled={pending === "telegram" || !brokerStatus?.configured}>
+            {pending === "telegram" ? "저장 중..." : "매매 알림 저장"}
+          </button>
         </form>
 
         <div className="panel command">

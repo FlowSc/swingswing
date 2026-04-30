@@ -8,6 +8,9 @@ class BrokerCredentialIn(BaseModel):
     kis_account_product_code: str = "01"
     mode: str = "paper"
     live_order_enabled: bool = False
+
+
+class TelegramSettingsIn(BaseModel):
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
 

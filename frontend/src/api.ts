@@ -66,6 +66,9 @@ export type BrokerPayload = {
   kis_account_product_code: string;
   mode: "paper" | "live";
   live_order_enabled: boolean;
+};
+
+export type TelegramSettingsPayload = {
   telegram_bot_token?: string;
   telegram_chat_id?: string;
 };
@@ -259,6 +262,8 @@ export const api = {
   getBrokerAccounts: (session: Session) => request<BrokerAccount[]>("/broker/kis/accounts", session),
   saveBroker: (session: Session, payload: BrokerPayload) =>
     request("/broker/kis", session, { method: "POST", body: JSON.stringify(payload) }),
+  saveTelegramSettings: (session: Session, payload: TelegramSettingsPayload) =>
+    request<BrokerAccount>("/broker/telegram", session, { method: "PUT", body: JSON.stringify(payload) }),
   activateBrokerAccount: (session: Session, accountId: string) =>
     request<BrokerAccount>(`/broker/kis/accounts/${accountId}/activate`, session, { method: "POST" }),
   getKisAccount: (session: Session) => request<KisAccount>("/broker/kis/account", session),

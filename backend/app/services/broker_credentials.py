@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import HTTPException
 
 from app.core.security import decrypt_secret, encrypt_secret
-from app.schemas.broker import BrokerCredentialIn
+from app.schemas.broker import BrokerCredentialIn, TelegramSettingsIn
 from app.services.supabase_rest import SupabaseRest
 
 
@@ -90,7 +90,6 @@ async def save_broker_credentials(user_id: str, payload: BrokerCredentialIn) -> 
         limit=1,
     )
     existing = existing_rows[0] if existing_rows else {}
-    telegram_bot_token = (payload.telegram_bot_token or "").strip()
     record = {
         "user_id": user_id,
         "label": label,
@@ -99,8 +98,8 @@ async def save_broker_credentials(user_id: str, payload: BrokerCredentialIn) -> 
         "kis_account_no": payload.kis_account_no,
         "kis_account_product_code": payload.kis_account_product_code,
         "mode": payload.mode,
-        "telegram_bot_token_enc": encrypt_secret(telegram_bot_token) if telegram_bot_token else existing.get("telegram_bot_token_enc"),
-        "telegram_chat_id": payload.telegram_chat_id or None,
+        "telegram_bot_token_enc": existing.get("telegram_bot_token_enc"),
+        "telegram_chat_id": existing.get("telegram_chat_id"),
         "live_order_enabled": payload.live_order_enabled if payload.mode == "live" else False,
         "enabled": True,
         "is_active": True,
@@ -109,6 +108,33 @@ async def save_broker_credentials(user_id: str, payload: BrokerCredentialIn) -> 
     rows = await rest.upsert(ACCOUNTS_TABLE, record, on_conflict="user_id,mode")
     await clear_broker_access_token(rows[0].get("id"))
     return _public_account(rows[0])
+
+
+async def save_telegram_settings(user_id: str, payload: TelegramSettingsIn) -> dict:
+    rest = SupabaseRest()
+    rows = await rest.select(
+        ACCOUNTS_TABLE,
+        filters={"user_id": f"eq.{user_id}", "is_active": "eq.true"},
+        limit=1,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Broker credentials not configured")
+
+    current = rows[0]
+    bot_token = (payload.telegram_bot_token or "").strip()
+    chat_id = (payload.telegram_chat_id or "").strip()
+    update_payload = {
+        "telegram_bot_token_enc": encrypt_secret(bot_token) if bot_token else current.get("telegram_bot_token_enc"),
+        "telegram_chat_id": chat_id or None,
+    }
+    updated = await rest.patch(
+        ACCOUNTS_TABLE,
+        filters={"id": f"eq.{current['id']}", "user_id": f"eq.{user_id}"},
+        payload=update_payload,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Broker credentials not configured")
+    return _public_account(updated[0])
 
 
 async def list_broker_accounts(user_id: str) -> list[dict]:
