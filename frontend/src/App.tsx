@@ -1704,7 +1704,7 @@ function SignalDetail({
         ["갭", `${formatCell(raw["Gap(%)"])}%`],
         ["윗꼬리 비율", raw.UpperShadowRatio],
         ["20일 거래대금", raw.TradingValue20D],
-        ["시장 필터", raw.MarketFilter],
+        ["시장 필터", `${formatCell(raw.MarketFilter)} / ${isPassed(raw.MarketFilterPassed) ? "통과" : "미통과"}`],
         ["유니버스", raw.Universe],
         ["기존 제한 유니버스", isCoreUniverseSignal(raw) ? translateCoreUniverse(raw.CoreUniverseType) : "해당 없음"],
         ["5일 수익률", `${formatCell(raw["Ret_5D(%)"])}%`],
@@ -2134,7 +2134,7 @@ function translateReasons(reasons: unknown) {
     "Bear cloud breakout pressure": "음운 돌파 직전 수급",
     "KOSPI above MA5": "코스피 5일선 위",
     "KOSPI_TOP1000": "코스피 시총 상위 1000",
-    KOSPI_TOP500: "코스피 시총 상위권",
+    KOSPI_TOP500: "코스피 시총 상위 1000",
     KOSDAQ150: "코스닥150 구성",
     "Core universe": "기존 제한 유니버스 해당",
   };
@@ -2145,11 +2145,15 @@ function isCoreUniverseSignal(raw: Record<string, unknown>) {
   return raw.CoreUniverse === true || raw.CoreUniverse === "true" || raw.CoreUniverse === 1;
 }
 
+function isPassed(value: unknown) {
+  return value === true || value === "true" || value === 1;
+}
+
 function translateCoreUniverse(value: unknown) {
   const type = String(value || "");
   const map: Record<string, string> = {
     KOSPI_TOP1000: "코스피 시총 상위 1000",
-    KOSPI_TOP500: "코스피 시총 상위권",
+    KOSPI_TOP500: "코스피 시총 상위 1000",
     KOSDAQ150: "코스닥150",
   };
   return map[type] || type || "해당 없음";

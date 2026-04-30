@@ -332,6 +332,7 @@ def score_swing_setup(
         "Low52W": round(low_52w, 2),
         "DistanceFrom52WLow(%)": round((close / low_52w - 1) * 100, 2),
         "MarketFilter": "KOSPI close > MA5",
+        "MarketFilterPassed": bool(market_filter_ok),
         "Universe": universe,
         "CoreUniverse": bool(core_universe),
         "CoreUniverseType": core_universe_type,
@@ -421,7 +422,7 @@ def load_scan_universe(scope: str = SCAN_UNIVERSE_LIMITED) -> pd.DataFrame:
     frames = [
         _normalize_listing(
             kospi,
-            "KOSPI_ALL" if full_scan else "KOSPI_TOP500",
+            "KOSPI_ALL" if full_scan else "KOSPI_TOP1000",
             core_codes=kospi_core_codes,
             core_universe_type="KOSPI_TOP1000",
         )
