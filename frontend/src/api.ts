@@ -222,6 +222,8 @@ export type AiReport = {
   finished_at?: string | null;
 };
 
+export type AiReportStatus = Omit<AiReport, "markdown" | "html">;
+
 export type StrategyPreset = "conservative" | "balanced" | "aggressive";
 
 export type StrategySettings = {
@@ -275,6 +277,8 @@ export const api = {
     if (payload.code) params.set("code", payload.code);
     return request<AiReport>(`/bot/reports?${params.toString()}`, session);
   },
+  getAiReportStatuses: (session: Session, tradeDate: string) =>
+    request<AiReportStatus[]>(`/bot/reports/status?trade_date=${encodeURIComponent(tradeDate)}`, session),
   watchTick: (session: Session, payload: { test_mode: boolean; dry_run: boolean }) =>
     request("/bot/watch-tick", session, { method: "POST", body: JSON.stringify(payload) }),
   todaySignals: (session: Session) => request<Array<Record<string, unknown>>>("/signals/today", session),

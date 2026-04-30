@@ -3,6 +3,7 @@ import type { Session } from "@supabase/supabase-js";
 import {
   api,
   type AiReport,
+  type AiReportStatus,
   type BacktestResult,
   type BrokerAccount,
   type BrokerPayload,
@@ -207,6 +208,7 @@ function Dashboard({ session }: { session: Session }) {
   const [logs, setLogs] = useState<Array<Record<string, unknown>>>([]);
   const [decisions, setDecisions] = useState<TradeDecisionLog[]>([]);
   const [dailyDashboard, setDailyDashboard] = useState<DailyDashboard | null>(null);
+  const [aiReports, setAiReports] = useState<AiReportStatus[]>([]);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
   const [backtestDays, setBacktestDays] = useState(120);
   const [kisAccount, setKisAccount] = useState<KisAccount | null>(null);
@@ -216,6 +218,7 @@ function Dashboard({ session }: { session: Session }) {
   const [detail, setDetail] = useState<DetailSelection | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const isScanAdmin = (session.user.email || "").toLowerCase() === "zelatool@gmail.com";
+  const dailyReportCompleted = hasCompletedReport(aiReports, "daily");
 
   useEffect(() => {
     refresh();
@@ -408,12 +411,13 @@ function Dashboard({ session }: { session: Session }) {
         api.dailyDashboard(session).catch(() => null),
       ]);
       const nextSignalDate = selectedSignalDate || dateResult[0] || "";
-      const [signalResult, decisionResult] = nextSignalDate
+      const [signalResult, decisionResult, reportResult] = nextSignalDate
         ? await Promise.all([
             api.signalsByDate(session, nextSignalDate),
             api.tradeDecisions(session, nextSignalDate).catch(() => []),
+            isScanAdmin ? api.getAiReportStatuses(session, nextSignalDate).catch(() => []) : Promise.resolve([]),
           ])
-        : [[], []];
+        : [[], [], []];
       setBrokerStatus(brokerResult);
       setBrokerAccounts(accountResult);
       setStrategy(strategyResult);
@@ -431,6 +435,7 @@ function Dashboard({ session }: { session: Session }) {
         setEditingBroker(false);
       }
       setSignals(signalResult);
+      setAiReports(reportResult);
       setPositions(positionResult);
       setLogs(logResult);
       setDecisions(decisionResult);
@@ -472,7 +477,9 @@ function Dashboard({ session }: { session: Session }) {
         api.signalsByDate(session, tradeDate),
         api.tradeDecisions(session, tradeDate).catch(() => []),
       ]);
+      const reportResult = isScanAdmin ? await api.getAiReportStatuses(session, tradeDate).catch(() => []) : [];
       setSignals(signalResult);
+      setAiReports(reportResult);
       setDecisions(decisionResult);
       setStatus({ type: "info", message: `시그널 조회 완료: ${tradeDate} / ${signalResult.length}개` });
     } catch (error) {
@@ -605,9 +612,11 @@ function Dashboard({ session }: { session: Session }) {
               <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendReport}>
                 {pending === "report" ? "리포트 생성 요청 중..." : "AI 리포트 생성 요청"}
               </button>
-              <button disabled={pending !== null || !selectedSignalDate} onClick={downloadDailyReport}>
-                {pending === "reportDownload" ? "종합 리포트 확인 중..." : "종합 리포트 다운로드"}
-              </button>
+              {dailyReportCompleted && (
+                <button disabled={pending !== null || !selectedSignalDate} onClick={downloadDailyReport}>
+                  {pending === "reportDownload" ? "종합 리포트 확인 중..." : "종합 리포트 다운로드"}
+                </button>
+              )}
             </>
           ) : (
             <p className="command-copy">스캔 실행은 관리자만 가능하고, 사용자는 생성된 오늘 시그널만 조회합니다.</p>
@@ -694,6 +703,7 @@ function Dashboard({ session }: { session: Session }) {
           pending={pending}
           onSendSignalReport={sendSingleSignalReport}
           onDownloadSignalReport={downloadSingleSignalReport}
+          aiReports={aiReports}
           onClose={() => setDetail(null)}
         />
       )}
@@ -1112,6 +1122,14 @@ function escapeHtml(value: string) {
     .replace(/"/g, "&quot;");
 }
 
+function hasCompletedReport(reports: AiReportStatus[], reportType: "daily" | "signal", code?: string) {
+  return reports.some((report) => {
+    if (report.report_type !== reportType || report.status !== "completed") return false;
+    if (reportType === "daily") return report.code === "ALL";
+    return report.code === code;
+  });
+}
+
 function DataPanel({
   title,
   rows,
@@ -1180,6 +1198,7 @@ function DetailOverlay({
   pending,
   onSendSignalReport,
   onDownloadSignalReport,
+  aiReports,
   onClose,
 }: {
   detail: DetailSelection;
@@ -1187,6 +1206,7 @@ function DetailOverlay({
   pending: string | null;
   onSendSignalReport: (row: Record<string, unknown>) => void;
   onDownloadSignalReport: (row: Record<string, unknown>) => void;
+  aiReports: AiReportStatus[];
   onClose: () => void;
 }) {
   const detailLabel =
@@ -1210,6 +1230,7 @@ function DetailOverlay({
             isScanAdmin={isScanAdmin}
             pending={pending === "signalReport"}
             downloadPending={pending === "signalReportDownload"}
+            reportCompleted={hasCompletedReport(aiReports, "signal", String(detail.row.code || "").padStart(6, "0"))}
             onSendReport={() => onSendSignalReport(detail.row)}
             onDownloadReport={() => onDownloadSignalReport(detail.row)}
           />
@@ -1227,6 +1248,7 @@ function SignalDetail({
   isScanAdmin,
   pending,
   downloadPending,
+  reportCompleted,
   onSendReport,
   onDownloadReport,
 }: {
@@ -1234,6 +1256,7 @@ function SignalDetail({
   isScanAdmin: boolean;
   pending: boolean;
   downloadPending: boolean;
+  reportCompleted: boolean;
   onSendReport: () => void;
   onDownloadReport: () => void;
 }) {
@@ -1251,9 +1274,11 @@ function SignalDetail({
           <button className="primary detail-action" type="button" disabled={pending} onClick={onSendReport}>
             {pending ? "개별 리포트 생성 요청 중..." : "이 기업 AI 리포트 생성 요청"}
           </button>
-          <button className="detail-action" type="button" disabled={downloadPending} onClick={onDownloadReport}>
-            {downloadPending ? "리포트 확인 중..." : "개별 리포트 다운로드"}
-          </button>
+          {reportCompleted && (
+            <button className="detail-action" type="button" disabled={downloadPending} onClick={onDownloadReport}>
+              {downloadPending ? "리포트 확인 중..." : "개별 리포트 다운로드"}
+            </button>
+          )}
         </>
       )}
       <DetailSection title="기업 개요" items={[

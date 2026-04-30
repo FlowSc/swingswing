@@ -226,6 +226,21 @@ async def get_report(
     return rows[0]
 
 
+@router.get("/reports/status")
+async def list_report_statuses(
+    trade_date: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    require_scan_admin(user)
+    return await SupabaseRest().select(
+        "ai_reports",
+        columns="id,trade_date,report_type,code,name,title,status,error,created_at,started_at,finished_at",
+        filters={"trade_date": f"eq.{trade_date}"},
+        order="created_at.desc",
+        limit=100,
+    )
+
+
 @router.post("/watch-tick")
 async def watch_tick(
     payload: WatchTickIn,
