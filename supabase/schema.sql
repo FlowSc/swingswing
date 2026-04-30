@@ -162,6 +162,7 @@ create table if not exists ai_reports (
   title text not null,
   status text not null default 'queued',
   markdown text not null default '',
+  html text not null default '',
   error text,
   raw jsonb not null default '{}'::jsonb,
   started_at timestamptz,
@@ -197,6 +198,7 @@ alter table ai_reports add column if not exists status text not null default 'qu
 alter table ai_reports add column if not exists error text;
 alter table ai_reports add column if not exists started_at timestamptz;
 alter table ai_reports add column if not exists finished_at timestamptz;
+alter table ai_reports add column if not exists html text not null default '';
 alter table ai_reports alter column markdown set default '';
 alter table ai_reports alter column markdown set not null;
 

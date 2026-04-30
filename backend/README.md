@@ -83,7 +83,8 @@ TIMEZONE=Asia/Seoul
 The backend uses the service role key for encrypted credential storage, invite-code signup, and bot jobs. Do not expose `SUPABASE_SERVICE_ROLE_KEY` to React.
 `SIGNUP_INVITE_CODE` is checked by `POST /auth/signup`; users cannot sign up through the app without this code.
 For stronger protection, turn off public signups in Supabase Auth and only use the backend signup endpoint.
-If `OPENAI_API_KEY` is configured, the daily scan creates a Markdown AI report for the top scored signals and stores it in `ai_reports`.
+If `OPENAI_API_KEY` is configured, the daily scan queues HTML AI reports and stores completed output in `ai_reports.html`.
+It queues one daily summary plus individual reports for the top `AI_REPORT_TOP_N` signals.
 SMTP settings are optional legacy fallback values and are not required for DB-stored reports.
 
 ## Bot Flow

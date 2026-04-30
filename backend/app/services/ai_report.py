@@ -21,23 +21,27 @@ REPORT_INSTRUCTIONS = """
 - 외부 뉴스, 루머, 재무정보, 공시 내용을 임의로 만들지 않는다.
 - 매수 추천, 수익 보장, 확정적 상승 표현을 사용하지 않는다.
 - 투자 판단은 독자 책임이라는 유의 문구를 포함한다.
-- 블로그에 바로 올릴 수 있는 한국어 Markdown 형식으로 작성한다.
+- 네이버 블로그에 바로 복사해 붙여넣을 수 있는 한국어 HTML 형식으로 작성한다.
 - 문체는 전문적이지만 일반 투자자도 이해할 수 있게 쓴다.
 - 너무 짧게 요약하지 말고, 각 종목별로 판단 근거와 리스크를 구체적으로 설명한다.
-- 개별 기업 리포트는 전체 2,000자 이상으로 작성한다.
+- 개별 기업 리포트는 전체 3,000자 이상으로 작성한다.
 - 여러 종목 리포트는 종목별 분석을 최소 800자 이상으로 작성한다.
+- 출력은 <article>, <h1>, <h2>, <h3>, <p>, <ul>, <li>, <table>, <thead>, <tbody>, <tr>, <th>, <td>, <strong>만 사용한다.
+- <html>, <head>, <body>, <script>, <style> 태그는 사용하지 않는다.
+- ```html 같은 코드펜스나 설명 문장은 출력하지 않는다.
 
 작성 형식:
 
-# 오늘의 스윙 후보 리포트
+<article>
+<h1>오늘의 스윙 후보 리포트</h1>
 
-## 1. 시장 및 전략 요약
+<h2>1. 시장 및 전략 요약</h2>
 - 오늘 후보군이 어떤 성격인지 요약한다.
 - 스윙 관점에서 변동성, 거래량, 추세 전환 신호가 있는지 설명한다.
 - 단, 시장 전체 전망을 임의로 단정하지 않는다.
 
-## 2. 핵심 후보 요약표
-Markdown 표로 작성한다.
+<h2>2. 핵심 후보 요약표</h2>
+HTML table로 작성한다.
 
 표 컬럼:
 - 순위
@@ -52,48 +56,48 @@ Markdown 표로 작성한다.
 - 최대 보유일
 - 핵심 근거
 
-## 3. 종목별 상세 분석
+<h2>3. 종목별 상세 분석</h2>
 
 각 종목마다 아래 형식을 반복한다.
 
-### 종목명 (종목코드)
+<h3>종목명 (종목코드)</h3>
 
-#### 기업 개요
+<h3>기업 개요</h3>
 - 제공된 company_profile 데이터를 기반으로 어떤 시장에 속한 기업인지 설명한다.
 - sector, industry, business_summary가 있으면 어떤 사업을 주력으로 하는지 설명한다.
 - 제공 데이터가 부족하면 추측하지 말고 "제공 데이터 기준 확인 불가"라고 쓴다.
 
-#### 핵심 요약
+<h3>핵심 요약</h3>
 - 이 종목이 후보로 나온 핵심 이유를 2~3문장으로 설명한다.
 
-#### 기술적 근거
+<h3>기술적 근거</h3>
 - RSI 위치를 해석한다.
 - 일목균형표 전환선/기준선 관계를 설명한다.
 - 볼린저 밴드 폭과 확장률을 기반으로 변동성 확대 여부를 설명한다.
 - 거래량/거래대금 배율을 기반으로 수급 확인 여부를 설명한다.
 - 5일/20일 수익률과 시장 대비 상대강도를 설명한다.
 
-#### 매매 계획
+<h3>매매 계획</h3>
 - 진입가는 관찰 기준 가격으로 설명한다.
 - 손절가는 리스크 관리 기준으로 설명한다.
 - 1차 익절, 2차 익절, 추적 손절의 역할을 설명한다.
 - 권장 보유일과 최대 보유일을 설명한다.
 
-#### 리스크 체크
+<h3>리스크 체크</h3>
 - 손절폭이 큰지 작은지 평가한다.
 - ATR 비율로 변동성 리스크를 설명한다.
 - 갭 상승, 윗꼬리, 과열 가능성이 있으면 언급한다.
 - 조건이 훼손될 경우 제외해야 한다고 설명한다.
 
-#### 블로그용 한줄 코멘트
+<h3>블로그용 한줄 코멘트</h3>
 - 과장 없이 짧은 한 문장으로 정리한다.
 
-## 4. 오늘의 관찰 포인트
+<h2>4. 오늘의 관찰 포인트</h2>
 - 어떤 가격대에서 관심을 가질 수 있는지 설명한다.
 - 어떤 조건이면 매수를 피해야 하는지 설명한다.
 - 스윙 전략상 분할 진입/분할 청산의 필요성을 설명한다.
 
-## 5. 투자 유의사항
+<h2>5. 투자 유의사항</h2>
 아래 문구를 반드시 포함한다.
 
 본 리포트는 자동화된 정량 조건을 바탕으로 작성된 참고용 분석 자료입니다. 특정 종목의 매수 또는 매도를 권유하는 투자 자문이 아니며, 모든 투자 판단과 책임은 투자자 본인에게 있습니다. 주식 투자는 원금 손실 가능성이 있습니다.
@@ -102,16 +106,16 @@ Markdown 표로 작성한다.
 - "무조건", "확실히", "급등", "대박", "보장" 같은 표현은 사용하지 않는다.
 - "매수해야 한다" 대신 "관찰할 수 있다", "조건 충족 여부를 확인할 필요가 있다"라고 표현한다.
 - 데이터가 없는 항목은 추측하지 말고 "제공 데이터 기준 확인 불가"라고 쓴다.
-- 전체 리포트는 Markdown 형식으로만 출력한다.
+- 전체 리포트는 HTML fragment만 출력한다.
 """.strip()
 
 
 async def generate_daily_signal_report(signals: list[dict], trade_date: date) -> str | None:
-    result = await generate_daily_signal_report_result(signals, trade_date)
+    result = await generate_daily_signal_report_result(signals, trade_date, report_type="daily")
     return result.get("report") if result.get("ok") else None
 
 
-async def generate_daily_signal_report_result(signals: list[dict], trade_date: date) -> dict:
+async def generate_daily_signal_report_result(signals: list[dict], trade_date: date, report_type: str = "daily") -> dict:
     settings = get_settings()
     if not settings.openai_api_key:
         message = "OPENAI_API_KEY is not configured"
@@ -120,13 +124,13 @@ async def generate_daily_signal_report_result(signals: list[dict], trade_date: d
     if not signals:
         return {"ok": False, "stage": "input", "error": "No signals provided", "report": None}
 
-    top_n = max(1, min(int(settings.ai_report_top_n or 3), len(signals)))
+    top_n = 1 if report_type == "signal" else max(1, min(int(settings.ai_report_top_n or 3), len(signals)))
     prompt = build_report_prompt(signals[:top_n], trade_date)
     payload = {
         "model": settings.ai_report_model,
         "instructions": REPORT_INSTRUCTIONS,
         "input": prompt,
-        "max_output_tokens": 6500,
+        "max_output_tokens": 9000 if report_type == "signal" else 6500,
     }
 
     try:
@@ -161,7 +165,7 @@ async def generate_daily_signal_report_result(signals: list[dict], trade_date: d
     text = data.get("output_text") or extract_output_text(data)
     if not text or not text.strip():
         return {"ok": False, "stage": "openai", "error": "OpenAI response did not contain output text", "report": None}
-    return {"ok": True, "stage": "openai", "error": None, "report": text.strip()}
+    return {"ok": True, "stage": "openai", "error": None, "report": clean_html_report(text)}
 
 
 def format_openai_error(response: httpx.Response) -> str:
@@ -178,12 +182,50 @@ def format_openai_error(response: httpx.Response) -> str:
     return f"OpenAI HTTP {response.status_code}: {body or response.reason_phrase}"
 
 
-async def send_daily_signal_report(signals: list[dict], trade_date: date) -> bool:
-    return (await queue_ai_report(signals, trade_date, report_type="daily"))["queued"]
+def clean_html_report(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        stripped = "\n".join(lines).strip()
+    return stripped
+
+
+async def send_daily_signal_report(signals: list[dict], trade_date: date) -> int:
+    return int((await queue_daily_ai_reports(signals, trade_date))["queued"])
+
+
+async def queue_daily_ai_reports(signals: list[dict], trade_date: date) -> dict:
+    if not signals:
+        return {"queued": 0, "daily_report_id": None, "individual_reports": 0}
+
+    settings = get_settings()
+    top_n = max(1, min(int(settings.ai_report_top_n or 3), len(signals)))
+    queued = 0
+    daily = await queue_ai_report(signals, trade_date, report_type="daily")
+    if daily["queued"]:
+        queued += 1
+
+    for signal in signals[:top_n]:
+        result = await queue_ai_report(
+            [signal],
+            trade_date,
+            report_type="signal",
+            code=signal.get("Code"),
+            name=signal.get("Name"),
+        )
+        if result["queued"]:
+            queued += 1
+
+    logger.warning("AI report queue completed: trade_date=%s queued=%s top_n=%s", trade_date, queued, top_n)
+    return {"queued": queued, "daily_report_id": daily.get("report_id"), "individual_reports": top_n}
 
 
 async def send_daily_signal_report_result(signals: list[dict], trade_date: date) -> dict:
-    report_result = await generate_daily_signal_report_result(signals, trade_date)
+    report_result = await generate_daily_signal_report_result(signals, trade_date, report_type="daily")
     if not report_result["ok"]:
         return {"sent": False, "stage": report_result["stage"], "error": report_result["error"]}
     report = report_result["report"]
@@ -200,11 +242,11 @@ async def create_daily_signal_report_result(
     code: str | None = None,
     name: str | None = None,
 ) -> dict:
-    report_result = await generate_daily_signal_report_result(signals, trade_date)
+    report_result = await generate_daily_signal_report_result(signals, trade_date, report_type=report_type)
     if not report_result["ok"]:
         return {"saved": False, "stage": report_result["stage"], "error": report_result["error"], "report_id": None}
 
-    markdown = report_result["report"]
+    html = report_result["report"]
     title_name = name or ("상위 시그널" if report_type == "daily" else "개별 종목")
     title = f"{trade_date.isoformat()} {title_name} AI 리포트"
     rows = await SupabaseRest().upsert(
@@ -216,12 +258,14 @@ async def create_daily_signal_report_result(
             "name": name,
             "title": title,
             "status": "completed",
-            "markdown": markdown,
+            "markdown": "",
+            "html": html,
             "error": None,
             "raw": {
                 "signals_count": len(signals),
                 "model": get_settings().ai_report_model,
                 "codes": [signal.get("Code") for signal in signals],
+                "content_format": "html",
             },
             "finished_at": now_iso(),
         },
@@ -251,6 +295,7 @@ async def queue_ai_report(
             "title": title,
             "status": "queued",
             "markdown": "",
+            "html": "",
             "error": None,
             "started_at": None,
             "finished_at": None,
@@ -259,6 +304,7 @@ async def queue_ai_report(
                 "signals_count": len(signals),
                 "model": get_settings().ai_report_model,
                 "codes": [signal.get("Code") for signal in signals],
+                "content_format": "html",
             },
         },
         on_conflict="trade_date,report_type,code",
@@ -295,7 +341,8 @@ async def process_ai_report_row(row: dict) -> dict:
     raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
     signals = raw.get("signals") if isinstance(raw.get("signals"), list) else []
     trade_date = date.fromisoformat(row["trade_date"])
-    report_result = await generate_daily_signal_report_result(signals, trade_date)
+    report_type = row.get("report_type") or "daily"
+    report_result = await generate_daily_signal_report_result(signals, trade_date, report_type=report_type)
     if not report_result["ok"]:
         await rest.patch(
             "ai_reports",
@@ -313,7 +360,8 @@ async def process_ai_report_row(row: dict) -> dict:
         filters={"id": f"eq.{report_id}"},
         payload={
             "status": "completed",
-            "markdown": report_result["report"],
+            "markdown": "",
+            "html": report_result["report"],
             "error": None,
             "finished_at": now_iso(),
         },
