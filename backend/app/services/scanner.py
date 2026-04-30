@@ -126,6 +126,8 @@ def score_swing_setup(
     universe: str,
     market_ret_20d: float = 0.0,
     company_profile: dict | None = None,
+    core_universe: bool = False,
+    core_universe_type: str = "",
 ) -> dict | None:
     if frame is None or len(frame) < 260:
         return None
@@ -226,7 +228,7 @@ def score_swing_setup(
         (float(last["Volume"]) >= vol_prev5 * MIN_VOLUME_SPIKE_RATIO, 2, "Volume spike"),
         (float(last["Volume"]) >= vol_prev5 * STRONG_VOLUME_SPIKE_RATIO, 1, "Strong volume spike"),
         (market_filter_ok, 2, "KOSPI above MA5"),
-        (universe in {"KOSPI_TOP500", "KOSDAQ150", "KOSPI_ALL", "KOSDAQ_ALL"}, 2, universe),
+        (core_universe, 2, core_universe_type or "Core universe"),
         (relative_strength_20d >= MIN_RELATIVE_STRENGTH_20D, 2, "Market relative strength"),
         (trading_value_spike_ratio >= MIN_TRADING_VALUE_SPIKE_RATIO, 1, "Trading value spike"),
         (MIN_ATR_PCT_BONUS <= atr_pct <= MAX_ATR_PCT_BONUS, 1, "ATR in swing range"),
@@ -331,6 +333,8 @@ def score_swing_setup(
         "DistanceFrom52WLow(%)": round((close / low_52w - 1) * 100, 2),
         "MarketFilter": "KOSPI close > MA5",
         "Universe": universe,
+        "CoreUniverse": bool(core_universe),
+        "CoreUniverseType": core_universe_type,
         "Ret_5D(%)": round(ret_5d, 2),
         "Ret_20D(%)": round(ret_20d, 2),
         "MarketRet_20D(%)": round(market_ret_20d, 2),
@@ -366,7 +370,30 @@ def _company_profile_from_row(row: pd.Series, universe: str) -> dict:
     return company_profile_from_row(row, universe)
 
 
-def _normalize_listing(listing: pd.DataFrame, universe: str) -> pd.DataFrame:
+def _code_set(listing: pd.DataFrame) -> set[str]:
+    if listing is None or listing.empty:
+        return set()
+    frame = listing.copy()
+    if "Code" not in frame.columns and "Symbol" in frame.columns:
+        frame["Code"] = frame["Symbol"]
+    if "Code" not in frame.columns:
+        return set()
+    return set(frame["Code"].astype(str).str.zfill(6).tolist())
+
+
+def _truthy(value: object) -> bool:
+    if isinstance(value, str):
+        return value.lower() in {"1", "true", "yes", "y"}
+    return bool(value)
+
+
+def _normalize_listing(
+    listing: pd.DataFrame,
+    universe: str,
+    *,
+    core_codes: set[str] | None = None,
+    core_universe_type: str = "",
+) -> pd.DataFrame:
     frame = listing.copy()
     if "Code" not in frame.columns and "Symbol" in frame.columns:
         frame["Code"] = frame["Symbol"]
@@ -374,23 +401,48 @@ def _normalize_listing(listing: pd.DataFrame, universe: str) -> pd.DataFrame:
         frame["Name"] = frame["Code"]
     frame["Code"] = frame["Code"].astype(str).str.zfill(6)
     frame["Universe"] = universe
+    core_codes = core_codes or set()
+    frame["CoreUniverse"] = frame["Code"].isin(core_codes)
+    frame["CoreUniverseType"] = frame["CoreUniverse"].map(lambda passed: core_universe_type if passed else "")
     frame["CompanyProfile"] = frame.apply(lambda row: _company_profile_from_row(row, universe), axis=1)
-    return frame[["Code", "Name", "Universe", "CompanyProfile"]].drop_duplicates("Code")
+    return frame[["Code", "Name", "Universe", "CoreUniverse", "CoreUniverseType", "CompanyProfile"]].drop_duplicates("Code")
 
 
 def load_scan_universe(scope: str = SCAN_UNIVERSE_LIMITED) -> pd.DataFrame:
     full_scan = scope == SCAN_UNIVERSE_ALL
     logger.warning("Loading scan universe: scope=%s", scope)
     kospi = fdr.StockListing("KOSPI")
+    kospi_core = kospi.sort_values("Marcap", ascending=False).head(KOSPI_MARKET_CAP_LIMIT) if "Marcap" in kospi.columns else kospi.head(KOSPI_MARKET_CAP_LIMIT)
+    kospi_core_codes = _code_set(kospi_core)
     if not full_scan and "Marcap" in kospi.columns:
-        kospi = kospi.sort_values("Marcap", ascending=False).head(KOSPI_MARKET_CAP_LIMIT)
+        kospi = kospi_core
     elif not full_scan:
-        kospi = kospi.head(KOSPI_MARKET_CAP_LIMIT)
-    frames = [_normalize_listing(kospi, "KOSPI_ALL" if full_scan else "KOSPI_TOP500")]
+        kospi = kospi_core
+    frames = [
+        _normalize_listing(
+            kospi,
+            "KOSPI_ALL" if full_scan else "KOSPI_TOP500",
+            core_codes=kospi_core_codes,
+            core_universe_type="KOSPI_TOP1000",
+        )
+    ]
 
     try:
         kosdaq = fdr.StockListing("KOSDAQ" if full_scan else "KOSDAQ150")
-        frames.append(_normalize_listing(kosdaq, "KOSDAQ_ALL" if full_scan else "KOSDAQ150"))
+        kosdaq150_codes = _code_set(kosdaq)
+        if full_scan:
+            try:
+                kosdaq150_codes = _code_set(fdr.StockListing("KOSDAQ150"))
+            except Exception:
+                logger.warning("KOSDAQ150 core universe load failed; continuing without KOSDAQ150 marks", exc_info=True)
+        frames.append(
+            _normalize_listing(
+                kosdaq,
+                "KOSDAQ_ALL" if full_scan else "KOSDAQ150",
+                core_codes=kosdaq150_codes,
+                core_universe_type="KOSDAQ150",
+            )
+        )
     except Exception:
         pass
 
@@ -465,6 +517,8 @@ def process_scan_chunk_sync(state: dict, chunk_size: int = SCAN_CHUNK_SIZE) -> d
                 universe=row["Universe"],
                 market_ret_20d=float(state.get("market_ret_20d") or 0),
                 company_profile=row.get("CompanyProfile") or {},
+                core_universe=_truthy(row.get("CoreUniverse")),
+                core_universe_type=str(row.get("CoreUniverseType") or ""),
             )
             if result:
                 results.append(result)
@@ -522,6 +576,8 @@ def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
                 universe=row["Universe"],
                 market_ret_20d=float(state.get("market_ret_20d") or 0),
                 company_profile=row.get("CompanyProfile") or {},
+                core_universe=_truthy(row.get("CoreUniverse")),
+                core_universe_type=str(row.get("CoreUniverseType") or ""),
             )
             if result:
                 results.append(result)
