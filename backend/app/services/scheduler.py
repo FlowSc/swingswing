@@ -47,7 +47,14 @@ def start_scheduler() -> None:
     scheduler = AsyncIOScheduler(timezone=timezone)
     scheduler.add_job(daily_scan_job, "cron", day_of_week="mon-fri", hour=13, minute=30)
     scheduler.add_job(intraday_watch_job, "cron", day_of_week="mon-fri", hour="9-15", minute="*/5")
-    scheduler.add_job(ai_report_worker_job, "interval", minutes=1, max_instances=1, coalesce=True)
+    if settings.ai_report_worker_enabled:
+        scheduler.add_job(
+            ai_report_worker_job,
+            "interval",
+            minutes=max(1, int(settings.ai_report_worker_interval_minutes)),
+            max_instances=1,
+            coalesce=True,
+        )
     scheduler.start()
     _scheduler = scheduler
 

@@ -255,6 +255,7 @@ async def insert_decision_log(
                     "reason_ko": reason_label(reason),
                     "logged_at": now_kst().isoformat(),
                 },
+                "created_at": now_kst().isoformat(),
             },
             on_conflict="decision_date,user_id,broker_account_id,code,reason_code",
         )
@@ -572,8 +573,10 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
     pending_codes = {order["code"] for order in pending_orders}
     pending_buy_count = len([order for order in pending_orders if order.get("side") == "BUY"])
     blocked_codes = open_codes | kis_codes | pending_codes
-    available_slots = max(0, int(strategy["max_open_positions"]) - len(open_codes) - len(kis_codes) - pending_buy_count)
-    daily_slots = min(int(strategy["max_new_positions_per_day"]), available_slots)
+    held_or_pending_codes = open_codes | kis_codes | pending_codes
+    available_slots = max(0, int(strategy["max_open_positions"]) - len(held_or_pending_codes))
+    affordable_slots = int(cash // max(int(strategy["min_order_amount"]), 1))
+    daily_slots = min(int(strategy["max_new_positions_per_day"]), available_slots, affordable_slots)
     if daily_slots <= 0:
         return []
 
