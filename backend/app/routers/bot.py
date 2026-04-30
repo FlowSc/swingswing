@@ -151,6 +151,7 @@ async def latest_scan_run(user: CurrentUser = Depends(get_current_user)) -> dict
 @router.post("/reports/daily")
 async def send_daily_report(
     trade_date: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    report_style: str = Query("report", pattern=r"^(report|blog)$"),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     require_scan_admin(user)
@@ -168,7 +169,7 @@ async def send_daily_report(
     result = await queue_ai_report(
         signals,
         datetime.fromisoformat(target_date).date(),
-        report_type="daily",
+        report_type="daily_blog" if report_style == "blog" else "daily",
     )
     return {"trade_date": target_date, "signals": len(signals), **result}
 
@@ -176,6 +177,7 @@ async def send_daily_report(
 @router.post("/reports/signal")
 async def send_single_signal_report(
     payload: SingleSignalReportIn,
+    report_style: str = Query("report", pattern=r"^(report|blog)$"),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     require_scan_admin(user)
@@ -191,7 +193,7 @@ async def send_single_signal_report(
     result = await queue_ai_report(
         [signal],
         datetime.fromisoformat(payload.trade_date).date(),
-        report_type="signal",
+        report_type="signal_blog" if report_style == "blog" else "signal",
         code=payload.code,
         name=signal.get("Name"),
     )
@@ -206,7 +208,7 @@ async def send_single_signal_report(
 @router.get("/reports")
 async def get_report(
     trade_date: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$"),
-    report_type: str = Query(pattern=r"^(daily|signal)$"),
+    report_type: str = Query(pattern=r"^(daily|signal|daily_blog|signal_blog)$"),
     code: str | None = Query(None, pattern=r"^\d{6}$"),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:

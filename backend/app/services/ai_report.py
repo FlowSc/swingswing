@@ -33,7 +33,6 @@ REPORT_INSTRUCTIONS = """
 - 매수 추천, 수익 보장, 확정적 상승 표현을 사용하지 않는다.
 - 투자 판단은 독자 책임이라는 유의 문구를 포함한다.
 - 네이버 블로그에 바로 복사해 붙여넣을 수 있는 한국어 HTML 형식으로 작성한다.
-- 문체는 전문적이지만 일반 투자자도 이해할 수 있게 쓴다.
 - 문장 어미는 딱딱한 보고서체 대신 "~했습니다", "~볼 수 있습니다", "~확인했습니다"처럼 부드러운 설명체로 작성한다.
 - 독자에게 말하듯 자연스럽게 설명하되, 과장된 홍보 문구는 쓰지 않는다.
 - 시가총액은 제공된 축약 표기만 사용하고, 원 단위 숫자와 조/억 단위 해석을 한 문장에서 반복하지 않는다.
@@ -202,6 +201,24 @@ SIGNAL_REPORT_INSTRUCTIONS = """
 - 전체 리포트는 HTML fragment만 출력한다.
 """.strip()
 
+BLOG_STYLE_RULES = """
+- 문체는 주식 초보자도 이해할 수 있게 쉽게 쓴다.
+- 어려운 지표명보다 "그래서 지금 어떤 상태인지"를 먼저 설명한다.
+- 한 문장은 가능하면 40자 안팎으로 짧게 쓴다.
+- 숫자는 단순 나열하지 말고 "좋은 신호인지", "주의할 신호인지", "기다려야 하는 신호인지"로 풀어서 설명한다.
+- RSI, ATR, 일목균형표, 볼린저 밴드, 상대강도 같은 용어는 단독으로 던지지 말고 반드시 쉬운 해석을 붙인다.
+- "전환선", "기준선", "상대강도", "괴리", "변동성" 같은 말은 처음 나올 때 쉬운 말로 바꿔 설명한다.
+- 문장 예시는 "단기 흐름은 살아 있지만, 가격이 이미 많이 올라 추격 매수는 조심할 구간입니다."처럼 쓴다.
+- 손절과 익절은 "틀렸을 때 어디서 빠질지", "맞았을 때 어디서 나눠 팔지"라는 쉬운 표현으로 설명한다.
+""".strip()
+
+REPORT_STYLE_RULES = """
+- 문체는 전문적이지만 일반 투자자도 이해할 수 있게 쓴다.
+- 지표와 가격 기준을 명확히 쓰고, 해석은 과장 없이 차분하게 덧붙인다.
+- 숫자는 생략하지 말고 리포트 판단 근거로 활용한다.
+- 전문용어가 나오면 처음 등장하는 문단에서 괄호로 쉬운 설명을 붙인다.
+""".strip()
+
 
 async def generate_daily_signal_report(signals: list[dict], trade_date: date) -> str | None:
     result = await generate_daily_signal_report_result(signals, trade_date, report_type="daily")
@@ -217,11 +234,12 @@ async def generate_daily_signal_report_result(signals: list[dict], trade_date: d
     if not signals:
         return {"ok": False, "stage": "input", "error": "No signals provided", "report": None}
 
-    top_n = 1 if report_type == "signal" else max(1, min(int(settings.ai_report_top_n or 3), len(signals)))
+    base_type = base_report_type(report_type)
+    top_n = 1 if base_type == "signal" else max(1, min(int(settings.ai_report_top_n or 3), len(signals)))
     prompt = build_report_prompt(signals[:top_n], trade_date, report_type=report_type)
     payload = {
         "model": settings.ai_report_model,
-        "instructions": SIGNAL_REPORT_INSTRUCTIONS if report_type == "signal" else REPORT_INSTRUCTIONS,
+        "instructions": report_instructions(report_type),
         "input": prompt,
         "max_output_tokens": 12000,
     }
@@ -387,8 +405,10 @@ async def create_daily_signal_report_result(
         return {"saved": False, "stage": report_result["stage"], "error": report_result["error"], "report_id": None}
 
     html = report_result["report"]
-    title_name = name or ("상위 시그널" if report_type == "daily" else "개별 종목")
-    title = f"{trade_date.isoformat()} {title_name} AI 리포트"
+    base_type = base_report_type(report_type)
+    style_name = "블로그 글" if report_style(report_type) == "blog" else "AI 리포트"
+    title_name = name or ("상위 시그널" if base_type == "daily" else "개별 종목")
+    title = f"{trade_date.isoformat()} {title_name} {style_name}"
     rows = await SupabaseRest().upsert(
         "ai_reports",
         {
@@ -423,8 +443,10 @@ async def queue_ai_report(
     code: str | None = None,
     name: str | None = None,
 ) -> dict:
-    title_name = name or ("상위 시그널" if report_type == "daily" else "개별 종목")
-    title = f"{trade_date.isoformat()} {title_name} AI 리포트"
+    base_type = base_report_type(report_type)
+    style_name = "블로그 글" if report_style(report_type) == "blog" else "AI 리포트"
+    title_name = name or ("상위 시그널" if base_type == "daily" else "개별 종목")
+    title = f"{trade_date.isoformat()} {title_name} {style_name}"
     rows = await SupabaseRest().upsert(
         "ai_reports",
         {
@@ -513,6 +535,25 @@ def now_iso() -> str:
     return datetime.now(ZoneInfo(get_settings().timezone)).isoformat()
 
 
+def base_report_type(report_type: str) -> str:
+    return "signal" if report_type.startswith("signal") else "daily"
+
+
+def report_style(report_type: str) -> str:
+    return "blog" if report_type.endswith("_blog") else "report"
+
+
+def stored_report_type(report_type: str, style: str = "report") -> str:
+    base = base_report_type(report_type)
+    return f"{base}_blog" if style == "blog" else base
+
+
+def report_instructions(report_type: str) -> str:
+    base = SIGNAL_REPORT_INSTRUCTIONS if base_report_type(report_type) == "signal" else REPORT_INSTRUCTIONS
+    style_rules = BLOG_STYLE_RULES if report_style(report_type) == "blog" else REPORT_STYLE_RULES
+    return f"{base}\n\n리포트 스타일 규칙:\n{style_rules}"
+
+
 def build_report_prompt(signals: list[dict], trade_date: date, report_type: str = "daily") -> str:
     selected = [select_report_input_fields(signal, index) for index, signal in enumerate(signals, start=1)]
     trade_date_text = trade_date.isoformat()
@@ -545,7 +586,7 @@ def build_report_prompt(signals: list[dict], trade_date: date, report_type: str 
 
 
 def build_report_title_line(signals: list[dict], trade_date_text: str, report_type: str) -> str:
-    if report_type == "signal" and signals:
+    if base_report_type(report_type) == "signal" and signals:
         name = signals[0].get("name") or "개별 종목"
         code = signals[0].get("code") or ""
         return f"리포트 제목은 반드시 <h1>{trade_date_text} {name}({code}) 스윙 분석 리포트</h1>로 작성한다."

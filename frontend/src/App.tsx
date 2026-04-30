@@ -3,6 +3,7 @@ import type { Session } from "@supabase/supabase-js";
 import {
   api,
   type AiReport,
+  type AiReportType,
   type AiReportStatus,
   type BacktestResult,
   type BrokerAccount,
@@ -498,8 +499,16 @@ function Dashboard({ session }: { session: Session }) {
   async function sendReport() {
     await run(
       "report",
-      () => api.sendDailyReport(session, selectedSignalDate || undefined),
+      () => api.sendDailyReport(session, selectedSignalDate || undefined, "report"),
       "AI 리포트 생성 큐 등록 완료:",
+    );
+  }
+
+  async function sendBlogReport() {
+    await run(
+      "report",
+      () => api.sendDailyReport(session, selectedSignalDate || undefined, "blog"),
+      "블로그 글 생성 큐 등록 완료:",
     );
   }
 
@@ -511,8 +520,21 @@ function Dashboard({ session }: { session: Session }) {
     }
     await run(
       "signalReport",
-      () => api.sendSignalReport(session, { trade_date: selectedSignalDate, code }),
+      () => api.sendSignalReport(session, { trade_date: selectedSignalDate, code, report_style: "report" }),
       "개별 기업 AI 리포트 생성 큐 등록 완료:",
+    );
+  }
+
+  async function sendSingleSignalBlogReport(row: Record<string, unknown>) {
+    const code = String(row.code || "").padStart(6, "0");
+    if (!selectedSignalDate || !code) {
+      setStatus({ type: "error", message: "블로그 글을 생성할 시그널 날짜 또는 종목코드가 없습니다." });
+      return;
+    }
+    await run(
+      "signalReport",
+      () => api.sendSignalReport(session, { trade_date: selectedSignalDate, code, report_style: "blog" }),
+      "개별 기업 블로그 글 생성 큐 등록 완료:",
     );
   }
 
@@ -524,6 +546,17 @@ function Dashboard({ session }: { session: Session }) {
     await downloadReport({
       key: "reportDownload",
       payload: { trade_date: selectedSignalDate, report_type: "daily" as const },
+    });
+  }
+
+  async function downloadDailyBlogReport() {
+    if (!selectedSignalDate) {
+      setStatus({ type: "error", message: "다운로드할 블로그 글 날짜가 없습니다." });
+      return;
+    }
+    await downloadReport({
+      key: "reportDownload",
+      payload: { trade_date: selectedSignalDate, report_type: "daily_blog" as const },
     });
   }
 
@@ -540,12 +573,25 @@ function Dashboard({ session }: { session: Session }) {
     });
   }
 
+  async function downloadSingleSignalBlogReport(row: Record<string, unknown>) {
+    const code = String(row.code || "").padStart(6, "0");
+    const tradeDate = String(row.trade_date || selectedSignalDate || "");
+    if (!tradeDate || !code) {
+      setStatus({ type: "error", message: "다운로드할 블로그 글 날짜 또는 종목코드가 없습니다." });
+      return;
+    }
+    await downloadReport({
+      key: "signalReportDownload",
+      payload: { trade_date: tradeDate, report_type: "signal_blog" as const, code },
+    });
+  }
+
   async function downloadReport({
     key,
     payload,
   }: {
     key: string;
-    payload: { trade_date: string; report_type: "daily" | "signal"; code?: string };
+    payload: { trade_date: string; report_type: AiReportType; code?: string };
   }) {
     setPending(key);
     setStatus({ type: "info", message: `${labelForPending(key)} 실행 중...` });
@@ -847,9 +893,17 @@ function Dashboard({ session }: { session: Session }) {
               <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendReport}>
                 {pending === "report" ? "리포트 생성 요청 중..." : "AI 리포트 생성 요청"}
               </button>
+              <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendBlogReport}>
+                {pending === "report" ? "블로그 글 생성 요청 중..." : "블로그 글 생성 요청"}
+              </button>
               {dailyReportCompleted && (
                 <button disabled={pending !== null || !selectedSignalDate} onClick={downloadDailyReport}>
                   {pending === "reportDownload" ? "종합 리포트 확인 중..." : "종합 리포트 다운로드"}
+                </button>
+              )}
+              {hasCompletedReport(aiReports, "daily_blog") && (
+                <button disabled={pending !== null || !selectedSignalDate} onClick={downloadDailyBlogReport}>
+                  {pending === "reportDownload" ? "블로그 글 확인 중..." : "종합 블로그 글 다운로드"}
                 </button>
               )}
             </>
@@ -977,7 +1031,9 @@ function Dashboard({ session }: { session: Session }) {
           isScanAdmin={isScanAdmin}
           pending={pending}
           onSendSignalReport={sendSingleSignalReport}
+          onSendSignalBlogReport={sendSingleSignalBlogReport}
           onDownloadSignalReport={downloadSingleSignalReport}
+          onDownloadSignalBlogReport={downloadSingleSignalBlogReport}
           aiReports={aiReports}
           onClose={() => setDetail(null)}
         />
@@ -1497,10 +1553,10 @@ function escapeHtml(value: string) {
     .replace(/"/g, "&quot;");
 }
 
-function hasCompletedReport(reports: AiReportStatus[], reportType: "daily" | "signal", code?: string) {
+function hasCompletedReport(reports: AiReportStatus[], reportType: AiReportType, code?: string) {
   return reports.some((report) => {
     if (report.report_type !== reportType || report.status !== "completed") return false;
-    if (reportType === "daily") return report.code === "ALL";
+    if (reportType === "daily" || reportType === "daily_blog") return report.code === "ALL";
     return report.code === code;
   });
 }
@@ -1598,7 +1654,9 @@ function DetailOverlay({
   isScanAdmin,
   pending,
   onSendSignalReport,
+  onSendSignalBlogReport,
   onDownloadSignalReport,
+  onDownloadSignalBlogReport,
   aiReports,
   onClose,
 }: {
@@ -1606,7 +1664,9 @@ function DetailOverlay({
   isScanAdmin: boolean;
   pending: string | null;
   onSendSignalReport: (row: Record<string, unknown>) => void;
+  onSendSignalBlogReport: (row: Record<string, unknown>) => void;
   onDownloadSignalReport: (row: Record<string, unknown>) => void;
+  onDownloadSignalBlogReport: (row: Record<string, unknown>) => void;
   aiReports: AiReportStatus[];
   onClose: () => void;
 }) {
@@ -1633,8 +1693,11 @@ function DetailOverlay({
             pending={pending === "signalReport"}
             downloadPending={pending === "signalReportDownload"}
             reportCompleted={hasCompletedReport(aiReports, "signal", String(detail.row.code || "").padStart(6, "0"))}
+            blogReportCompleted={hasCompletedReport(aiReports, "signal_blog", String(detail.row.code || "").padStart(6, "0"))}
             onSendReport={() => onSendSignalReport(detail.row)}
+            onSendBlogReport={() => onSendSignalBlogReport(detail.row)}
             onDownloadReport={() => onDownloadSignalReport(detail.row)}
+            onDownloadBlogReport={() => onDownloadSignalBlogReport(detail.row)}
           />
         )}
         {detail.kind === "log" && <TradeLogDetail row={detail.row} />}
@@ -1652,16 +1715,22 @@ function SignalDetail({
   pending,
   downloadPending,
   reportCompleted,
+  blogReportCompleted,
   onSendReport,
+  onSendBlogReport,
   onDownloadReport,
+  onDownloadBlogReport,
 }: {
   row: Record<string, unknown>;
   isScanAdmin: boolean;
   pending: boolean;
   downloadPending: boolean;
   reportCompleted: boolean;
+  blogReportCompleted: boolean;
   onSendReport: () => void;
+  onSendBlogReport: () => void;
   onDownloadReport: () => void;
+  onDownloadBlogReport: () => void;
 }) {
   const raw = asRecord(row.raw);
   const companyProfile = asRecord(raw.CompanyProfile);
@@ -1677,9 +1746,17 @@ function SignalDetail({
           <button className="primary detail-action" type="button" disabled={pending} onClick={onSendReport}>
             {pending ? "개별 리포트 생성 요청 중..." : "이 기업 AI 리포트 생성 요청"}
           </button>
+          <button className="detail-action" type="button" disabled={pending} onClick={onSendBlogReport}>
+            {pending ? "블로그 글 생성 요청 중..." : "이 기업 블로그 글 생성 요청"}
+          </button>
           {reportCompleted && (
             <button className="detail-action" type="button" disabled={downloadPending} onClick={onDownloadReport}>
               {downloadPending ? "리포트 확인 중..." : "개별 리포트 다운로드"}
+            </button>
+          )}
+          {blogReportCompleted && (
+            <button className="detail-action" type="button" disabled={downloadPending} onClick={onDownloadBlogReport}>
+              {downloadPending ? "블로그 글 확인 중..." : "개별 블로그 글 다운로드"}
             </button>
           )}
         </>

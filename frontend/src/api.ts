@@ -242,10 +242,12 @@ export type BacktestResult = {
   trades: BacktestTrade[];
 };
 
+export type AiReportType = "daily" | "signal" | "daily_blog" | "signal_blog";
+
 export type AiReport = {
   id: number;
   trade_date: string;
-  report_type: "daily" | "signal";
+  report_type: AiReportType;
   code: string;
   name?: string | null;
   title: string;
@@ -319,16 +321,18 @@ export const api = {
     request<ScanStartResult>(`/bot/scan?universe_scope=${encodeURIComponent(universeScope)}`, session, { method: "POST" }),
   scanStep: (session: Session, scanRunId: number) => request<ScanRun>(`/bot/scan-runs/${scanRunId}/step`, session, { method: "POST" }),
   latestScanRun: (session: Session) => request<ScanRun | null>("/bot/scan-runs/latest", session),
-  sendDailyReport: (session: Session, tradeDate?: string) => {
-    const suffix = tradeDate ? `?trade_date=${encodeURIComponent(tradeDate)}` : "";
+  sendDailyReport: (session: Session, tradeDate?: string, reportStyle: "report" | "blog" = "report") => {
+    const params = new URLSearchParams({ report_style: reportStyle });
+    if (tradeDate) params.set("trade_date", tradeDate);
+    const suffix = `?${params.toString()}`;
     return request<{ queued: boolean; trade_date: string; signals: number; stage?: string; error?: string | null; report_id?: number; title?: string }>(`/bot/reports/daily${suffix}`, session, { method: "POST" });
   },
-  sendSignalReport: (session: Session, payload: { trade_date: string; code: string }) =>
-    request<{ queued: boolean; trade_date: string; code: string; name?: string; stage?: string; error?: string | null; report_id?: number; title?: string }>("/bot/reports/signal", session, {
+  sendSignalReport: (session: Session, payload: { trade_date: string; code: string; report_style?: "report" | "blog" }) =>
+    request<{ queued: boolean; trade_date: string; code: string; name?: string; stage?: string; error?: string | null; report_id?: number; title?: string }>(`/bot/reports/signal?report_style=${encodeURIComponent(payload.report_style || "report")}`, session, {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ trade_date: payload.trade_date, code: payload.code }),
     }),
-  getAiReport: (session: Session, payload: { trade_date: string; report_type: "daily" | "signal"; code?: string }) => {
+  getAiReport: (session: Session, payload: { trade_date: string; report_type: AiReportType; code?: string }) => {
     const params = new URLSearchParams({ trade_date: payload.trade_date, report_type: payload.report_type });
     if (payload.code) params.set("code", payload.code);
     return request<AiReport>(`/bot/reports?${params.toString()}`, session);
