@@ -63,6 +63,20 @@ class SupabaseRest:
                 return user
         return None
 
+    async def create_auth_user(self, email: str, password: str) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                f"{self.base_url}/auth/v1/admin/users",
+                headers={
+                    "apikey": self.service_key,
+                    "authorization": f"Bearer {self.service_key}",
+                    "content-type": "application/json",
+                },
+                json={"email": email, "password": password, "email_confirm": True},
+            )
+            self._raise_for_status(response)
+            return response.json()
+
     async def upsert(self, table: str, payload: dict[str, Any], on_conflict: str) -> list[dict[str, Any]]:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(

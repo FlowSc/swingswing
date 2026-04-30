@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.routers import bot, broker, trading
+from app.routers import auth, bot, broker, trading
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 
@@ -44,6 +44,7 @@ app.add_middleware(
 app.include_router(broker.router)
 app.include_router(bot.router)
 app.include_router(trading.router)
+app.include_router(auth.router)
 
 
 @app.get("/health")

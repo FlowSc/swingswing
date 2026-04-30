@@ -21,6 +21,7 @@ SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY
 BROKER_ENCRYPTION_KEY
 TELEGRAM_BOT_TOKEN
+SIGNUP_INVITE_CODE
 SCHEDULER_ENABLED
 TZ
 TIMEZONE
@@ -35,6 +36,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 ## API
 
 - `GET /health`
+- `POST /auth/signup`
 - `GET /broker/kis/status`
 - `POST /broker/kis`
 - `POST /bot/control`
@@ -58,12 +60,15 @@ SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
 BROKER_ENCRYPTION_KEY=...
 TELEGRAM_BOT_TOKEN=...
+SIGNUP_INVITE_CODE=your-private-signup-code
 SCHEDULER_ENABLED=true
 TZ=Asia/Seoul
 TIMEZONE=Asia/Seoul
 ```
 
-The backend uses the service role key for encrypted credential storage and bot jobs. Do not expose `SUPABASE_SERVICE_ROLE_KEY` to React.
+The backend uses the service role key for encrypted credential storage, invite-code signup, and bot jobs. Do not expose `SUPABASE_SERVICE_ROLE_KEY` to React.
+`SIGNUP_INVITE_CODE` is checked by `POST /auth/signup`; users cannot sign up through the app without this code.
+For stronger protection, turn off public signups in Supabase Auth and only use the backend signup endpoint.
 
 ## Bot Flow
 

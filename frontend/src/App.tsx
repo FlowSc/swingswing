@@ -123,6 +123,7 @@ function AuthCard() {
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [status, setStatus] = useState<Status>({ type: "idle", message: "" });
   const [pending, setPending] = useState(false);
 
@@ -131,21 +132,29 @@ function AuthCard() {
     setPending(true);
     setStatus({ type: "idle", message: "" });
 
-    const result =
-      mode === "signup"
-        ? await supabase.auth.signUp({ email, password })
-        : await supabase.auth.signInWithPassword({ email, password });
+    try {
+      if (mode === "signup") {
+        await api.signup({ email, password, invite_code: inviteCode });
+        const signIn = await supabase.auth.signInWithPassword({ email, password });
+        if (signIn.error) {
+          setStatus({ type: "info", message: "가입 완료. 이메일 인증 설정이 켜져 있으면 메일 확인 후 로그인하세요." });
+          return;
+        }
+        setStatus({ type: "info", message: "가입 및 로그인 완료." });
+        return;
+      }
 
-    setPending(false);
-    if (result.error) {
-      setStatus({ type: "error", message: result.error.message });
-      return;
+      const result = await supabase.auth.signInWithPassword({ email, password });
+      if (result.error) {
+        setStatus({ type: "error", message: result.error.message });
+        return;
+      }
+      setStatus({ type: "info", message: "로그인 완료." });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? cleanErrorMessage(error.message) : String(error) });
+    } finally {
+      setPending(false);
     }
-
-    setStatus({
-      type: "info",
-      message: mode === "signup" ? "가입 요청 완료. Supabase 이메일 인증 설정에 따라 메일 확인이 필요할 수 있습니다." : "로그인 완료.",
-    });
   }
 
   return (
@@ -164,6 +173,12 @@ function AuthCard() {
           비밀번호
           <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" minLength={6} required />
         </label>
+        {mode === "signup" && (
+          <label>
+            가입 코드
+            <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} type="password" required />
+          </label>
+        )}
 
         <button className="primary" disabled={pending}>{pending ? "처리 중..." : mode === "login" ? "로그인" : "회원가입"}</button>
         <StatusLine status={status} />
@@ -956,6 +971,15 @@ function MiniTable({ rows, columns }: { rows: Array<Record<string, unknown>>; co
 function StatusLine({ status }: { status: Status }) {
   if (!status.message) return null;
   return <p className={`status ${status.type}`}>{status.message}</p>;
+}
+
+function cleanErrorMessage(message: string) {
+  try {
+    const parsed = JSON.parse(message);
+    return parsed.detail || parsed.message || message;
+  } catch {
+    return message;
+  }
 }
 
 function DataPanel({

@@ -3,6 +3,21 @@ import { supabase } from "./supabase";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
+async function publicRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...options,
+    headers: {
+      "content-type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Request failed: ${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
 async function request<T>(path: string, session: Session, options: RequestInit = {}): Promise<T> {
   const token = await currentAccessToken(session);
   let response = await fetchWithToken(path, token, options);
@@ -51,6 +66,12 @@ export type BrokerPayload = {
   kis_account_product_code: string;
   mode: "paper" | "live";
   live_order_enabled: boolean;
+};
+
+export type SignupPayload = {
+  email: string;
+  password: string;
+  invite_code: string;
 };
 
 export type BrokerStatus = {
@@ -204,6 +225,11 @@ export type StrategySettings = {
 };
 
 export const api = {
+  signup: (payload: SignupPayload) =>
+    publicRequest<{ ok: boolean; message: string; user_id?: string; email: string }>("/auth/signup", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   getBrokerStatus: (session: Session) => request<BrokerStatus>("/broker/kis/status", session),
   getBrokerAccounts: (session: Session) => request<BrokerAccount[]>("/broker/kis/accounts", session),
   saveBroker: (session: Session, payload: BrokerPayload) =>
