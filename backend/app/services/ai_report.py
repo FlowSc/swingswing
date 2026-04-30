@@ -137,20 +137,42 @@ async def generate_daily_signal_report_result(signals: list[dict], trade_date: d
                 },
                 json=payload,
             )
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                body = response.text[:1000]
-                raise RuntimeError(f"OpenAI HTTP error {response.status_code}: {body}") from exc
+            if response.status_code >= 400:
+                return {
+                    "ok": False,
+                    "stage": "openai",
+                    "error": format_openai_error(response),
+                    "report": None,
+                }
+            data = response.json()
+    except httpx.TimeoutException as exc:
+        logger.exception("AI report generation timed out")
+        return {"ok": False, "stage": "openai", "error": f"OpenAI timeout: {repr(exc)}", "report": None}
+    except httpx.RequestError as exc:
+        logger.exception("AI report request failed")
+        return {"ok": False, "stage": "openai", "error": f"OpenAI request error: {type(exc).__name__}: {repr(exc)}", "report": None}
     except Exception as exc:
         logger.exception("AI report generation failed")
-        return {"ok": False, "stage": "openai", "error": str(exc), "report": None}
+        return {"ok": False, "stage": "openai", "error": f"OpenAI error: {type(exc).__name__}: {repr(exc)}", "report": None}
 
-    data = response.json()
     text = data.get("output_text") or extract_output_text(data)
     if not text or not text.strip():
         return {"ok": False, "stage": "openai", "error": "OpenAI response did not contain output text", "report": None}
     return {"ok": True, "stage": "openai", "error": None, "report": text.strip()}
+
+
+def format_openai_error(response: httpx.Response) -> str:
+    body = response.text[:1500]
+    try:
+        payload = response.json()
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(error, dict):
+            message = error.get("message") or body
+            code = error.get("code") or error.get("type") or "unknown"
+            return f"OpenAI HTTP {response.status_code} ({code}): {message}"
+    except Exception:
+        pass
+    return f"OpenAI HTTP {response.status_code}: {body or response.reason_phrase}"
 
 
 async def send_daily_signal_report(signals: list[dict], trade_date: date) -> bool:
