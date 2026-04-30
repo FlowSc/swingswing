@@ -280,6 +280,7 @@ function Dashboard({ session }: { session: Session }) {
   const [pending, setPending] = useState<string | null>(null);
   const isScanAdmin = (session.user.email || "").toLowerCase() === "zelatool@gmail.com";
   const dailyReportCompleted = hasCompletedReport(aiReports, "daily");
+  const hasRunningScan = dailyDashboard?.latest_scan?.status === "running";
 
   useEffect(() => {
     refresh();
@@ -838,9 +839,11 @@ function Dashboard({ session }: { session: Session }) {
               <button disabled={pending !== null} onClick={() => startScan("limited")}>
                 {pending === "scan" ? "스캔 중..." : "제한 유니버스 스캔"}
               </button>
-              <button disabled={pending !== null} onClick={continueLatestScan}>
-                {pending === "scan" ? "스캔 중..." : "진행 중 스캔 이어하기"}
-              </button>
+              {hasRunningScan && (
+                <button disabled={pending !== null} onClick={continueLatestScan}>
+                  {pending === "scan" ? "스캔 중..." : "진행 중 스캔 이어하기"}
+                </button>
+              )}
               <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendReport}>
                 {pending === "report" ? "리포트 생성 요청 중..." : "AI 리포트 생성 요청"}
               </button>

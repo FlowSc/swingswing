@@ -124,6 +124,7 @@ REPORT_INSTRUCTIONS = """
 - 데이터가 없는 항목은 추측하지 말고 "제공 데이터 기준 확인 불가"라고 쓴다.
 - 전문용어는 반드시 쉬운 해설을 함께 붙인다.
 - 한자는 절대 사용하지 않는다.
+- 입력 데이터의 영문 필드명이나 영문 사유 코드를 본문에 그대로 쓰지 않는다. 예: "Tenkan > Kijun", "Ichimoku cross", "BB expanding", "MA20 rising" 같은 표현은 절대 쓰지 말고 한국어 설명으로 바꿔 쓴다.
 - 전체 리포트는 HTML fragment만 출력한다.
 """.strip()
 
@@ -195,6 +196,7 @@ SIGNAL_REPORT_INSTRUCTIONS = """
 - "매수해야 한다" 대신 "관찰할 수 있다", "조건 충족 여부를 확인할 필요가 있다"라고 표현한다.
 - 전문용어는 반드시 쉬운 해설을 함께 붙인다.
 - 한자는 절대 사용하지 않는다.
+- 입력 데이터의 영문 필드명이나 영문 사유 코드를 본문에 그대로 쓰지 않는다. 예: "Tenkan > Kijun", "Ichimoku cross", "BB expanding", "MA20 rising" 같은 표현은 절대 쓰지 말고 한국어 설명으로 바꿔 쓴다.
 - 전체 리포트는 HTML fragment만 출력한다.
 """.strip()
 
@@ -532,7 +534,7 @@ def build_report_prompt(signals: list[dict], trade_date: date, report_type: str 
         "- atr_pct: 가격 대비 ATR 변동성",
         "- risk_pct, stop_pct: 리스크/손절폭",
         "- gap_pct, upper_shadow_ratio: 갭 상승과 윗꼬리 리스크",
-        "- reasons: 스캐너가 점수를 부여한 핵심 근거",
+        "- reasons_ko: 스캐너가 점수를 부여한 핵심 근거를 한국어로 번역한 값",
         "",
     ]
     for item in selected:
@@ -590,8 +592,8 @@ def select_report_input_fields(signal: dict, rank: int) -> dict:
         "distance_to_ma20_pct": signal.get("DistanceToMA20(%)"),
         "distance_from_52w_low_pct": signal.get("DistanceFrom52WLow(%)"),
         "universe": signal.get("Universe"),
-        "market_filter": signal.get("MarketFilter"),
-        "reasons": signal.get("Reasons"),
+        "market_filter": translate_market_filter(signal.get("MarketFilter"), signal.get("MarketFilterPassed")),
+        "reasons_ko": translate_signal_reasons(signal.get("Reasons")),
     }
 
 
@@ -608,6 +610,50 @@ def format_prompt_value(value: object) -> object:
     if value is None or value == "":
         return "제공 데이터 기준 확인 불가"
     return value
+
+
+def translate_market_filter(value: object, passed: object = None) -> str:
+    label = "코스피 지수가 5일 이동평균선 위에 있는지 확인하는 시장 필터"
+    if passed is True:
+        return f"{label}: 통과"
+    if passed is False:
+        return f"{label}: 미통과"
+    return label if value else "제공 데이터 기준 확인 불가"
+
+
+def translate_signal_reasons(reasons: object) -> str:
+    value = str(reasons or "")
+    if not value:
+        return "제공 데이터 기준 확인 불가"
+    reason_map = {
+        "MA20 > MA60": "20일 이동평균선이 60일 이동평균선 위에 있음",
+        "MA20 rising": "20일 이동평균선이 상승 중",
+        "Tenkan > Kijun": "일목균형표 전환선이 기준선 위에 있음",
+        "Ichimoku cross": "최근 전환선이 기준선을 상향 돌파",
+        "Bullish close": "전일 대비 상승 마감",
+        "Near Kijun": "현재가가 일목 기준선 근처에 있음",
+        "RSI rebound zone": "RSI가 반등 초입으로 볼 수 있는 구간",
+        "5D momentum ok": "최근 5거래일 흐름이 과도하지 않음",
+        "20D momentum ok": "최근 20거래일 상승 흐름이 유효 범위 안에 있음",
+        "BB expanding": "볼린저 밴드 폭이 확대 중",
+        "Enough trading value": "20일 평균 거래대금이 기준 이상",
+        "Volume spike": "거래량이 최근 평균보다 증가",
+        "Strong volume spike": "거래량이 강하게 증가",
+        "KOSPI above MA5": "코스피 지수가 5일 이동평균선 위에 있음",
+        "KOSPI_TOP1000": "KOSPI1000 핵심군 해당",
+        "KOSPI_TOP500": "KOSPI1000 핵심군 해당",
+        "KOSDAQ150": "KOSDAQ150 핵심군 해당",
+        "Market relative strength": "시장 대비 20일 상대강도 우위",
+        "Trading value spike": "거래대금이 최근 평균보다 증가",
+        "ATR in swing range": "ATR 변동성이 스윙 매매 가능 범위",
+        "Bull cloud pullback support": "양운 위 눌림목 지지 패턴",
+        "Bear cloud breakout pressure": "음운 돌파 직전 수급 패턴",
+        "Gap up penalty": "갭 상승 부담 감점",
+        "Upper shadow penalty": "윗꼬리 부담 감점",
+        "ATR too high": "ATR 변동성 과다 감점",
+    }
+    translated = [reason_map.get(item.strip(), item.strip()) for item in value.split(",") if item.strip()]
+    return ", ".join(translated) if translated else "제공 데이터 기준 확인 불가"
 
 
 def normalize_company_profile(value: object) -> dict:
