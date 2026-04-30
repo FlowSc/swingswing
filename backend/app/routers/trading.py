@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from datetime import datetime
+import logging
 from zoneinfo import ZoneInfo
 
 from app.core.auth import CurrentUser, get_current_user
@@ -10,6 +11,7 @@ from app.services.supabase_rest import SupabaseRest
 
 
 router = APIRouter(tags=["trading"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/signals/today")
@@ -23,21 +25,30 @@ async def signals_by_date(
     trade_date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
-    return await SupabaseRest().select(
-        "shared_signals",
-        filters={"trade_date": f"eq.{trade_date}"},
-        order="score.desc",
-    )
+    try:
+        return await SupabaseRest().select(
+            "shared_signals",
+            filters={"trade_date": f"eq.{trade_date}"},
+            order="score.desc",
+            limit=30,
+        )
+    except Exception:
+        logger.exception("Failed to load signals: trade_date=%s user_id=%s", trade_date, user.id)
+        return []
 
 
 @router.get("/signals/dates")
 async def signal_dates(user: CurrentUser = Depends(get_current_user)) -> list[str]:
-    rows = await SupabaseRest().select(
-        "shared_signals",
-        columns="trade_date",
-        order="trade_date.desc",
-        limit=30,
-    )
+    try:
+        rows = await SupabaseRest().select(
+            "shared_signals",
+            columns="trade_date",
+            order="trade_date.desc",
+            limit=30,
+        )
+    except Exception:
+        logger.exception("Failed to load signal dates: user_id=%s", user.id)
+        return []
     seen = set()
     dates: list[str] = []
     for row in rows:
@@ -50,39 +61,48 @@ async def signal_dates(user: CurrentUser = Depends(get_current_user)) -> list[st
 
 @router.get("/positions")
 async def positions(user: CurrentUser = Depends(get_current_user)) -> list[dict]:
-    credentials = await get_broker_credentials(user.id)
-    filters = {"user_id": f"eq.{user.id}"}
-    or_filter = None
-    if credentials and credentials.get("id"):
-        if (credentials.get("mode") or "paper") == "paper":
-            or_filter = f"(broker_account_id.eq.{credentials['id']},broker_account_id.is.null)"
-        else:
-            filters["broker_account_id"] = f"eq.{credentials['id']}"
-    return await SupabaseRest().select(
-        "positions",
-        filters=filters,
-        or_filter=or_filter,
-        order="created_at.desc",
-    )
+    try:
+        credentials = await get_broker_credentials(user.id)
+        filters = {"user_id": f"eq.{user.id}"}
+        or_filter = None
+        if credentials and credentials.get("id"):
+            if (credentials.get("mode") or "paper") == "paper":
+                or_filter = f"(broker_account_id.eq.{credentials['id']},broker_account_id.is.null)"
+            else:
+                filters["broker_account_id"] = f"eq.{credentials['id']}"
+        return await SupabaseRest().select(
+            "positions",
+            filters=filters,
+            or_filter=or_filter,
+            order="created_at.desc",
+            limit=100,
+        )
+    except Exception:
+        logger.exception("Failed to load positions: user_id=%s", user.id)
+        return []
 
 
 @router.get("/trade-logs")
 async def trade_logs(user: CurrentUser = Depends(get_current_user)) -> list[dict]:
-    credentials = await get_broker_credentials(user.id)
-    filters = {"user_id": f"eq.{user.id}"}
-    or_filter = None
-    if credentials and credentials.get("id"):
-        if (credentials.get("mode") or "paper") == "paper":
-            or_filter = f"(broker_account_id.eq.{credentials['id']},broker_account_id.is.null)"
-        else:
-            filters["broker_account_id"] = f"eq.{credentials['id']}"
-    return await SupabaseRest().select(
-        "trade_logs",
-        filters=filters,
-        or_filter=or_filter,
-        order="created_at.desc",
-        limit=100,
-    )
+    try:
+        credentials = await get_broker_credentials(user.id)
+        filters = {"user_id": f"eq.{user.id}"}
+        or_filter = None
+        if credentials and credentials.get("id"):
+            if (credentials.get("mode") or "paper") == "paper":
+                or_filter = f"(broker_account_id.eq.{credentials['id']},broker_account_id.is.null)"
+            else:
+                filters["broker_account_id"] = f"eq.{credentials['id']}"
+        return await SupabaseRest().select(
+            "trade_logs",
+            filters=filters,
+            or_filter=or_filter,
+            order="created_at.desc",
+            limit=100,
+        )
+    except Exception:
+        logger.exception("Failed to load trade logs: user_id=%s", user.id)
+        return []
 
 
 @router.get("/trade-decisions")
