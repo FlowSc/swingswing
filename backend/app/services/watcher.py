@@ -558,10 +558,12 @@ async def manage_positions(user_id: str, broker_account_id: str | None, client, 
 
 async def enter_positions(user_id: str, broker_account_id: str | None, client, positions: list[dict], balance: dict, *, test_mode: bool, dry_run: bool) -> list[dict]:
     if not in_window(ENTRY_START, ENTRY_END, test_mode=test_mode):
+        logger.warning("Watcher enter skipped: outside entry window user_id=%s account_id=%s", user_id, broker_account_id)
         return []
 
     signals = await today_signals()
     if not signals:
+        logger.warning("Watcher enter skipped: no shared signals user_id=%s account_id=%s", user_id, broker_account_id)
         return []
 
     cash = extract_cash(balance)
@@ -577,7 +579,26 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
     available_slots = max(0, int(strategy["max_open_positions"]) - len(held_or_pending_codes))
     affordable_slots = int(cash // max(int(strategy["min_order_amount"]), 1))
     daily_slots = min(int(strategy["max_new_positions_per_day"]), available_slots, affordable_slots)
+    logger.warning(
+        "Watcher enter summary: user_id=%s account_id=%s cash=%s equity=%s signals=%s open=%s kis=%s pending=%s available_slots=%s affordable_slots=%s daily_slots=%s min_order=%s max_new=%s position_pct=%s risk_pct=%s",
+        user_id,
+        broker_account_id,
+        cash,
+        total_equity,
+        len(signals),
+        len(open_codes),
+        len(kis_codes),
+        len(pending_codes),
+        available_slots,
+        affordable_slots,
+        daily_slots,
+        strategy["min_order_amount"],
+        strategy["max_new_positions_per_day"],
+        strategy["position_capital_pct"],
+        strategy["risk_per_trade_pct"],
+    )
     if daily_slots <= 0:
+        logger.warning("Watcher enter skipped: no buy slots user_id=%s account_id=%s", user_id, broker_account_id)
         return []
 
     actions: list[dict] = []
@@ -614,7 +635,7 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
             sizing_signal,
             cash=cash,
             total_equity=max(total_equity, DEFAULT_CAPITAL),
-            available_slots=daily_slots,
+            available_slots=1,
             position_capital_pct=float(strategy["position_capital_pct"]),
             risk_per_trade_pct=float(strategy["risk_per_trade_pct"]),
             min_order_amount=int(strategy["min_order_amount"]),
@@ -679,6 +700,7 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
             )
             actions.append({"action": "BUY_ORDER", "code": signal["code"], "name": display_name(signal), "qty": qty, "price": current_price, "reason": reason_label("OrderPending"), "plan": action_plan_summary(position_payload)})
         blocked_codes.add(signal["code"])
+        cash = max(0, cash - int(qty * current_price))
 
     return actions
 

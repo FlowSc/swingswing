@@ -28,7 +28,10 @@ async def daily_scan_job() -> None:
 async def intraday_watch_job() -> None:
     credentials_rows = await list_enabled_broker_credentials()
     for credentials in credentials_rows:
-        await run_watch_tick_for_user(credentials, test_mode=False, dry_run=False)
+        try:
+            await run_watch_tick_for_user(credentials, test_mode=False, dry_run=False)
+        except Exception:
+            logger.exception("Intraday watcher failed: user_id=%s account_id=%s", credentials.get("user_id"), credentials.get("id"))
 
 
 async def ai_report_worker_job() -> None:
