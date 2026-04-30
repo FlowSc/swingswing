@@ -174,6 +174,37 @@ async def list_enabled_broker_credentials() -> list[dict]:
     return [_decrypt_account(row) for row in legacy_rows]
 
 
+async def list_telegram_recipients() -> list[dict]:
+    rest = SupabaseRest()
+    rows = await rest.select(ACCOUNTS_TABLE, order="created_at.desc")
+    legacy_rows = await rest.select(TABLE, order="created_at.desc")
+    recipients: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    for row in [*rows, *legacy_rows]:
+        chat_id = row.get("telegram_chat_id")
+        token_enc = row.get("telegram_bot_token_enc")
+        if not chat_id or not token_enc:
+            continue
+        try:
+            bot_token = decrypt_secret(token_enc)
+        except Exception:
+            continue
+        key = (bot_token, str(chat_id))
+        if key in seen:
+            continue
+        seen.add(key)
+        recipients.append(
+            {
+                "user_id": row.get("user_id"),
+                "broker_account_id": row.get("id"),
+                "telegram_bot_token": bot_token,
+                "telegram_chat_id": str(chat_id),
+            }
+        )
+    return recipients
+
+
 async def set_bot_enabled(user_id: str, enabled: bool) -> dict:
     rest = SupabaseRest()
     rows = await rest.patch(

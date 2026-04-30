@@ -10,9 +10,10 @@ import pandas as pd
 
 from app.core.config import get_settings
 from app.services.ai_report import send_daily_signal_report
+from app.services.broker_credentials import list_telegram_recipients
 from app.services.company_profile import company_profile_from_row, enrich_company_profile
 from app.services.supabase_rest import SupabaseRest
-from app.services.telegram import send_telegram_message
+from app.services.telegram import send_telegram_message, send_telegram_message_with_bot
 
 
 logger = logging.getLogger(__name__)
@@ -430,13 +431,14 @@ async def finalize_chunked_scan(user_id: str, state: dict, telegram_chat_id: str
     trade_date = date.fromisoformat(state["trade_date"])
     signals = sort_top_signals(list(state.get("candidates") or []))
     shared_saved = await save_shared_signals(signals, trade_date)
-    await send_telegram_message(telegram_chat_id, format_top_signals_message(signals, trade_date))
+    telegram_sent = await send_shared_signal_message(format_top_signals_message(signals, trade_date), telegram_chat_id)
     report_queued = await send_daily_signal_report(signals, trade_date)
     return {
         "trade_date": trade_date.isoformat(),
         "signals": len(signals),
         "saved": 0,
         "shared_saved": shared_saved,
+        "telegram_sent": telegram_sent,
         "ai_report_queued": report_queued,
     }
 
@@ -499,6 +501,30 @@ async def save_shared_signals(signals: list[dict], trade_date: date | None = Non
     return count
 
 
+async def send_shared_signal_message(text: str, fallback_chat_id: str | None = None) -> int:
+    settings = get_settings()
+    sent = 0
+    sent_keys: set[tuple[str, str]] = set()
+    common_chat_id = settings.telegram_chat_id or fallback_chat_id
+    if settings.telegram_bot_token and common_chat_id:
+        if await send_telegram_message(common_chat_id, text):
+            sent += 1
+            sent_keys.add((settings.telegram_bot_token, str(common_chat_id)))
+
+    for recipient in await list_telegram_recipients():
+        bot_token = recipient.get("telegram_bot_token")
+        chat_id = recipient.get("telegram_chat_id")
+        if not bot_token or not chat_id:
+            continue
+        key = (str(bot_token), str(chat_id))
+        if key in sent_keys:
+            continue
+        if await send_telegram_message_with_bot(str(bot_token), str(chat_id), text):
+            sent += 1
+            sent_keys.add(key)
+    return sent
+
+
 def format_top_signals_message(signals: list[dict], trade_date: date) -> str:
     lines = [f"KOSPI Swing Top {min(5, len(signals))} - {trade_date.isoformat()}"]
     if not signals:
@@ -517,12 +543,13 @@ async def scan_and_store_for_user(user_id: str, telegram_chat_id: str | None = N
     trade_date = datetime.now(ZoneInfo(get_settings().timezone)).date()
     signals = await scan_kospi_signals(trade_date)
     shared_saved = await save_shared_signals(signals, trade_date)
-    await send_telegram_message(telegram_chat_id, format_top_signals_message(signals, trade_date))
+    telegram_sent = await send_shared_signal_message(format_top_signals_message(signals, trade_date), telegram_chat_id)
     report_queued = await send_daily_signal_report(signals, trade_date)
     return {
         "trade_date": trade_date.isoformat(),
         "signals": len(signals),
         "saved": 0,
         "shared_saved": shared_saved,
+        "telegram_sent": telegram_sent,
         "ai_report_queued": report_queued,
     }
