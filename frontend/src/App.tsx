@@ -1698,6 +1698,8 @@ function SignalDetail({
         ["2차 익절률", formatPercentFromEntry(row.take_profit_2, row.entry)],
         ["추적 손절가", row.trailing_stop],
         ["추적 손절률", formatPercentFromEntry(row.trailing_stop, row.entry)],
+        ["손절 산출 근거", buildStopLossExplanation(row, raw)],
+        ["익절 산출 근거", buildTakeProfitExplanation(row)],
         ["권장 보유", `${formatCell(raw.HoldMinDays)}-${formatCell(raw.HoldPreferredDays)}일`],
         ["최대 보유", `${formatCell(raw.HoldMaxDays)}일`],
         ["매입 허용 시간", "14:30-15:20"],
@@ -1979,6 +1981,26 @@ function formatPlanPct(value: unknown): string {
 function formatPercentFromEntry(target: unknown, entry: unknown): string {
   const percent = percentFromEntry(target, entry);
   return percent === null ? "-" : formatPlanPct(percent);
+}
+
+function buildStopLossExplanation(row: Record<string, unknown>, raw: Record<string, unknown>) {
+  const stopPct = formatPercentFromEntry(row.stop_loss, row.entry);
+  const atrPct = raw["ATR(%)"] === undefined ? "-" : `${formatCell(raw["ATR(%)"])}%`;
+  return `최근 10거래일 저점과 60일선 중 더 낮은 지지선에서 1% 아래로 설정. 현재 손절폭 ${stopPct}, ATR 변동성 ${atrPct}.`;
+}
+
+function buildTakeProfitExplanation(row: Record<string, unknown>) {
+  const riskPct = formatRiskPct(row.entry, row.stop_loss);
+  const tp1Pct = formatPercentFromEntry(row.take_profit_1, row.entry);
+  const tp2Pct = formatPercentFromEntry(row.take_profit_2, row.entry);
+  return `진입가와 손절가 사이의 리스크를 1R로 보고, 1차 익절은 +1R(${tp1Pct}), 2차 익절은 +2R(${tp2Pct})로 설정. 기준 리스크는 ${riskPct}.`;
+}
+
+function formatRiskPct(entry: unknown, stopLoss: unknown) {
+  const entryValue = numericValue(entry);
+  const stopValue = numericValue(stopLoss);
+  if (entryValue === null || stopValue === null || entryValue <= 0) return "-";
+  return `${Math.max(0, (entryValue - stopValue) / entryValue * 100).toFixed(2)}%`;
 }
 
 function formatOrderPolicy(value: unknown): string {
