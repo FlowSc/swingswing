@@ -322,6 +322,14 @@ function Dashboard({ session }: { session: Session }) {
     }
   }
 
+  async function sendReport() {
+    await run(
+      "report",
+      () => api.sendDailyReport(session, selectedSignalDate || undefined),
+      "AI 리포트 메일 발송 완료:",
+    );
+  }
+
   async function refresh() {
     try {
       const [brokerResult, accountResult, strategyResult, dateResult, positionResult, logResult, dashboardResult] = await Promise.all([
@@ -524,9 +532,14 @@ function Dashboard({ session }: { session: Session }) {
             {pending === "account" ? "계좌 조회 중..." : "KIS 계좌 조회"}
           </button>
           {isScanAdmin ? (
-            <button disabled={pending !== null} onClick={startScan}>
-              {pending === "scan" ? "스캔 중... 100개씩 처리" : "오늘 시그널 스캔"}
-            </button>
+            <>
+              <button disabled={pending !== null} onClick={startScan}>
+                {pending === "scan" ? "스캔 중... 100개씩 처리" : "오늘 시그널 스캔"}
+              </button>
+              <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendReport}>
+                {pending === "report" ? "리포트 생성/발송 중..." : "AI 리포트 생성해서 메일 보내기"}
+              </button>
+            </>
           ) : (
             <p className="command-copy">스캔 실행은 관리자만 가능하고, 사용자는 생성된 오늘 시그널만 조회합니다.</p>
           )}
@@ -911,6 +924,7 @@ function labelForPending(key: string) {
     scan: "오늘 시그널 스캔",
     signals: "시그널 조회",
     backtest: "백테스트",
+    report: "AI 리포트 생성/메일 발송",
   };
   return labels[key] || "요청";
 }
@@ -1071,6 +1085,7 @@ function DetailOverlay({ detail, onClose }: { detail: DetailSelection; onClose: 
 
 function SignalDetail({ row }: { row: Record<string, unknown> }) {
   const raw = asRecord(row.raw);
+  const companyProfile = asRecord(raw.CompanyProfile);
   const code = String(row.code || "").padStart(6, "0");
   const naverUrl = `https://stock.naver.com/domestic/stock/${code}/price`;
   return (
@@ -1078,6 +1093,13 @@ function SignalDetail({ row }: { row: Record<string, unknown> }) {
       <a className="naver-link" href={naverUrl} target="_blank" rel="noreferrer">
         네이버 증권으로 가기
       </a>
+      <DetailSection title="기업 개요" items={[
+        ["시장", companyProfile.market || raw.Universe],
+        ["섹터", companyProfile.sector],
+        ["업종", companyProfile.industry],
+        ["사업 요약", companyProfile.business_summary],
+        ["시가총액", companyProfile.market_cap],
+      ]} />
       <DetailSection title="매매 계획" items={[
         ["매수가", row.entry],
         ["손절가", row.stop_loss],

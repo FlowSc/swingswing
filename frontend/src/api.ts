@@ -245,6 +245,10 @@ export const api = {
   scan: (session: Session) => request<ScanStartResult>("/bot/scan", session, { method: "POST" }),
   scanStep: (session: Session, scanRunId: number) => request<ScanRun>(`/bot/scan-runs/${scanRunId}/step`, session, { method: "POST" }),
   latestScanRun: (session: Session) => request<ScanRun | null>("/bot/scan-runs/latest", session),
+  sendDailyReport: (session: Session, tradeDate?: string) => {
+    const suffix = tradeDate ? `?trade_date=${encodeURIComponent(tradeDate)}` : "";
+    return request<{ sent: boolean; trade_date: string; signals: number }>(`/bot/reports/daily${suffix}`, session, { method: "POST" });
+  },
   watchTick: (session: Session, payload: { test_mode: boolean; dry_run: boolean }) =>
     request("/bot/watch-tick", session, { method: "POST", body: JSON.stringify(payload) }),
   todaySignals: (session: Session) => request<Array<Record<string, unknown>>>("/signals/today", session),

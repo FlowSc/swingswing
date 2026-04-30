@@ -9,6 +9,7 @@ import FinanceDataReader as fdr
 import pandas as pd
 
 from app.core.config import get_settings
+from app.services.ai_report import send_daily_signal_report
 from app.services.supabase_rest import SupabaseRest
 from app.services.telegram import send_telegram_message
 
@@ -109,6 +110,7 @@ def score_swing_setup(
     market_filter_ok: bool,
     universe: str,
     market_ret_20d: float = 0.0,
+    company_profile: dict | None = None,
 ) -> dict | None:
     if frame is None or len(frame) < 260:
         return None
@@ -239,6 +241,7 @@ def score_swing_setup(
     return {
         "Code": code,
         "Name": name,
+        "CompanyProfile": company_profile or {},
         "Entry": round(close, 2),
         "StopLoss": round(stop_loss, 2),
         "TakeProfit1": round(take_profit_1, 2),
@@ -299,6 +302,24 @@ def market_return_20d(base_date: date) -> float:
     return float(close.iloc[-1] / close.iloc[-21] - 1) * 100
 
 
+def _optional_text(row: pd.Series, columns: tuple[str, ...]) -> str | None:
+    for column in columns:
+        if column in row.index and pd.notna(row[column]) and str(row[column]).strip():
+            return str(row[column]).strip()
+    return None
+
+
+def _company_profile_from_row(row: pd.Series, universe: str) -> dict:
+    return {
+        "market": _optional_text(row, ("Market", "시장구분", "MarketName")) or universe,
+        "sector": _optional_text(row, ("Sector", "섹터", "업종", "Industry")) or "제공 데이터 기준 확인 불가",
+        "industry": _optional_text(row, ("Industry", "산업", "업종명", "Dept")) or "제공 데이터 기준 확인 불가",
+        "business_summary": _optional_text(row, ("BusinessSummary", "Summary", "사업내용", "Description")) or "제공 데이터 기준 확인 불가",
+        "market_cap": int(row["Marcap"]) if "Marcap" in row.index and pd.notna(row["Marcap"]) else None,
+        "shares": int(row["Stocks"]) if "Stocks" in row.index and pd.notna(row["Stocks"]) else None,
+    }
+
+
 def _normalize_listing(listing: pd.DataFrame, universe: str) -> pd.DataFrame:
     frame = listing.copy()
     if "Code" not in frame.columns and "Symbol" in frame.columns:
@@ -307,7 +328,8 @@ def _normalize_listing(listing: pd.DataFrame, universe: str) -> pd.DataFrame:
         frame["Name"] = frame["Code"]
     frame["Code"] = frame["Code"].astype(str).str.zfill(6)
     frame["Universe"] = universe
-    return frame[["Code", "Name", "Universe"]].drop_duplicates("Code")
+    frame["CompanyProfile"] = frame.apply(lambda row: _company_profile_from_row(row, universe), axis=1)
+    return frame[["Code", "Name", "Universe", "CompanyProfile"]].drop_duplicates("Code")
 
 
 def load_scan_universe() -> pd.DataFrame:
@@ -389,6 +411,7 @@ def process_scan_chunk_sync(state: dict, chunk_size: int = SCAN_CHUNK_SIZE) -> d
                 market_filter_ok=bool(state["market_ok"]),
                 universe=row["Universe"],
                 market_ret_20d=float(state.get("market_ret_20d") or 0),
+                company_profile=row.get("CompanyProfile") or {},
             )
             if result:
                 results.append(result)
@@ -417,7 +440,14 @@ async def finalize_chunked_scan(user_id: str, state: dict, telegram_chat_id: str
     signals = sort_top_signals(list(state.get("candidates") or []))
     shared_saved = await save_shared_signals(signals, trade_date)
     await send_telegram_message(telegram_chat_id, format_top_signals_message(signals, trade_date))
-    return {"trade_date": trade_date.isoformat(), "signals": len(signals), "saved": 0, "shared_saved": shared_saved}
+    report_sent = await send_daily_signal_report(signals, trade_date)
+    return {
+        "trade_date": trade_date.isoformat(),
+        "signals": len(signals),
+        "saved": 0,
+        "shared_saved": shared_saved,
+        "ai_report_sent": report_sent,
+    }
 
 
 def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
@@ -437,6 +467,7 @@ def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
                 market_filter_ok=bool(state["market_ok"]),
                 universe=row["Universe"],
                 market_ret_20d=float(state.get("market_ret_20d") or 0),
+                company_profile=row.get("CompanyProfile") or {},
             )
             if result:
                 results.append(result)
@@ -496,4 +527,11 @@ async def scan_and_store_for_user(user_id: str, telegram_chat_id: str | None = N
     signals = await scan_kospi_signals(trade_date)
     shared_saved = await save_shared_signals(signals, trade_date)
     await send_telegram_message(telegram_chat_id, format_top_signals_message(signals, trade_date))
-    return {"trade_date": trade_date.isoformat(), "signals": len(signals), "saved": 0, "shared_saved": shared_saved}
+    report_sent = await send_daily_signal_report(signals, trade_date)
+    return {
+        "trade_date": trade_date.isoformat(),
+        "signals": len(signals),
+        "saved": 0,
+        "shared_saved": shared_saved,
+        "ai_report_sent": report_sent,
+    }

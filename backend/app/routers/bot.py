@@ -1,12 +1,13 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
 from app.schemas.bot import BotControlIn, BotControlOut, StrategySettingsIn, StrategySettingsOut, WatchTickIn
 from app.services.broker_credentials import get_broker_credentials, get_decrypted_broker_credentials, set_bot_enabled
+from app.services.ai_report import send_daily_signal_report
 from app.services.scanner import finalize_chunked_scan, prepare_chunked_scan_state, process_scan_chunk
 from app.services.strategy_settings import get_strategy_settings, save_strategy_settings
 from app.services.supabase_rest import SupabaseRest
@@ -140,6 +141,27 @@ async def latest_scan_run(user: CurrentUser = Depends(get_current_user)) -> dict
     return rows[0] if rows else None
 
 
+@router.post("/reports/daily")
+async def send_daily_report(
+    trade_date: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    require_scan_admin(user)
+    target_date = trade_date or datetime.now(ZoneInfo(get_settings().timezone)).date().isoformat()
+    rows = await SupabaseRest().select(
+        "shared_signals",
+        filters={"trade_date": f"eq.{target_date}"},
+        order="score.desc",
+        limit=30,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="No shared signals found for report date.")
+
+    signals = [shared_signal_record_to_signal(row) for row in rows]
+    sent = await send_daily_signal_report(signals, datetime.fromisoformat(target_date).date())
+    return {"sent": sent, "trade_date": target_date, "signals": len(signals)}
+
+
 @router.post("/watch-tick")
 async def watch_tick(
     payload: WatchTickIn,
@@ -147,3 +169,18 @@ async def watch_tick(
 ) -> dict:
     credentials = await get_decrypted_broker_credentials(user.id)
     return await run_watch_tick_for_user(credentials, test_mode=payload.test_mode, dry_run=payload.dry_run)
+
+
+def shared_signal_record_to_signal(row: dict) -> dict:
+    raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
+    return {
+        **raw,
+        "Code": raw.get("Code") or row.get("code"),
+        "Name": raw.get("Name") or row.get("name"),
+        "Entry": raw.get("Entry") or row.get("entry"),
+        "StopLoss": raw.get("StopLoss") or row.get("stop_loss"),
+        "TakeProfit1": raw.get("TakeProfit1") or row.get("take_profit_1"),
+        "TakeProfit2": raw.get("TakeProfit2") or row.get("take_profit_2"),
+        "TrailingStop": raw.get("TrailingStop") or row.get("trailing_stop"),
+        "Score": raw.get("Score") or row.get("score"),
+    }

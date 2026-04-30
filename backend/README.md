@@ -22,6 +22,11 @@ SUPABASE_SERVICE_ROLE_KEY
 BROKER_ENCRYPTION_KEY
 TELEGRAM_BOT_TOKEN
 SIGNUP_INVITE_CODE
+OPENAI_API_KEY
+ADMIN_REPORT_EMAIL
+SMTP_HOST
+SMTP_USERNAME
+SMTP_PASSWORD
 SCHEDULER_ENABLED
 TZ
 TIMEZONE
@@ -61,6 +66,15 @@ SUPABASE_SERVICE_ROLE_KEY=...
 BROKER_ENCRYPTION_KEY=...
 TELEGRAM_BOT_TOKEN=...
 SIGNUP_INVITE_CODE=your-private-signup-code
+OPENAI_API_KEY=...
+AI_REPORT_MODEL=gpt-5
+AI_REPORT_TOP_N=3
+ADMIN_REPORT_EMAIL=admin@example.com
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=...
+SMTP_PASSWORD=...
+SMTP_FROM_EMAIL=reports@example.com
 SCHEDULER_ENABLED=true
 TZ=Asia/Seoul
 TIMEZONE=Asia/Seoul
@@ -69,6 +83,7 @@ TIMEZONE=Asia/Seoul
 The backend uses the service role key for encrypted credential storage, invite-code signup, and bot jobs. Do not expose `SUPABASE_SERVICE_ROLE_KEY` to React.
 `SIGNUP_INVITE_CODE` is checked by `POST /auth/signup`; users cannot sign up through the app without this code.
 For stronger protection, turn off public signups in Supabase Auth and only use the backend signup endpoint.
+If `OPENAI_API_KEY`, `ADMIN_REPORT_EMAIL`, and SMTP settings are configured, the daily scan sends an AI report for the top scored signals to the admin email only.
 
 ## Bot Flow
 
