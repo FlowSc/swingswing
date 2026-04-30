@@ -14,12 +14,13 @@ import {
   type StrategySettings,
   type TelegramSettingsPayload,
   type TradeDecisionLog,
+  type WatcherRun,
 } from "./api";
 import { supabase } from "./supabase";
 
 type AuthMode = "login" | "signup";
 type Status = { type: "idle" | "info" | "error"; message: string };
-type DetailKind = "signal" | "log" | "position" | "account" | "decision";
+type DetailKind = "signal" | "log" | "position" | "account" | "decision" | "watcher";
 type DetailSelection = { title: string; kind: DetailKind; row: Record<string, unknown> };
 
 const emptyBroker: BrokerPayload = {
@@ -224,6 +225,7 @@ function Dashboard({ session }: { session: Session }) {
   const [positions, setPositions] = useState<Array<Record<string, unknown>>>([]);
   const [logs, setLogs] = useState<Array<Record<string, unknown>>>([]);
   const [decisions, setDecisions] = useState<TradeDecisionLog[]>([]);
+  const [watcherRuns, setWatcherRuns] = useState<WatcherRun[]>([]);
   const [dailyDashboard, setDailyDashboard] = useState<DailyDashboard | null>(null);
   const [aiReports, setAiReports] = useState<AiReportStatus[]>([]);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
@@ -366,6 +368,19 @@ function Dashboard({ session }: { session: Session }) {
     }
   }
 
+  async function refreshWatcherRunsOnly() {
+    setPending("watcherRunsRefresh");
+    try {
+      const result = await api.watcherRuns(session);
+      setWatcherRuns(result);
+      setStatus({ type: "info", message: `와쳐 실행 로그 새로고침 완료: ${result.length}개` });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function startScan() {
     setPending("scan");
     setStatus({ type: "info", message: "스캔 요청 중..." });
@@ -491,13 +506,14 @@ function Dashboard({ session }: { session: Session }) {
 
   async function refresh() {
     try {
-      const [brokerResult, accountResult, strategyResult, dateResult, positionResult, logResult, dashboardResult] = await Promise.all([
+      const [brokerResult, accountResult, strategyResult, dateResult, positionResult, logResult, watcherRunResult, dashboardResult] = await Promise.all([
         api.getBrokerStatus(session),
         api.getBrokerAccounts(session),
         api.getStrategy(session),
         api.signalDates(session),
         api.positions(session),
         api.tradeLogs(session),
+        api.watcherRuns(session).catch(() => []),
         api.dailyDashboard(session).catch(() => null),
       ]);
       const nextSignalDate = selectedSignalDate || dateResult[0] || "";
@@ -530,6 +546,7 @@ function Dashboard({ session }: { session: Session }) {
       setAiReports(reportResult);
       setPositions(positionResult);
       setLogs(logResult);
+      setWatcherRuns(watcherRunResult);
       setDecisions(decisionResult);
     } catch {
       // First-time users may not have credentials yet. Keep the form usable.
@@ -849,6 +866,22 @@ function Dashboard({ session }: { session: Session }) {
           onRowClick={(row) => setDetail({
             title: `${formatCell(row.name)} 제외 사유`,
             kind: "decision",
+            row,
+          })}
+        />
+        <DataPanel
+          title="와쳐 실행 로그"
+          rows={watcherRuns.map(normalizeWatcherRunRow)}
+          columns={["created_at", "mode", "orders_allowed_ko", "cash", "daily_slots", "action_count", "skip_reason_ko"]}
+          maxRows={30}
+          headerAction={(
+            <button className="ghost small" type="button" disabled={pending === "watcherRunsRefresh"} onClick={refreshWatcherRunsOnly}>
+              {pending === "watcherRunsRefresh" ? "갱신 중" : "새로고침"}
+            </button>
+          )}
+          onRowClick={(row) => setDetail({
+            title: `${formatCell(row.created_at)} 와쳐 실행`,
+            kind: "watcher",
             row,
           })}
         />
@@ -1203,6 +1236,7 @@ function labelForPending(key: string) {
     signalReport: "개별 기업 AI 리포트 생성 큐 등록",
     reportDownload: "종합 리포트 다운로드",
     signalReportDownload: "개별 리포트 다운로드",
+    watcherRunsRefresh: "와쳐 실행 로그 새로고침",
   };
   return labels[key] || "요청";
 }
@@ -1405,6 +1439,7 @@ function DetailOverlay({
     detail.kind === "signal" ? "시그널 상세"
       : detail.kind === "log" ? "매매 로그 상세"
         : detail.kind === "decision" ? "매수 제외 상세"
+          : detail.kind === "watcher" ? "와쳐 실행 상세"
           : "포지션 상세";
   return (
     <div className="overlay-backdrop" onClick={onClose}>
@@ -1430,6 +1465,7 @@ function DetailOverlay({
         {detail.kind === "log" && <TradeLogDetail row={detail.row} />}
         {detail.kind === "position" && <PositionDetail row={detail.row} />}
         {detail.kind === "decision" && <DecisionDetail row={detail.row} />}
+        {detail.kind === "watcher" && <WatcherRunDetail row={detail.row} />}
       </aside>
     </div>
   );
@@ -1631,6 +1667,52 @@ function DecisionDetail({ row }: { row: Record<string, unknown> }) {
   );
 }
 
+function WatcherRunDetail({ row }: { row: Record<string, unknown> }) {
+  const raw = asRecord(row.raw);
+  const strategy = asRecord(raw.strategy);
+  const actions = Array.isArray(raw.actions) ? raw.actions : [];
+  return (
+    <div className="detail-grid">
+      <DetailSection title="실행 요약" items={[
+        ["실행 시간", row.created_at],
+        ["계좌 구분", row.mode],
+        ["주문 허용", row.orders_allowed_ko],
+        ["매수 시간대", row.entry_window_open ? "열림" : "아님"],
+        ["관리 시간대", row.manage_window_open ? "열림" : "아님"],
+        ["스킵 사유", row.skip_reason_ko],
+      ]} />
+      <DetailSection title="매수 가능 상태" items={[
+        ["예수금", row.cash],
+        ["총평가금", row.total_equity],
+        ["시그널 수", row.signals_count],
+        ["DB 포지션", row.open_positions_count],
+        ["KIS 보유종목", row.kis_holdings_count],
+        ["미체결 주문", row.pending_orders_count],
+        ["보유 가능 슬롯", row.available_slots],
+        ["금액 기준 슬롯", row.affordable_slots],
+        ["오늘 신규 가능 슬롯", row.daily_slots],
+      ]} />
+      <DetailSection title="실행 결과" items={[
+        ["전체 액션", row.action_count],
+        ["매수 주문", row.buy_order_count],
+        ["매도 주문", row.sell_order_count],
+        ["쿨다운 스킵", row.cooldown_skip_count],
+        ["액션 상세", actions.map((item) => {
+          const action = asRecord(item);
+          return `${formatCell(action.action)} ${formatCell(action.name || action.code)} ${formatCell(action.qty)}주 @ ${formatCell(action.price)}`;
+        }).join(" / ")],
+      ]} />
+      <DetailSection title="전략 설정" items={[
+        ["최소 점수", strategy.min_score],
+        ["최대 보유 종목", strategy.max_open_positions],
+        ["하루 신규 매수", strategy.max_new_positions_per_day],
+        ["종목당 비중", strategy.position_capital_pct],
+        ["최소 주문금액", strategy.min_order_amount],
+      ]} />
+    </div>
+  );
+}
+
 function DetailSection({ title, items }: { title: string; items: Array<[string, unknown]> }) {
   return (
     <section className="detail-section">
@@ -1716,6 +1798,15 @@ function normalizeDecisionRow(row: TradeDecisionLog): Record<string, unknown> {
   };
 }
 
+function normalizeWatcherRunRow(row: WatcherRun): Record<string, unknown> {
+  return {
+    ...row,
+    orders_allowed_ko: row.orders_allowed ? "허용" : "차단",
+    skip_reason_ko: translateWatcherSkipReason(row.skip_reason),
+    created_at: formatDateTime(row.created_at),
+  };
+}
+
 function enrichTradeLogRow(
   row: Record<string, unknown>,
   positions: Array<Record<string, unknown>>,
@@ -1776,9 +1867,24 @@ function translateReason(reason: unknown) {
     BelowKijun: "현재가가 일목 기준선 아래",
     AboveBBUpper: "현재가가 볼린저 상단 위",
     PulledBackFromDayHigh: "당일 고점 대비 과도하게 밀림",
+    OrderFilled: "주문/계좌 기준 체결 확인",
+    OrderPending: "주문 접수 후 체결 대기",
     QuoteFailed: "현재가 조회 실패",
     InvalidQuote: "현재가 값 비정상",
     SizingRejected: "수량/리스크/최소주문금액 조건 미충족",
+    StrategySellCooldown: "매수 직후 전략 매도 쿨다운",
+  };
+  return map[value] || value || "-";
+}
+
+function translateWatcherSkipReason(reason: unknown) {
+  const value = String(reason || "");
+  const map: Record<string, string> = {
+    outside_entry_window: "매수 시간대 아님",
+    no_shared_signals: "오늘 시그널 없음",
+    no_buy_slots: "매수 가능 슬롯 없음",
+    no_buy_order_created: "조건 충족 종목 없음",
+    completed: "실행 완료",
   };
   return map[value] || value || "-";
 }

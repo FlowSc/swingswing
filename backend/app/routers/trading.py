@@ -128,6 +128,29 @@ async def trade_decisions(
     )
 
 
+@router.get("/watcher-runs")
+async def watcher_runs(user: CurrentUser = Depends(get_current_user)) -> list[dict]:
+    try:
+        credentials = await get_broker_credentials(user.id)
+        filters = {"user_id": f"eq.{user.id}"}
+        or_filter = None
+        if credentials and credentials.get("id"):
+            if (credentials.get("mode") or "paper") == "paper":
+                or_filter = f"(broker_account_id.eq.{credentials['id']},broker_account_id.is.null)"
+            else:
+                filters["broker_account_id"] = f"eq.{credentials['id']}"
+        return await SupabaseRest().select(
+            "watcher_runs",
+            filters=filters,
+            or_filter=or_filter,
+            order="created_at.desc",
+            limit=100,
+        )
+    except Exception:
+        logger.exception("Failed to load watcher runs: user_id=%s", user.id)
+        return []
+
+
 @router.get("/dashboard/daily")
 async def daily_dashboard(user: CurrentUser = Depends(get_current_user)) -> dict:
     settings = get_settings()

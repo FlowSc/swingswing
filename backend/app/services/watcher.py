@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
@@ -11,6 +11,7 @@ from app.services.kis import (
     extract_cash,
     extract_total_equity,
     kis_holding_codes,
+    find_order_execution,
     parse_holdings,
     parse_current_price,
     parse_order_identifiers,
@@ -32,7 +33,8 @@ MANAGE_START = time(9, 20)
 MANAGE_END = time(15, 20)
 QUOTE_DELAY_SECONDS = 1.0
 QUOTE_ERROR_BACKOFF_SECONDS = 3.0
-OPEN_PENDING_STATUSES = {"OPEN", "CANCEL_FAILED"}
+OPEN_PENDING_STATUSES = {"OPEN", "PARTIAL", "CANCEL_FAILED"}
+STRATEGY_SELL_COOLDOWN_MINUTES = 30
 REASON_LABELS = {
     "IntradayEntry": "장중 진입 조건 충족",
     "StopLoss": "손절가 도달",
@@ -51,7 +53,7 @@ REASON_LABELS = {
     "PulledBackFromDayHigh": "당일 고점 대비 과도하게 밀림",
     "PendingOrderExists": "미체결 주문 대기 중",
     "OrderPending": "주문 접수 후 체결 대기",
-    "OrderFilled": "계좌 잔고 기준 체결 확인",
+    "OrderFilled": "주문/계좌 기준 체결 확인",
     "OrderCanceled": "장마감 전 미체결 주문 취소",
     "OrderCancelFailed": "미체결 주문 취소 실패",
     "PositionSynced": "계좌 잔고 기준 포지션 수량 동기화",
@@ -59,6 +61,7 @@ REASON_LABELS = {
     "QuoteFailed": "현재가 조회 실패",
     "InvalidQuote": "현재가 값 비정상",
     "SizingRejected": "수량/리스크/최소주문금액 조건 미충족",
+    "StrategySellCooldown": "매수 직후 전략 매도 쿨다운",
 }
 
 
@@ -81,6 +84,28 @@ def days_held(entry_date: str | None) -> int:
     except ValueError:
         return 0
     return max(0, (now_kst().date() - start).days)
+
+
+def parse_kst_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = value.replace(" ", "T")
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=ZoneInfo(get_settings().timezone))
+    return parsed.astimezone(ZoneInfo(get_settings().timezone))
+
+
+def in_strategy_sell_cooldown(position: dict) -> bool:
+    created_at = parse_kst_datetime(str(position.get("created_at") or ""))
+    if not created_at:
+        return False
+    return now_kst() - created_at < timedelta(minutes=STRATEGY_SELL_COOLDOWN_MINUTES)
 
 
 def reason_label(reason_code: str) -> str:
@@ -335,6 +360,38 @@ async def mark_pending_order(order_id: int, status: str, raw: dict | None = None
     await SupabaseRest().patch("pending_orders", filters={"id": f"eq.{order_id}"}, payload=payload)
 
 
+async def insert_watcher_run(user_id: str, broker_account_id: str | None, payload: dict) -> None:
+    try:
+        await SupabaseRest().insert(
+            "watcher_runs",
+            {
+                "user_id": user_id,
+                "broker_account_id": broker_account_id,
+                "mode": payload.get("mode"),
+                "orders_allowed": bool(payload.get("orders_allowed")),
+                "entry_window_open": bool(payload.get("entry_window_open")),
+                "manage_window_open": bool(payload.get("manage_window_open")),
+                "cash": payload.get("cash"),
+                "total_equity": payload.get("total_equity"),
+                "signals_count": int(payload.get("signals_count") or 0),
+                "open_positions_count": int(payload.get("open_positions_count") or 0),
+                "kis_holdings_count": int(payload.get("kis_holdings_count") or 0),
+                "pending_orders_count": int(payload.get("pending_orders_count") or 0),
+                "available_slots": payload.get("available_slots"),
+                "affordable_slots": payload.get("affordable_slots"),
+                "daily_slots": payload.get("daily_slots"),
+                "action_count": int(payload.get("action_count") or 0),
+                "buy_order_count": int(payload.get("buy_order_count") or 0),
+                "sell_order_count": int(payload.get("sell_order_count") or 0),
+                "cooldown_skip_count": int(payload.get("cooldown_skip_count") or 0),
+                "skip_reason": payload.get("skip_reason"),
+                "raw": payload,
+            },
+        )
+    except RuntimeError as exc:
+        logger.warning("Failed to insert watcher run: user_id=%s account_id=%s error=%s", user_id, broker_account_id, exc)
+
+
 async def sync_positions_with_balance(user_id: str, broker_account_id: str | None, positions: list[dict], balance: dict) -> list[dict]:
     holdings = parse_holdings(balance)
     actions: list[dict] = []
@@ -386,6 +443,14 @@ async def reconcile_pending_orders(
     actions: list[dict] = []
     rest = SupabaseRest()
     should_cancel = not test_mode and now_kst().time() >= ENTRY_END
+    order_payload: dict | None = None
+    order_inquiry_error: str | None = None
+    if not dry_run:
+        try:
+            order_payload = await client.inquire_daily_orders()
+        except Exception as exc:
+            order_inquiry_error = str(exc)
+            logger.warning("KIS order inquiry failed. Falling back to balance reconciliation: %s", exc)
 
     for order in pending_orders:
         raw = order.get("raw") or {}
@@ -393,18 +458,50 @@ async def reconcile_pending_orders(
         side = order["side"]
         holding = holdings.get(code)
         previous_qty = int((raw.get("previous_remaining_qty") if isinstance(raw, dict) else 0) or 0)
-        is_filled = (side == "BUY" and holding and int(holding.get("qty") or 0) > 0) or (
+        execution = find_order_execution(order_payload or {}, order_no=order.get("order_no"), code=code) if order_payload else None
+        is_filled = bool(execution and execution.get("fully_filled")) or (side == "BUY" and holding and int(holding.get("qty") or 0) > 0) or (
             side == "SELL" and (not holding or (previous_qty > 0 and int(holding.get("qty") or 0) < previous_qty))
         )
 
+        if execution and execution.get("partially_filled"):
+            was_already_partial = order.get("status") == "PARTIAL"
+            raw = {**raw, "execution": execution, "partially_filled_at": now_kst().isoformat()}
+            await mark_pending_order(int(order["id"]), "PARTIAL", raw)
+            if side == "BUY" and holding and code not in open_codes:
+                expected = raw.get("expected_position") or {}
+                signal = raw.get("signal") or {}
+                qty = int((holding or {}).get("qty") or execution.get("filled_qty") or 0)
+                entry_price = int((holding or {}).get("avg_price") or execution.get("avg_price") or order.get("price") or 0)
+                if qty > 0:
+                    await rest.insert(
+                        "positions",
+                        {
+                            **expected,
+                            "entry_price": entry_price,
+                            "qty": qty,
+                            "remaining_qty": qty,
+                            "raw": {
+                                **(expected.get("raw") or {}),
+                                "partially_filled": True,
+                                "holding": holding,
+                                "pending_order_id": order["id"],
+                            },
+                        },
+                    )
+                    await insert_trade_log(user_id, broker_account_id, "BUY", signal or order, entry_price, qty, "OrderFilled", raw)
+                    open_codes.add(code)
+            if not was_already_partial:
+                actions.append({"action": "PARTIAL", "code": code, "name": display_name(order), "qty": int(execution.get("filled_qty") or 0), "price": int(execution.get("avg_price") or order.get("price") or 0), "reason": "부분체결 확인", "plan": action_plan_summary((raw.get("expected_position") if isinstance(raw, dict) else None) or order)})
+            continue
+
         if is_filled:
-            raw = {**raw, "filled_at": now_kst().isoformat(), "holding": holding}
+            raw = {**raw, "filled_at": now_kst().isoformat(), "holding": holding, "execution": execution, "order_inquiry_error": order_inquiry_error}
             await mark_pending_order(int(order["id"]), "FILLED", raw)
             if side == "BUY" and code not in open_codes:
                 expected = raw.get("expected_position") or {}
                 signal = raw.get("signal") or {}
-                qty = int((holding or {}).get("qty") or order.get("qty") or 0)
-                entry_price = int((holding or {}).get("avg_price") or order.get("price") or 0)
+                qty = int((holding or {}).get("qty") or (execution or {}).get("filled_qty") or order.get("qty") or 0)
+                entry_price = int((holding or {}).get("avg_price") or (execution or {}).get("avg_price") or order.get("price") or 0)
                 await rest.insert(
                     "positions",
                     {
@@ -463,8 +560,21 @@ async def place_buy(client, signal: dict, qty: int, price: int, *, dry_run: bool
     return await client.buy_limit(signal["code"], qty, price)
 
 
-async def manage_positions(user_id: str, broker_account_id: str | None, client, positions: list[dict], *, test_mode: bool, dry_run: bool) -> list[dict]:
-    if not in_window(MANAGE_START, MANAGE_END, test_mode=test_mode):
+async def manage_positions(
+    user_id: str,
+    broker_account_id: str | None,
+    client,
+    positions: list[dict],
+    *,
+    test_mode: bool,
+    dry_run: bool,
+    diagnostics: dict | None = None,
+) -> list[dict]:
+    manage_window_open = in_window(MANAGE_START, MANAGE_END, test_mode=test_mode)
+    if diagnostics is not None:
+        diagnostics["manage_window_open"] = manage_window_open
+        diagnostics.setdefault("cooldown_skip_count", 0)
+    if not manage_window_open:
         return []
 
     actions: list[dict] = []
@@ -501,6 +611,10 @@ async def manage_positions(user_id: str, broker_account_id: str | None, client, 
             reason = "StopLoss"
             sell_qty = remaining_qty
             patch = {"remaining_qty": 0, "status": "CLOSED"}
+        elif in_strategy_sell_cooldown(position):
+            if diagnostics is not None:
+                diagnostics["cooldown_skip_count"] = int(diagnostics.get("cooldown_skip_count") or 0) + 1
+            continue
         elif strategy.get("use_breakeven_after_tp1", False) and position.get("take_profit_1_done") and current_price <= entry_price:
             reason = "BreakEvenStop"
             sell_qty = remaining_qty
@@ -556,13 +670,32 @@ async def manage_positions(user_id: str, broker_account_id: str | None, client, 
     return actions
 
 
-async def enter_positions(user_id: str, broker_account_id: str | None, client, positions: list[dict], balance: dict, *, test_mode: bool, dry_run: bool) -> list[dict]:
-    if not in_window(ENTRY_START, ENTRY_END, test_mode=test_mode):
+async def enter_positions(
+    user_id: str,
+    broker_account_id: str | None,
+    client,
+    positions: list[dict],
+    balance: dict,
+    *,
+    test_mode: bool,
+    dry_run: bool,
+    diagnostics: dict | None = None,
+) -> list[dict]:
+    entry_window_open = in_window(ENTRY_START, ENTRY_END, test_mode=test_mode)
+    if diagnostics is not None:
+        diagnostics["entry_window_open"] = entry_window_open
+    if not entry_window_open:
+        if diagnostics is not None:
+            diagnostics["skip_reason"] = "outside_entry_window"
         logger.warning("Watcher enter skipped: outside entry window user_id=%s account_id=%s", user_id, broker_account_id)
         return []
 
     signals = await today_signals()
+    if diagnostics is not None:
+        diagnostics["signals_count"] = len(signals)
     if not signals:
+        if diagnostics is not None:
+            diagnostics["skip_reason"] = "no_shared_signals"
         logger.warning("Watcher enter skipped: no shared signals user_id=%s account_id=%s", user_id, broker_account_id)
         return []
 
@@ -579,6 +712,20 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
     available_slots = max(0, int(strategy["max_open_positions"]) - len(held_or_pending_codes))
     affordable_slots = int(cash // max(int(strategy["min_order_amount"]), 1))
     daily_slots = min(int(strategy["max_new_positions_per_day"]), available_slots, affordable_slots)
+    if diagnostics is not None:
+        diagnostics.update(
+            {
+                "cash": cash,
+                "total_equity": total_equity,
+                "open_positions_count": len(open_codes),
+                "kis_holdings_count": len(kis_codes),
+                "pending_orders_count": len(pending_codes),
+                "available_slots": available_slots,
+                "affordable_slots": affordable_slots,
+                "daily_slots": daily_slots,
+                "strategy": strategy,
+            }
+        )
     logger.warning(
         "Watcher enter summary: user_id=%s account_id=%s cash=%s equity=%s signals=%s open=%s kis=%s pending=%s available_slots=%s affordable_slots=%s daily_slots=%s min_order=%s max_new=%s position_pct=%s risk_pct=%s",
         user_id,
@@ -598,6 +745,8 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
         strategy["risk_per_trade_pct"],
     )
     if daily_slots <= 0:
+        if diagnostics is not None:
+            diagnostics["skip_reason"] = "no_buy_slots"
         logger.warning("Watcher enter skipped: no buy slots user_id=%s account_id=%s", user_id, broker_account_id)
         return []
 
@@ -702,6 +851,10 @@ async def enter_positions(user_id: str, broker_account_id: str | None, client, p
         blocked_codes.add(signal["code"])
         cash = max(0, cash - int(qty * current_price))
 
+    if diagnostics is not None:
+        diagnostics["skip_reason"] = "completed" if actions else diagnostics.get("skip_reason") or "no_buy_order_created"
+        diagnostics["buy_order_count"] = len([item for item in actions if str(item.get("action", "")).startswith("BUY")])
+
     return actions
 
 
@@ -713,19 +866,44 @@ async def run_watch_tick_for_user(credentials: dict, *, test_mode: bool = False,
     allow_live_orders = bool(credentials.get("live_order_enabled")) and settings.allow_live_trading
     client = client_from_credentials(credentials, enable_orders=not dry_run, allow_live_orders=allow_live_orders)
     actions: list[dict] = []
+    diagnostics: dict = {
+        "run_at": now_kst().isoformat(),
+        "mode": credentials.get("mode") or "paper",
+        "test_mode": test_mode,
+        "dry_run": dry_run,
+        "live_order_enabled": bool(credentials.get("live_order_enabled")),
+        "server_live_trading_allowed": settings.allow_live_trading,
+        "orders_allowed": not dry_run and (not is_live or allow_live_orders),
+        "entry_window_open": in_window(ENTRY_START, ENTRY_END, test_mode=test_mode),
+        "manage_window_open": in_window(MANAGE_START, MANAGE_END, test_mode=test_mode),
+    }
     balance = await client.get_balance()
+    diagnostics["cash"] = extract_cash(balance)
+    diagnostics["total_equity"] = extract_total_equity(balance)
+    diagnostics["kis_holdings_count"] = len(kis_holding_codes(balance))
 
     actions.extend(await reconcile_pending_orders(user_id, broker_account_id, client, balance, test_mode=test_mode, dry_run=dry_run))
     positions = await open_positions(user_id, broker_account_id)
+    diagnostics["open_positions_count"] = len(positions)
     actions.extend(await sync_positions_with_balance(user_id, broker_account_id, positions, balance))
     positions = await open_positions(user_id, broker_account_id)
-    actions.extend(await manage_positions(user_id, broker_account_id, client, positions, test_mode=test_mode, dry_run=dry_run))
+    diagnostics["open_positions_count"] = len(positions)
+    actions.extend(await manage_positions(user_id, broker_account_id, client, positions, test_mode=test_mode, dry_run=dry_run, diagnostics=diagnostics))
     balance = await client.get_balance()
+    diagnostics["cash"] = extract_cash(balance)
+    diagnostics["total_equity"] = extract_total_equity(balance)
+    diagnostics["kis_holdings_count"] = len(kis_holding_codes(balance))
     actions.extend(await reconcile_pending_orders(user_id, broker_account_id, client, balance, test_mode=test_mode, dry_run=dry_run))
     positions = await open_positions(user_id, broker_account_id)
     actions.extend(await sync_positions_with_balance(user_id, broker_account_id, positions, balance))
     positions = await open_positions(user_id, broker_account_id)
-    actions.extend(await enter_positions(user_id, broker_account_id, client, positions, balance, test_mode=test_mode, dry_run=dry_run))
+    diagnostics["open_positions_count"] = len(positions)
+    actions.extend(await enter_positions(user_id, broker_account_id, client, positions, balance, test_mode=test_mode, dry_run=dry_run, diagnostics=diagnostics))
+    diagnostics["action_count"] = len(actions)
+    diagnostics["buy_order_count"] = len([item for item in actions if str(item.get("action", "")).startswith("BUY")])
+    diagnostics["sell_order_count"] = len([item for item in actions if str(item.get("action", "")).startswith("SELL")])
+    diagnostics["actions"] = actions
+    await insert_watcher_run(user_id, broker_account_id, diagnostics)
 
     if actions:
         lines = [f"KOSPI bot actions: {len(actions)}"]

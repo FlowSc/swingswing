@@ -176,6 +176,32 @@ create table if not exists trade_decision_logs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists watcher_runs (
+  id bigint generated always as identity primary key,
+  user_id uuid not null,
+  broker_account_id uuid,
+  mode text,
+  orders_allowed boolean not null default false,
+  entry_window_open boolean not null default false,
+  manage_window_open boolean not null default false,
+  cash numeric,
+  total_equity numeric,
+  signals_count integer not null default 0,
+  open_positions_count integer not null default 0,
+  kis_holdings_count integer not null default 0,
+  pending_orders_count integer not null default 0,
+  available_slots integer,
+  affordable_slots integer,
+  daily_slots integer,
+  action_count integer not null default 0,
+  buy_order_count integer not null default 0,
+  sell_order_count integer not null default 0,
+  cooldown_skip_count integer not null default 0,
+  skip_reason text,
+  raw jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists ai_reports (
   id bigint generated always as identity primary key,
   trade_date date not null,
@@ -205,6 +231,8 @@ create index if not exists idx_scan_runs_created_at on scan_runs (created_at des
 create index if not exists idx_positions_user_status on positions (user_id, status);
 create index if not exists idx_trade_logs_user_created_at on trade_logs (user_id, created_at desc);
 create index if not exists idx_trade_decision_logs_user_date on trade_decision_logs (user_id, decision_date, created_at desc);
+create index if not exists idx_watcher_runs_user_created_at on watcher_runs (user_id, created_at desc);
+create index if not exists idx_watcher_runs_account_created_at on watcher_runs (user_id, broker_account_id, created_at desc);
 create index if not exists idx_broker_accounts_user_active on broker_accounts (user_id, is_active);
 create index if not exists idx_ai_reports_trade_date on ai_reports (trade_date desc, report_type, code);
 create index if not exists idx_ai_reports_status_created_at on ai_reports (status, created_at);
@@ -230,6 +258,7 @@ alter table ai_reports add column if not exists finished_at timestamptz;
 alter table ai_reports add column if not exists html text not null default '';
 alter table ai_reports alter column markdown set default '';
 alter table ai_reports alter column markdown set not null;
+alter table watcher_runs add column if not exists cooldown_skip_count integer not null default 0;
 
 create index if not exists idx_positions_user_account_status on positions (user_id, broker_account_id, status);
 create index if not exists idx_trade_logs_user_account_created_at on trade_logs (user_id, broker_account_id, created_at desc);
@@ -290,6 +319,7 @@ alter table positions enable row level security;
 alter table trade_logs enable row level security;
 alter table pending_orders enable row level security;
 alter table trade_decision_logs enable row level security;
+alter table watcher_runs enable row level security;
 alter table ai_reports enable row level security;
 
 drop policy if exists "Users can read own broker credentials" on broker_credentials;
@@ -340,6 +370,11 @@ create policy "Users can read own pending orders"
 drop policy if exists "Users can read own trade decision logs" on trade_decision_logs;
 create policy "Users can read own trade decision logs"
   on trade_decision_logs for select
+  using (auth.uid() = user_id);
+
+drop policy if exists "Users can read own watcher runs" on watcher_runs;
+create policy "Users can read own watcher runs"
+  on watcher_runs for select
   using (auth.uid() = user_id);
 
 drop policy if exists "Authenticated users can read ai reports" on ai_reports;

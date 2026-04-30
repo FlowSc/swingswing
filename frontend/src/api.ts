@@ -170,6 +170,32 @@ export type TradeDecisionLog = {
   created_at: string;
 };
 
+export type WatcherRun = {
+  id: number;
+  user_id: string;
+  broker_account_id?: string | null;
+  mode?: string | null;
+  orders_allowed: boolean;
+  entry_window_open: boolean;
+  manage_window_open: boolean;
+  cash?: number | null;
+  total_equity?: number | null;
+  signals_count: number;
+  open_positions_count: number;
+  kis_holdings_count: number;
+  pending_orders_count: number;
+  available_slots?: number | null;
+  affordable_slots?: number | null;
+  daily_slots?: number | null;
+  action_count: number;
+  buy_order_count: number;
+  sell_order_count: number;
+  cooldown_skip_count?: number;
+  skip_reason?: string | null;
+  raw?: Record<string, unknown>;
+  created_at: string;
+};
+
 export type DailyDashboard = {
   date: string;
   signals_count: number;
@@ -302,6 +328,7 @@ export const api = {
     const suffix = tradeDate ? `?trade_date=${encodeURIComponent(tradeDate)}` : "";
     return request<TradeDecisionLog[]>(`/trade-decisions${suffix}`, session);
   },
+  watcherRuns: (session: Session) => request<WatcherRun[]>("/watcher-runs", session),
   dailyDashboard: (session: Session) => request<DailyDashboard>("/dashboard/daily", session),
   backtestSharedSignals: (session: Session, days = 120, maxSignals = 200) =>
     request<BacktestResult>(`/backtest/shared-signals?days=${days}&max_signals=${maxSignals}`, session),

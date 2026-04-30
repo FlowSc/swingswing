@@ -20,12 +20,14 @@ TR_ID = {
         "sell": "VTTC0801U",
         "cancel": "VTTC0803U",
         "balance": "VTTC8434R",
+        "order_inquiry": "VTTC8001R",
     },
     "live": {
         "buy": "TTTC0802U",
         "sell": "TTTC0801U",
         "cancel": "TTTC0803U",
         "balance": "TTTC8434R",
+        "order_inquiry": "TTTC8001R",
     },
 }
 
@@ -162,6 +164,38 @@ class KisClient:
             "GET",
             "/uapi/domestic-stock/v1/trading/inquire-balance",
             headers=await self.auth_headers(TR_ID[self.config.mode]["balance"]),
+            params=params,
+        )
+
+    async def inquire_daily_orders(
+        self,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        code: str = "",
+        order_no: str = "",
+    ) -> dict[str, Any]:
+        target_date = now_kst().date().strftime("%Y%m%d")
+        params = {
+            "CANO": self.config.account_no,
+            "ACNT_PRDT_CD": self.config.account_product_code,
+            "INQR_STRT_DT": start_date or target_date,
+            "INQR_END_DT": end_date or target_date,
+            "SLL_BUY_DVSN_CD": "00",
+            "INQR_DVSN": "00",
+            "PDNO": code,
+            "CCLD_DVSN": "00",
+            "ORD_GNO_BRNO": "",
+            "ODNO": order_no,
+            "INQR_DVSN_3": "00",
+            "INQR_DVSN_1": "",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        }
+        return await self._request(
+            "GET",
+            "/uapi/domestic-stock/v1/trading/inquire-ccnl",
+            headers=await self.auth_headers(TR_ID[self.config.mode]["order_inquiry"]),
             params=params,
         )
 
@@ -315,6 +349,61 @@ def parse_order_identifiers(payload: dict[str, Any]) -> dict[str, str | None]:
         "order_no": output.get("ODNO") or output.get("odno"),
         "order_time": output.get("ORD_TMD") or output.get("ord_tmd"),
     }
+
+
+def _field(output: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = output.get(key)
+        if value not in {None, ""}:
+            return value
+    return None
+
+
+def parse_order_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    output = payload.get("output1") or payload.get("output") or []
+    if isinstance(output, dict):
+        return [output]
+    return output if isinstance(output, list) else []
+
+
+def find_order_execution(
+    payload: dict[str, Any],
+    *,
+    order_no: str | None = None,
+    code: str | None = None,
+) -> dict[str, Any] | None:
+    normalized_code = str(code or "").zfill(6) if code else ""
+    for row in parse_order_rows(payload):
+        row_order_no = str(_field(row, "odno", "ODNO") or "")
+        row_code = str(_field(row, "pdno", "PDNO") or "").zfill(6)
+        if order_no and row_order_no != str(order_no):
+            continue
+        if normalized_code and row_code and row_code != normalized_code:
+            continue
+
+        ordered_qty = _parse_int_field(row, "ord_qty", "ORD_QTY")
+        filled_qty = _parse_int_field(row, "tot_ccld_qty", "TOT_CCLD_QTY", "ccld_qty", "CCLD_QTY")
+        remaining_qty = _parse_int_field(row, "rmn_qty", "RMN_QTY")
+        avg_price = _parse_int_field(row, "avg_prvs", "AVG_PRVS", "avg_prvs_pric", "AVG_PRVS_PRIC")
+        if avg_price <= 0 and filled_qty > 0:
+            total_filled_amount = _parse_int_field(row, "tot_ccld_amt", "TOT_CCLD_AMT")
+            avg_price = int(total_filled_amount / filled_qty) if total_filled_amount > 0 else 0
+
+        if ordered_qty > 0 and remaining_qty <= 0 and filled_qty <= 0:
+            remaining_qty = ordered_qty
+
+        return {
+            "order_no": row_order_no or order_no,
+            "code": row_code or normalized_code,
+            "ordered_qty": ordered_qty,
+            "filled_qty": filled_qty,
+            "remaining_qty": remaining_qty,
+            "avg_price": avg_price,
+            "fully_filled": filled_qty > 0 and remaining_qty == 0,
+            "partially_filled": filled_qty > 0 and remaining_qty > 0,
+            "raw": row,
+        }
+    return None
 
 
 def extract_cash(balance: dict[str, Any]) -> int:
