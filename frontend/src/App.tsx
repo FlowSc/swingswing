@@ -1326,6 +1326,7 @@ function AutoTradingRules({
           <li>일반 매도 주문가는 최우선 매수호가 기준, 호가가 없으면 현재가보다 1틱 아래로 주문</li>
           <li>손절 매도는 체결 우선으로 최우선 매수호가보다 3틱 낮은 공격적 지정가로 주문</li>
           <li>손절 주문이 미체결이면 다음 와쳐 주기에서 최대 3회까지 5틱, 7틱, 9틱 낮춰 재주문</li>
+          <li>3회 재주문 후에도 미체결이면 기존 주문 취소 후 시장가 매도로 최종 탈출</li>
           <li>부분체결/전체체결은 KIS 주문조회와 계좌 잔고를 같이 확인해서 반영</li>
         </ul>
       </div>
@@ -2026,6 +2027,7 @@ function translateReason(reason: unknown) {
     IntradayEntry: "장중 진입 조건 충족",
     StopLoss: "손절가 도달",
     StopLossRepriced: "손절 미체결 재주문",
+    StopLossMarketExit: "손절 최종 시장가 탈출",
     TrailingStop: "추적 손절가 도달",
     TimeExit: "최대 보유기간 도달",
     MaxHold: "최대 보유 후 청산",

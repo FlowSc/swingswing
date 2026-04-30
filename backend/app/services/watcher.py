@@ -46,6 +46,7 @@ REASON_LABELS = {
     "IntradayEntry": "장중 진입 조건 충족",
     "StopLoss": "손절가 도달",
     "StopLossRepriced": "손절 미체결 재주문",
+    "StopLossMarketExit": "손절 최종 시장가 탈출",
     "TrailingStop": "추적 손절가 도달",
     "TimeExit": "최대 보유기간 도달",
     "TakeProfit1": "1차 익절가 도달",
@@ -772,7 +773,6 @@ async def reconcile_pending_orders(
             side == "SELL"
             and reason_code == "StopLoss"
             and not dry_run
-            and reprice_attempts < STOP_LOSS_REORDER_MAX_ATTEMPTS
             and order.get("order_no")
         ):
             cancel_response = None
@@ -786,11 +786,43 @@ async def reconcile_pending_orders(
                     qty=int(order.get("qty") or 0),
                     price=int(float(order.get("price") or 0)),
                 )
+                source = (raw.get("position") if isinstance(raw, dict) else None) or order
+                if reprice_attempts >= STOP_LOSS_REORDER_MAX_ATTEMPTS:
+                    response = await place_market_sell(client, source, int(order.get("qty") or 0), reason="StopLossMarketExit", dry_run=False)
+                    final_raw = {
+                        **raw,
+                        "quote": quote,
+                        "previous_order_id": order["id"],
+                        "previous_order_no": order.get("order_no"),
+                        "previous_price": int(float(order.get("price") or 0)),
+                        "stop_loss_reprice_attempts": reprice_attempts,
+                        "order_policy": {"type": "market_exit_after_reprice_exhausted", "max_reprice_attempts": STOP_LOSS_REORDER_MAX_ATTEMPTS},
+                        "market_exit_at": now_kst().isoformat(),
+                    }
+                    await mark_pending_order(
+                        int(order["id"]),
+                        "REPLACED",
+                        {**raw, "cancel_response": cancel_response, "replacement_order_type": "market", "replaced_at": now_kst().isoformat()},
+                    )
+                    await insert_pending_order(
+                        user_id,
+                        broker_account_id,
+                        side="SELL",
+                        source=source,
+                        qty=int(order.get("qty") or 0),
+                        price=0,
+                        response=response,
+                        reason="StopLoss",
+                        raw=final_raw,
+                    )
+                    await insert_trade_log(user_id, broker_account_id, "ORDER", source, 0, int(order.get("qty") or 0), "StopLossMarketExit", {"old_order": order, "cancel_response": cancel_response, "new_order": response, **final_raw})
+                    actions.append({"action": "MARKET_EXIT", "code": code, "name": display_name(order), "qty": int(order.get("qty") or 0), "price": 0, "reason": reason_label("StopLossMarketExit"), "plan": action_plan_summary(source)})
+                    continue
+
                 reprice_ticks = STOP_LOSS_AGGRESSIVE_TICKS + ((reprice_attempts + 1) * STOP_LOSS_REORDER_EXTRA_TICKS)
                 new_price = stop_loss_order_price(quote, reprice_ticks)
                 if new_price <= 0:
                     raise RuntimeError("invalid stop-loss reprice")
-                source = (raw.get("position") if isinstance(raw, dict) else None) or order
                 new_raw = {
                     **raw,
                     "quote": quote,
@@ -862,6 +894,12 @@ async def place_sell(client, position: dict, qty: int, price: int, *, reason: st
     if dry_run:
         return {"dry_run": True, "side": "sell", "code": position["code"], "qty": qty, "price": price, "reason": reason}
     return await client.sell_limit(position["code"], qty, price)
+
+
+async def place_market_sell(client, position: dict, qty: int, *, reason: str, dry_run: bool) -> dict:
+    if dry_run:
+        return {"dry_run": True, "side": "sell", "order_type": "market", "code": position["code"], "qty": qty, "price": 0, "reason": reason}
+    return await client.sell_market(position["code"], qty)
 
 
 async def place_buy(client, signal: dict, qty: int, price: int, *, dry_run: bool) -> dict:

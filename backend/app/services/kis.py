@@ -248,6 +248,9 @@ class KisClient:
     async def sell_limit(self, code: str, qty: int, price: int) -> dict[str, Any]:
         return await self.place_cash_order(code=code, side="sell", qty=qty, price=price)
 
+    async def sell_market(self, code: str, qty: int) -> dict[str, Any]:
+        return await self.place_cash_order(code=code, side="sell", qty=qty, price=0, order_type="01")
+
     async def cancel_order(self, *, order_org_no: str, order_no: str, qty: int = 0, price: int = 0) -> dict[str, Any]:
         if not self.config.enable_orders:
             raise RuntimeError("Order cancellation is disabled.")
