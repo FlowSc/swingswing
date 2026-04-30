@@ -40,6 +40,8 @@ MIN_ATR_PCT_BONUS = 2.0
 MAX_ATR_PCT_BONUS = 12.0
 MIN_RELATIVE_STRENGTH_20D = 3.0
 MAX_DAYS_AFTER_ICHIMOKU_CROSS = 5
+CLOUD_SUPPORT_TOLERANCE_PCT = 3.0
+CLOUD_BREAKOUT_DISTANCE_PCT = 3.0
 HOLD_MIN_DAYS = 3
 HOLD_PREFERRED_DAYS = 7
 HOLD_MAX_DAYS = 15
@@ -79,6 +81,13 @@ def prepare_frame(df: pd.DataFrame) -> pd.DataFrame:
     frame["TenkanPrev"] = frame["Tenkan"].shift(1)
     frame["KijunPrev"] = frame["Kijun"].shift(1)
     frame["IchimokuBullCross"] = (frame["Tenkan"] > frame["Kijun"]) & (frame["TenkanPrev"] <= frame["KijunPrev"])
+    senkou_base_b = (frame["High"].rolling(52).max() + frame["Low"].rolling(52).min()) / 2
+    frame["SenkouSpanA"] = ((frame["Tenkan"] + frame["Kijun"]) / 2).shift(26)
+    frame["SenkouSpanB"] = senkou_base_b.shift(26)
+    frame["CloudUpper"] = frame[["SenkouSpanA", "SenkouSpanB"]].max(axis=1)
+    frame["CloudLower"] = frame[["SenkouSpanA", "SenkouSpanB"]].min(axis=1)
+    frame["CloudBullish"] = frame["SenkouSpanA"] > frame["SenkouSpanB"]
+    frame["CloudBearish"] = frame["SenkouSpanA"] < frame["SenkouSpanB"]
     frame["BBMiddle"] = frame["Close"].rolling(20).mean()
     bb_std = frame["Close"].rolling(20).std()
     frame["BBUpper"] = frame["BBMiddle"] + bb_std * 2
@@ -149,6 +158,12 @@ def score_swing_setup(
     bb_lower = float(last["BBLower"])
     bb_width = float(last["BBWidthPct"])
     bb_expansion = float(last["BBExpansionPct"])
+    senkou_a = float(last["SenkouSpanA"])
+    senkou_b = float(last["SenkouSpanB"])
+    cloud_upper = float(last["CloudUpper"])
+    cloud_lower = float(last["CloudLower"])
+    cloud_bullish = bool(last["CloudBullish"])
+    cloud_bearish = bool(last["CloudBearish"])
     low_52w = float(last["Low52W"])
     body_ratio = float(last["BodyRatioPct"])
     upper_shadow_ratio = float(last["UpperShadowRatio"])
@@ -167,6 +182,24 @@ def score_swing_setup(
     trading_value_spike_ratio = trading_value / trading_value20 if trading_value20 > 0 else 0
     distance_to_ma20 = (close - ma20) / ma20 * 100
     distance_to_kijun = (close - kijun) / kijun * 100
+    distance_to_cloud_upper = (close - cloud_upper) / cloud_upper * 100 if cloud_upper > 0 else 0
+    distance_to_cloud_lower = (close - cloud_lower) / cloud_lower * 100 if cloud_lower > 0 else 0
+    cloud_pullback_support = (
+        cloud_upper > 0
+        and cloud_bullish
+        and close > cloud_upper
+        and low <= cloud_upper * (1 + CLOUD_SUPPORT_TOLERANCE_PCT / 100)
+        and close >= prev_close
+    )
+    bearish_cloud_breakout_pressure = (
+        cloud_upper > 0
+        and cloud_lower > 0
+        and cloud_bearish
+        and cloud_lower <= close <= cloud_upper * (1 + CLOUD_BREAKOUT_DISTANCE_PCT / 100)
+        and high >= cloud_upper * (1 - CLOUD_BREAKOUT_DISTANCE_PCT / 100)
+        and float(last["Volume"]) >= vol_prev5 * STRONG_VOLUME_SPIKE_RATIO
+        and trading_value_spike_ratio >= MIN_TRADING_VALUE_SPIKE_RATIO
+    )
     days_after_cross = None
     recent_cross = frame["IchimokuBullCross"].tail(MAX_DAYS_AFTER_ICHIMOKU_CROSS + 1)
     if bool(recent_cross.any()):
@@ -193,6 +226,8 @@ def score_swing_setup(
         (relative_strength_20d >= MIN_RELATIVE_STRENGTH_20D, 2, "Market relative strength"),
         (trading_value_spike_ratio >= MIN_TRADING_VALUE_SPIKE_RATIO, 1, "Trading value spike"),
         (MIN_ATR_PCT_BONUS <= atr_pct <= MAX_ATR_PCT_BONUS, 1, "ATR in swing range"),
+        (cloud_pullback_support, 3, "Bull cloud pullback support"),
+        (bearish_cloud_breakout_pressure, 3, "Bear cloud breakout pressure"),
     ]
     for passed, points, reason in scoring_rules:
         if passed:
@@ -259,6 +294,23 @@ def score_swing_setup(
         "ATR(%)": round(atr_pct, 2),
         "Tenkan": round(tenkan, 2),
         "Kijun": round(kijun, 2),
+        "SenkouSpanA": round(senkou_a, 2),
+        "SenkouSpanB": round(senkou_b, 2),
+        "CloudUpper": round(cloud_upper, 2),
+        "CloudLower": round(cloud_lower, 2),
+        "CloudType": "bullish" if cloud_bullish else "bearish" if cloud_bearish else "neutral",
+        "DistanceToCloudUpper(%)": round(distance_to_cloud_upper, 2),
+        "DistanceToCloudLower(%)": round(distance_to_cloud_lower, 2),
+        "CloudPullbackSupport": bool(cloud_pullback_support),
+        "BearCloudBreakoutPressure": bool(bearish_cloud_breakout_pressure),
+        "SignalPatterns": ", ".join(
+            pattern
+            for pattern, active in [
+                ("양운 위 눌림목", cloud_pullback_support),
+                ("음운 돌파 직전 수급", bearish_cloud_breakout_pressure),
+            ]
+            if active
+        ),
         "DaysAfterIchimokuCross": days_after_cross,
         "DistanceToKijun(%)": round(distance_to_kijun, 2),
         "BBUpper": round(bb_upper, 2),

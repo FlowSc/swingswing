@@ -1681,6 +1681,11 @@ function SignalDetail({
         ["RSI14", raw.RSI14],
         ["일목 전환선", raw.Tenkan],
         ["일목 기준선", raw.Kijun],
+        ["구름 상단", raw.CloudUpper],
+        ["구름 하단", raw.CloudLower],
+        ["구름 상태", translateCloudType(raw.CloudType)],
+        ["구름 상단 이격", `${formatCell(raw["DistanceToCloudUpper(%)"])}%`],
+        ["패턴", raw.SignalPatterns],
         ["일목 돌파 후 경과일", raw.DaysAfterIchimokuCross],
         ["BB 폭", raw["BBWidth(%)"]],
         ["BB 확장", raw["BBExpansion(%)"]],
@@ -2120,11 +2125,21 @@ function translateReasons(reasons: unknown) {
     "Enough trading value": "거래대금 충분",
     "Volume spike": "거래량 증가",
     "Strong volume spike": "거래량 강한 증가",
+    "Bull cloud pullback support": "양운 위 눌림목 지지",
+    "Bear cloud breakout pressure": "음운 돌파 직전 수급",
     "KOSPI above MA5": "코스피 5일선 위",
     KOSPI_TOP500: "코스피 시총 상위권",
     KOSDAQ150: "코스닥150 구성",
   };
   return value.split(",").map((item) => map[item.trim()] || item.trim()).filter(Boolean).join(", ");
+}
+
+function translateCloudType(value: unknown) {
+  const type = String(value || "");
+  if (type === "bullish") return "양운";
+  if (type === "bearish") return "음운";
+  if (type === "neutral") return "중립";
+  return type || "-";
 }
 
 function formatDateTime(value: unknown) {
