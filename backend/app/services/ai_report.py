@@ -19,6 +19,10 @@ INVESTMENT_NOTICE_TEXT = (
     "모든 투자 판단과 책임은 투자자 본인에게 있습니다. 주식 투자는 원금 손실 가능성이 있습니다."
 )
 INVESTMENT_NOTICE_HTML = f'<p style="color:#d93025;">{INVESTMENT_NOTICE_TEXT}</p>'
+HANJA_REPLACEMENTS = {
+    "乖離": "괴리",
+    "·": "/",
+}
 REPORT_INSTRUCTIONS = """
 너는 한국 주식 시장을 분석하는 스윙 트레이딩 리포트 작성자다.
 
@@ -31,6 +35,7 @@ REPORT_INSTRUCTIONS = """
 - 문체는 전문적이지만 일반 투자자도 이해할 수 있게 쓴다.
 - 문장 어미는 딱딱한 보고서체 대신 "~했습니다", "~볼 수 있습니다", "~확인했습니다"처럼 부드러운 설명체로 작성한다.
 - 독자에게 말하듯 자연스럽게 설명하되, 과장된 홍보 문구는 쓰지 않는다.
+- 한자를 사용하지 않는다. 예: "乖離"가 아니라 "괴리" 또는 "이격"이라고 쓴다.
 - 전문용어가 나오면 처음 등장하는 문단에서 괄호로 쉬운 설명을 붙인다. 예: RSI(최근 가격 상승/하락 압력을 숫자로 보여주는 지표), ATR(주가가 하루에 평균적으로 얼마나 흔들리는지 보는 변동성 지표), 일목균형표(추세 전환과 지지/저항을 함께 보는 보조지표), 볼린저 밴드(가격이 평균에서 얼마나 벌어졌는지 보는 변동성 지표).
 - 각 섹션마다 숫자만 나열하지 말고 "이 값이 초보 투자자에게 어떤 의미인지"를 1~2문장으로 풀어서 설명한다.
 - 너무 짧게 요약하지 말고, 각 종목별로 판단 근거와 리스크를 구체적으로 설명한다.
@@ -117,6 +122,7 @@ REPORT_INSTRUCTIONS = """
 - "매수해야 한다" 대신 "관찰할 수 있다", "조건 충족 여부를 확인할 필요가 있다"라고 표현한다.
 - 데이터가 없는 항목은 추측하지 말고 "제공 데이터 기준 확인 불가"라고 쓴다.
 - 전문용어는 반드시 쉬운 해설을 함께 붙인다.
+- 한자는 절대 사용하지 않는다.
 - 전체 리포트는 HTML fragment만 출력한다.
 """.strip()
 
@@ -132,6 +138,7 @@ SIGNAL_REPORT_INSTRUCTIONS = """
 - 개별 기업 하나만 다루며, 다른 후보 비교표나 핵심 후보 요약표는 절대 작성하지 않는다.
 - 문장 어미는 딱딱한 보고서체 대신 "~했습니다", "~볼 수 있습니다", "~확인했습니다"처럼 부드러운 설명체로 작성한다.
 - 독자에게 말하듯 자연스럽게 설명하되, 과장된 홍보 문구는 쓰지 않는다.
+- 한자를 사용하지 않는다. 예: "乖離"가 아니라 "괴리" 또는 "이격"이라고 쓴다.
 - 전문용어가 나오면 처음 등장하는 문단에서 괄호로 쉬운 설명을 붙인다. 예: RSI(최근 가격 상승/하락 압력을 숫자로 보여주는 지표), ATR(주가가 하루에 평균적으로 얼마나 흔들리는지 보는 변동성 지표), 일목균형표(추세 전환과 지지/저항을 함께 보는 보조지표), 볼린저 밴드(가격이 평균에서 얼마나 벌어졌는지 보는 변동성 지표).
 - 각 섹션마다 숫자만 나열하지 말고 "이 값이 초보 투자자에게 어떤 의미인지"를 1~2문장으로 풀어서 설명한다.
 - 전체 3,000자 이상으로 상세하게 작성한다.
@@ -186,6 +193,7 @@ SIGNAL_REPORT_INSTRUCTIONS = """
 - "무조건", "확실히", "급등", "대박", "보장" 같은 표현은 사용하지 않는다.
 - "매수해야 한다" 대신 "관찰할 수 있다", "조건 충족 여부를 확인할 필요가 있다"라고 표현한다.
 - 전문용어는 반드시 쉬운 해설을 함께 붙인다.
+- 한자는 절대 사용하지 않는다.
 - 전체 리포트는 HTML fragment만 출력한다.
 """.strip()
 
@@ -289,6 +297,7 @@ def format_openai_error(response: httpx.Response) -> str:
 
 def clean_html_report(text: str) -> str:
     stripped = strip_code_fence(text)
+    stripped = replace_disallowed_hanja(stripped)
     stripped = ensure_investment_notice(stripped)
     return stripped
 
@@ -311,6 +320,13 @@ def ensure_investment_notice(html: str) -> str:
     if html.endswith("</article>"):
         return html.removesuffix("</article>").rstrip() + f"\n\n{INVESTMENT_NOTICE_HTML}\n</article>"
     return html.rstrip() + f"\n\n{INVESTMENT_NOTICE_HTML}"
+
+
+def replace_disallowed_hanja(html: str) -> str:
+    cleaned = html
+    for hanja, korean in HANJA_REPLACEMENTS.items():
+        cleaned = cleaned.replace(hanja, korean)
+    return cleaned
 
 
 async def send_daily_signal_report(signals: list[dict], trade_date: date) -> int:
