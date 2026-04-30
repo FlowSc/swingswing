@@ -872,7 +872,7 @@ function Dashboard({ session }: { session: Session }) {
         <DataPanel
           title="와쳐 실행 로그"
           rows={watcherRuns.map(normalizeWatcherRunRow)}
-          columns={["created_at", "mode", "orders_allowed_ko", "cash", "daily_slots", "action_count", "skip_reason_ko"]}
+          columns={["created_at", "mode", "orders_allowed_ko", "cash", "remaining_daily_slots", "daily_slots", "action_count", "skip_reason_ko"]}
           maxRows={30}
           headerAction={(
             <button className="ghost small" type="button" disabled={pending === "watcherRunsRefresh"} onClick={refreshWatcherRunsOnly}>
@@ -1186,10 +1186,12 @@ function AutoTradingRules({
         <ul>
           <li>오늘 공용 시그널 점수 {strategy.min_score}점 이상</li>
           <li>14:30~15:20 사이에만 신규 매수</li>
+          <li>하루 신규 매수 {strategy.max_new_positions_per_day}종목 제한은 오늘 체결 포지션과 미체결 매수 주문을 합산해서 적용</li>
           <li>점수 높은 순서로 확인하되 장중 가격 필터 통과 필요</li>
           <li>현재가가 진입가 {formatPct(strategy.min_entry_discount - 1)}~+{formatPct(strategy.max_entry_premium - 1)} 범위 안</li>
           <li>일목 기준선 필터 {strategy.use_kijun_filter ? "사용" : "미사용"}, 볼린저 상단 필터 {strategy.use_bb_upper_filter ? "사용" : "미사용"}</li>
           <li>당일 캔들 위치 필터 {strategy.use_day_candle_filter ? `사용: 고점 대비 ${formatPct(strategy.max_pullback_from_day_high)} 이상 밀리면 제외` : "미사용"}</li>
+          <li>매수 주문가는 최우선 매도호가 기준, 호가가 없으면 현재가보다 1틱 위로 주문</li>
         </ul>
       </div>
       <div>
@@ -1207,11 +1209,14 @@ function AutoTradingRules({
         <ul>
           <li>09:20~15:20 동안 5분 단위 감시</li>
           <li>손절가 도달 시 전량 매도</li>
+          <li>매수 후 30분 동안은 손절을 제외한 전략성 매도 제한</li>
           <li>1차/2차 익절가 도달 시 일부 매도</li>
           <li>익절 후 추적 손절 도달 시 잔량 매도</li>
           <li>1차 익절 후 본전 손절 {strategy.use_breakeven_after_tp1 ? "사용" : "미사용"}</li>
           <li>일목 기준선 이탈 매도 {strategy.use_kijun_exit ? "사용" : "미사용"}</li>
           <li>최대 보유일 도달 시 전량 매도</li>
+          <li>매도 주문가는 최우선 매수호가 기준, 호가가 없으면 현재가보다 1틱 아래로 주문</li>
+          <li>부분체결/전체체결은 KIS 주문조회와 계좌 잔고를 같이 확인해서 반영</li>
         </ul>
       </div>
       {liveBlocked && (
@@ -1680,6 +1685,8 @@ function WatcherRunDetail({ row }: { row: Record<string, unknown> }) {
         ["매수 시간대", row.entry_window_open ? "열림" : "아님"],
         ["관리 시간대", row.manage_window_open ? "열림" : "아님"],
         ["스킵 사유", row.skip_reason_ko],
+        ["실행 단계", raw.stage],
+        ["오류", raw.error],
       ]} />
       <DetailSection title="매수 가능 상태" items={[
         ["예수금", row.cash],
@@ -1688,6 +1695,9 @@ function WatcherRunDetail({ row }: { row: Record<string, unknown> }) {
         ["DB 포지션", row.open_positions_count],
         ["KIS 보유종목", row.kis_holdings_count],
         ["미체결 주문", row.pending_orders_count],
+        ["오늘 진입 종목", row.today_entry_count],
+        ["오늘 미체결 매수", row.today_pending_buy_count],
+        ["오늘 남은 신규 슬롯", row.remaining_daily_slots],
         ["보유 가능 슬롯", row.available_slots],
         ["금액 기준 슬롯", row.affordable_slots],
         ["오늘 신규 가능 슬롯", row.daily_slots],
@@ -1884,6 +1894,7 @@ function translateWatcherSkipReason(reason: unknown) {
     no_shared_signals: "오늘 시그널 없음",
     no_buy_slots: "매수 가능 슬롯 없음",
     no_buy_order_created: "조건 충족 종목 없음",
+    watcher_error: "와쳐 실행 오류",
     completed: "실행 완료",
   };
   return map[value] || value || "-";

@@ -190,6 +190,9 @@ create table if not exists watcher_runs (
   open_positions_count integer not null default 0,
   kis_holdings_count integer not null default 0,
   pending_orders_count integer not null default 0,
+  today_entry_count integer not null default 0,
+  today_pending_buy_count integer not null default 0,
+  remaining_daily_slots integer,
   available_slots integer,
   affordable_slots integer,
   daily_slots integer,
@@ -259,6 +262,9 @@ alter table ai_reports add column if not exists html text not null default '';
 alter table ai_reports alter column markdown set default '';
 alter table ai_reports alter column markdown set not null;
 alter table watcher_runs add column if not exists cooldown_skip_count integer not null default 0;
+alter table watcher_runs add column if not exists today_entry_count integer not null default 0;
+alter table watcher_runs add column if not exists today_pending_buy_count integer not null default 0;
+alter table watcher_runs add column if not exists remaining_daily_slots integer;
 
 create index if not exists idx_positions_user_account_status on positions (user_id, broker_account_id, status);
 create index if not exists idx_trade_logs_user_account_created_at on trade_logs (user_id, broker_account_id, created_at desc);

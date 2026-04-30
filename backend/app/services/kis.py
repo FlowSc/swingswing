@@ -336,6 +336,8 @@ def parse_quote(payload: dict[str, Any]) -> dict[str, int]:
     output = payload.get("output", {})
     return {
         "current_price": _parse_int_field(output, "stck_prpr", "STCK_PRPR"),
+        "ask_price": _parse_int_field(output, "askp1", "ASKP1", "stck_askp1", "STCK_ASKP1", "askp", "ASKP"),
+        "bid_price": _parse_int_field(output, "bidp1", "BIDP1", "stck_bidp1", "STCK_BIDP1", "bidp", "BIDP"),
         "day_high": _parse_int_field(output, "stck_hgpr", "STCK_HGPR"),
         "day_low": _parse_int_field(output, "stck_lwpr", "STCK_LWPR"),
         "accumulated_volume": _parse_int_field(output, "acml_vol", "ACML_VOL"),

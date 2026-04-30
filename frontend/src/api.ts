@@ -184,6 +184,9 @@ export type WatcherRun = {
   open_positions_count: number;
   kis_holdings_count: number;
   pending_orders_count: number;
+  today_entry_count?: number;
+  today_pending_buy_count?: number;
+  remaining_daily_slots?: number | null;
   available_slots?: number | null;
   affordable_slots?: number | null;
   daily_slots?: number | null;
