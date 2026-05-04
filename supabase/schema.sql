@@ -28,25 +28,6 @@ create table if not exists user_memberships (
   updated_at timestamptz not null default now()
 );
 
-create table if not exists signals (
-  id bigint generated always as identity primary key,
-  trade_date date not null,
-  user_id uuid not null,
-  code text not null,
-  name text not null,
-  entry numeric,
-  stop_loss numeric,
-  take_profit_1 numeric,
-  take_profit_2 numeric,
-  trailing_stop numeric,
-  score numeric,
-  raw jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
-);
-
-create unique index if not exists uq_signals_trade_date_user_code
-  on signals (trade_date, user_id, code);
-
 create table if not exists shared_signals (
   id bigint generated always as identity primary key,
   trade_date date not null,
@@ -281,7 +262,6 @@ create unique index if not exists uq_trade_decision_logs_daily_reason
 create unique index if not exists uq_ai_reports_daily_type_code
   on ai_reports (trade_date, report_type, code);
 
-create index if not exists idx_signals_trade_date_user on signals (trade_date, user_id);
 create index if not exists idx_shared_signals_trade_date on shared_signals (trade_date, score desc);
 create index if not exists idx_scan_runs_created_at on scan_runs (created_at desc);
 create index if not exists idx_backtest_runs_user_created_at on backtest_runs (requested_by, created_at desc);
@@ -367,7 +347,6 @@ where trade_logs.broker_account_id is null
 
 alter table broker_accounts enable row level security;
 alter table user_memberships enable row level security;
-alter table signals enable row level security;
 alter table shared_signals enable row level security;
 alter table scan_runs enable row level security;
 alter table strategy_settings enable row level security;
@@ -386,11 +365,6 @@ create policy "Users can read own broker accounts"
 drop policy if exists "Users can read own membership" on user_memberships;
 create policy "Users can read own membership"
   on user_memberships for select
-  using (auth.uid() = user_id);
-
-drop policy if exists "Users can read own signals" on signals;
-create policy "Users can read own signals"
-  on signals for select
   using (auth.uid() = user_id);
 
 drop policy if exists "Users can read shared signals" on shared_signals;
@@ -455,3 +429,4 @@ create policy "Report members can read ai reports"
   );
 
 drop table if exists broker_credentials;
+drop table if exists signals cascade;
