@@ -195,7 +195,7 @@ async def get_decrypted_broker_credentials_by_account_id(account_id: str) -> dic
     if not rows:
         return None
     row = rows[0]
-    if not row.get("enabled") or not row.get("is_active"):
+    if not row.get("enabled"):
         return None
     if (row.get("mode") or "paper") == "live" and not await can_use_live_trading_for_user_id(row["user_id"]):
         return None
@@ -204,7 +204,7 @@ async def get_decrypted_broker_credentials_by_account_id(account_id: str) -> dic
 
 async def list_enabled_broker_credentials() -> list[dict]:
     rest = SupabaseRest()
-    rows = await rest.select(ACCOUNTS_TABLE, filters={"enabled": "eq.true", "is_active": "eq.true"})
+    rows = await rest.select(ACCOUNTS_TABLE, filters={"enabled": "eq.true"})
     if rows:
         credentials: list[dict] = []
         for row in rows:
@@ -216,7 +216,7 @@ async def list_enabled_broker_credentials() -> list[dict]:
 
 
 async def list_enabled_broker_accounts_for_watch() -> list[dict]:
-    rows = await SupabaseRest().select(ACCOUNTS_TABLE, filters={"enabled": "eq.true", "is_active": "eq.true"})
+    rows = await SupabaseRest().select(ACCOUNTS_TABLE, filters={"enabled": "eq.true"})
     accounts: list[dict] = []
     for row in rows:
         if (row.get("mode") or "paper") == "live" and not await can_use_live_trading_for_user_id(row["user_id"]):
