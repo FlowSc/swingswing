@@ -243,7 +243,11 @@ export type BacktestTrade = {
 };
 
 export type BacktestResult = {
+  source?: string;
   days: number;
+  generated_signals?: number;
+  skipped_symbols?: number;
+  error?: string;
   signals_tested: number;
   win_count: number;
   loss_count: number;

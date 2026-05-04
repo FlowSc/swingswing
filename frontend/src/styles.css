@@ -32,6 +32,14 @@ select {
   font: inherit;
 }
 
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
 .page {
   width: min(1280px, calc(100% - 32px));
   margin: 0 auto;
@@ -199,6 +207,7 @@ button {
   color: #fffaf0;
   cursor: pointer;
   font-weight: 800;
+  touch-action: manipulation;
 }
 
 button:hover {
@@ -471,6 +480,31 @@ a {
   font-weight: 800;
 }
 
+.watcher-issue-panel {
+  min-height: auto;
+}
+
+.watcher-issue-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(167, 59, 36, 0.18);
+  border-radius: 18px;
+  background: rgba(167, 59, 36, 0.08);
+}
+
+.watcher-issue-card strong {
+  color: var(--red);
+}
+
+.watcher-issue-card span,
+.watcher-issue-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .strategy-panel {
   display: grid;
   gap: 16px;
@@ -684,6 +718,8 @@ a {
 
 .table-wrap {
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
 }
 
 .table-more {
@@ -866,6 +902,28 @@ th {
     padding: 20px 0;
   }
 
+  .hero {
+    align-items: start;
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+
+  h1 {
+    font-size: clamp(38px, 16vw, 62px);
+    letter-spacing: -0.07em;
+  }
+
+  .hero-card {
+    min-width: 0;
+    padding: 16px;
+    border-radius: 22px;
+  }
+
+  .hero-card strong {
+    margin-top: 0;
+    font-size: 18px;
+  }
+
   .panel {
     padding: 18px;
     border-radius: 22px;
@@ -879,5 +937,320 @@ th {
   .metric-grid,
   .metric-grid.compact {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .topbar,
+  .section-title,
+  .data-panel-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .topbar .ghost,
+  .section-title .ghost,
+  .data-panel-head .ghost {
+    width: 100%;
+  }
+
+  .dashboard-nav {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    gap: 8px;
+    margin-inline: -10px;
+    padding: 8px 10px;
+    overflow-x: auto;
+    background: rgba(231, 223, 207, 0.92);
+    backdrop-filter: blur(12px);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .nav-card {
+    flex: 0 0 136px;
+    min-height: 68px;
+    padding: 12px;
+    border-radius: 18px;
+  }
+
+  .nav-card strong {
+    font-size: 15px;
+  }
+
+  .nav-card span {
+    font-size: 11px;
+  }
+
+  .command button,
+  .telegram-link,
+  .primary.strategy-save {
+    width: 100%;
+  }
+
+  .admin-command {
+    grid-template-columns: 1fr;
+  }
+
+  .account-switcher,
+  .strategy-grid,
+  .daily-panel .metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .panel-actions,
+  .backtest-controls {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .panel-actions > *,
+  .backtest-controls > *,
+  .compact-select {
+    width: 100%;
+  }
+
+  .table-wrap {
+    margin-inline: -8px;
+    padding-inline: 8px;
+  }
+
+  table {
+    min-width: 720px;
+  }
+
+  .detail-popover {
+    max-height: calc(100dvh - 20px);
+    padding: 18px;
+    border-radius: 22px;
+  }
+}
+
+@media (max-width: 640px) {
+  body {
+    background:
+      radial-gradient(circle at 8% 0%, rgba(201, 240, 90, 0.38), transparent 18rem),
+      linear-gradient(135deg, #eee7d8 0%, #d8d0bd 100%);
+  }
+
+  .page {
+    width: 100%;
+    padding: 14px 10px 28px;
+  }
+
+  .hero {
+    padding: 0 2px;
+  }
+
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+  }
+
+  h2 {
+    font-size: 19px;
+  }
+
+  .panel {
+    padding: 15px;
+    border-radius: 20px;
+  }
+
+  .auth-grid,
+  .grid,
+  .dashboard,
+  .page-stack {
+    gap: 12px;
+  }
+
+  .topbar {
+    padding: 15px;
+    border-radius: 20px;
+  }
+
+  .explain {
+    min-height: auto;
+  }
+
+  .explain p {
+    font-size: 15px;
+  }
+
+  input,
+  textarea,
+  select,
+  button,
+  .telegram-link {
+    min-height: 46px;
+  }
+
+  .metric-grid,
+  .metric-grid.compact {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-card strong {
+    font-size: 19px;
+  }
+
+  .strategy-checks,
+  .preset-row,
+  .skip-summary,
+  .account-summary {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .check-row,
+  .skip-summary strong,
+  .skip-summary span,
+  .account-summary span,
+  .account-summary strong {
+    border-radius: 14px;
+  }
+
+  .overlay-backdrop {
+    align-items: end;
+    padding: 10px;
+  }
+
+  .detail-popover {
+    width: 100%;
+    max-height: calc(100dvh - 20px);
+  }
+
+  .detail-head {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 380px) {
+  body {
+    min-width: 0;
+  }
+
+  .page {
+    padding: 10px 8px 24px;
+  }
+
+  .hero {
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  h1 {
+    font-size: clamp(34px, 17vw, 46px);
+    line-height: 0.96;
+  }
+
+  h2 {
+    font-size: 18px;
+  }
+
+  .hero-card,
+  .panel,
+  .topbar {
+    border-radius: 18px;
+  }
+
+  .hero-card {
+    padding: 12px;
+  }
+
+  .hero-card strong {
+    font-size: 16px;
+  }
+
+  .panel {
+    padding: 12px;
+  }
+
+  .dashboard-nav {
+    margin-inline: -8px;
+    padding: 7px 8px;
+  }
+
+  .nav-card {
+    flex-basis: 116px;
+    min-height: 60px;
+    padding: 10px;
+    border-radius: 16px;
+  }
+
+  .nav-card strong {
+    font-size: 14px;
+  }
+
+  .nav-card span {
+    display: none;
+  }
+
+  input,
+  textarea,
+  select {
+    padding: 11px 12px;
+    border-radius: 14px;
+  }
+
+  button,
+  .telegram-link {
+    padding: 11px 13px;
+    font-size: 14px;
+  }
+
+  .toggle {
+    gap: 4px;
+    padding: 4px;
+  }
+
+  .metric-card,
+  .saved-box,
+  .strategy-summary,
+  .rule-box,
+  .watcher-issue-card,
+  .account-chip,
+  .detail-section {
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .metric-card strong {
+    font-size: 18px;
+  }
+
+  .rule-box ul {
+    padding-left: 16px;
+    font-size: 12px;
+  }
+
+  .table-wrap {
+    margin-inline: -12px;
+    padding-inline: 12px;
+  }
+
+  table {
+    min-width: 560px;
+    font-size: 12px;
+  }
+
+  th,
+  td {
+    padding: 8px 6px;
+  }
+
+  .table-pagination {
+    justify-content: center;
+  }
+
+  .detail-popover {
+    padding: 14px;
+    border-radius: 20px 20px 16px 16px;
+  }
+
+  .detail-head {
+    gap: 10px;
+  }
+
+  .detail-head .ghost {
+    padding: 9px 12px;
   }
 }

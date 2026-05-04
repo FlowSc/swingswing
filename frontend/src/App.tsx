@@ -236,7 +236,8 @@ function Dashboard({ session }: { session: Session }) {
     try {
       const result = await api.watcherRuns(session);
       setWatcherRuns(result);
-      setStatus({ type: "info", message: `와쳐 실행 로그 새로고침 완료: ${result.length}개` });
+      const issue = latestWatcherIssue(result);
+      setStatus({ type: issue ? "error" : "info", message: issue ? `와쳐 오류 확인: ${formatCell(issue.reason)}` : "최근 와쳐 오류 없음" });
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -306,7 +307,7 @@ function Dashboard({ session }: { session: Session }) {
       setBacktest(result);
       setStatus({
         type: "info",
-        message: `백테스트 완료: ${result.signals_tested}건 / 승률 ${result.win_rate}% / 평균 ${result.avg_return_pct}%`,
+        message: `백테스트 완료: 재생성 후보 ${result.generated_signals || 0}개 / 검증 ${result.signals_tested}건 / 승률 ${result.win_rate}% / 평균 ${result.avg_return_pct}%`,
       });
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
@@ -544,6 +545,7 @@ function Dashboard({ session }: { session: Session }) {
   const shouldShowBrokerForm = !brokerStatus?.configured || editingBroker;
   const shouldShowTelegramForm = Boolean(brokerStatus?.configured && (!brokerStatus.telegram_configured || editingTelegram));
   const pages = dashboardPages({ isScanAdmin, canUseReports });
+  const watcherIssue = latestWatcherIssue(watcherRuns);
   const accountSection = (
     <div className="grid two">
       <form className="panel" onSubmit={saveBroker}>
@@ -802,22 +804,13 @@ function Dashboard({ session }: { session: Session }) {
                 row,
               })}
             />
-            <DataPanel
-              title="와쳐 실행 로그"
-              rows={watcherRuns.map(normalizeWatcherRunRow)}
-              columns={["created_at", "mode", "orders_allowed_ko", "cash", "remaining_daily_slots", "daily_slots", "action_count", "skip_reason_ko"]}
-              maxRows={30}
-              headerAction={(
-                <button className="ghost small" type="button" disabled={pending === "watcherRunsRefresh"} onClick={refreshWatcherRunsOnly}>
-                  {pending === "watcherRunsRefresh" ? "갱신 중" : "새로고침"}
-                </button>
-              )}
-              onRowClick={(row) => setDetail({
-                title: `${formatCell(row.created_at)} 와쳐 실행`,
-                kind: "watcher",
-                row,
-              })}
-            />
+            {watcherIssue && (
+              <WatcherIssuePanel
+                issue={watcherIssue}
+                refreshing={pending === "watcherRunsRefresh"}
+                onRefresh={refreshWatcherRunsOnly}
+              />
+            )}
           </div>
         </div>
       )}
@@ -956,6 +949,35 @@ function DashboardNav({
         </button>
       ))}
     </nav>
+  );
+}
+
+function WatcherIssuePanel({
+  issue,
+  refreshing,
+  onRefresh,
+}: {
+  issue: Record<string, unknown>;
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <section className="panel watcher-issue-panel">
+      <div className="data-panel-head">
+        <div>
+          <h2>와쳐 오류</h2>
+          <p className="command-copy">자동매매 감시 중 확인이 필요한 오류만 표시합니다.</p>
+        </div>
+        <button className="ghost small" type="button" disabled={refreshing} onClick={onRefresh}>
+          {refreshing ? "확인 중" : "상태 확인"}
+        </button>
+      </div>
+      <div className="watcher-issue-card">
+        <strong>{formatCell(issue.reason)}</strong>
+        <span>{formatCell(issue.created_at)}</span>
+        {issue.error ? <p>{formatCell(issue.error)}</p> : null}
+      </div>
+    </section>
   );
 }
 
@@ -1207,6 +1229,7 @@ function BacktestPanel({
 }) {
   const summary = result
     ? [
+        ["생성 후보", result.generated_signals || 0],
         ["검증 건수", result.signals_tested],
         ["승률", `${result.win_rate}%`],
         ["평균 수익률", `${result.avg_return_pct}%`],
@@ -1232,9 +1255,11 @@ function BacktestPanel({
         </div>
       </div>
       {!result ? (
-        <p className="empty">공용 시그널 기준으로 진입가, 손절가, 익절가, 최대 보유일을 단순 검증합니다.</p>
+        <p className="empty">저장된 시그널이 없어도 과거 가격 데이터를 다시 스캔해 당시 조건으로 후보를 재생성한 뒤, 진입가·손절가·익절가·최대 보유일을 검증합니다.</p>
       ) : (
         <>
+          {result.error && <p className="empty">{result.error}</p>}
+          <p className="hint">과거 재스캔 기반입니다. 저장된 공용 시그널이 아니라 각 날짜의 가격 데이터로 전략 조건을 다시 계산합니다.</p>
           <div className="metric-grid compact">
             {summary.map(([label, value]) => (
               <div className="metric-card" key={label}>
@@ -1358,7 +1383,7 @@ function labelForPending(key: string) {
     signalReport: "개별 기업 AI 리포트 생성 큐 등록",
     reportDownload: "종합 리포트 다운로드",
     signalReportDownload: "개별 리포트 다운로드",
-    watcherRunsRefresh: "와쳐 실행 로그 새로고침",
+    watcherRunsRefresh: "와쳐 상태 확인",
   };
   return labels[key] || "요청";
 }
@@ -2075,6 +2100,21 @@ function normalizeWatcherRunRow(row: WatcherRun): Record<string, unknown> {
     skip_reason_ko: translateWatcherSkipReason(row.skip_reason),
     created_at: formatDateTime(row.created_at),
   };
+}
+
+function latestWatcherIssue(rows: WatcherRun[]): Record<string, unknown> | null {
+  for (const row of rows) {
+    const raw = asRecord(row.raw);
+    const hasError = row.skip_reason === "watcher_error" || Boolean(raw.error);
+    if (!hasError) continue;
+    const normalized = normalizeWatcherRunRow(row);
+    return {
+      ...normalized,
+      reason: normalized.skip_reason_ko || "와쳐 실행 오류",
+      error: raw.error || normalized.skip_reason_ko,
+    };
+  }
+  return null;
 }
 
 function normalizeAiReportStatusRow(row: AiReportStatus): Record<string, unknown> {
