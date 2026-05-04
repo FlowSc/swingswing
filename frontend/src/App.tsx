@@ -45,6 +45,7 @@ import {
   delay,
   enrichPlanPercentRow,
   enrichTradeLogRow,
+  exportBacktestTradesCsv,
   formatCell,
   formatDateTime,
   latestWatcherIssue,
@@ -602,6 +603,25 @@ function Dashboard({ session }: { session: Session }) {
     }
   }
 
+  async function downloadBacktestTrades(row: Record<string, unknown>) {
+    const runId = row.run_id || row.job_id;
+    if (!runId) {
+      setStatus({ type: "error", message: "다운로드할 백테스트 실행 ID가 없습니다." });
+      return;
+    }
+    setPending("backtestExport");
+    setStatus({ type: "info", message: "백테스트 전체 거래 CSV 생성 중..." });
+    try {
+      const trades = await api.historicalBacktestTrades(session, String(runId));
+      exportBacktestTradesCsv(trades, `backtest_${runId}_trades.csv`);
+      setStatus({ type: "info", message: `백테스트 전체 거래 다운로드 완료: ${trades.length}건` });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? cleanErrorMessage(error.message) : String(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function refresh() {
     try {
       const entitlementResult = await api.getEntitlements(session);
@@ -1097,6 +1117,7 @@ function Dashboard({ session }: { session: Session }) {
           onDownloadSignalReport={downloadSingleSignalReport}
           onDownloadSignalBlogReport={downloadSingleSignalBlogReport}
           onDownloadReportStatus={downloadReportStatus}
+          onDownloadBacktestTrades={downloadBacktestTrades}
           onForceLiquidatePosition={forceLiquidatePosition}
           aiReports={aiReports}
           onClose={() => setDetail(null)}

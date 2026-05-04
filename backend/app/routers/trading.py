@@ -335,6 +335,24 @@ async def list_historical_backtest_runs(user: CurrentUser = Depends(get_current_
     return [backtest_run_to_job(row) for row in rows]
 
 
+@router.get("/backtest/historical/runs/{run_id}/trades")
+async def list_historical_backtest_trades(
+    run_id: int,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    await require_admin_access(user.id, user.email)
+    rows = await SupabaseRest().select("backtest_runs", filters={"id": f"eq.{run_id}", "requested_by": f"eq.{user.id}"}, limit=1)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Backtest run not found")
+    return await SupabaseRest().select(
+        "backtest_trades",
+        columns="trade_date,entry_date,code,name,score,entry,exit_price,return_pct,hold_days,exit_reason,raw",
+        filters={"backtest_run_id": f"eq.{run_id}"},
+        order="return_pct.desc",
+        limit=5000,
+    )
+
+
 def now_iso() -> str:
     return datetime.now(ZoneInfo(get_settings().timezone)).isoformat()
 

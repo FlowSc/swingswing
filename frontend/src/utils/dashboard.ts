@@ -359,6 +359,45 @@ export function formatDateTime(value: unknown) {
   }).format(date);
 }
 
+export function exportBacktestTradesCsv(rows: Array<Record<string, unknown>>, filename: string) {
+  const columns: Array<[string, string]> = [
+    ["trade_date", "시그널일"],
+    ["entry_date", "진입일"],
+    ["code", "종목코드"],
+    ["name", "종목명"],
+    ["score", "점수"],
+    ["entry", "진입가"],
+    ["exit_price", "청산가"],
+    ["return_pct", "수익률"],
+    ["hold_days", "보유일"],
+    ["exit_reason_ko", "청산사유"],
+    ["exit_reason", "청산사유코드"],
+  ];
+  const csvRows = [
+    columns.map(([, label]) => label),
+    ...rows.map((row) => {
+      const raw = asRecord(row.raw);
+      const source: Record<string, unknown> = { ...raw, ...row, exit_reason_ko: translateReason(row.exit_reason) };
+      return columns.map(([key]) => source[key]);
+    }),
+  ];
+  const csv = `\uFEFF${csvRows.map((row) => row.map(csvCell).join(",")).join("\n")}`;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename.replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, "_");
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function csvCell(value: unknown) {
+  const text = value === null || value === undefined ? "" : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
 export function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

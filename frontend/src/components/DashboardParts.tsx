@@ -442,6 +442,7 @@ export function labelForPending(key: string) {
     telegramNotice: "공용 텔레그램 공지 발송",
     signals: "시그널 조회",
     backtest: "백테스트",
+    backtestExport: "백테스트 전체 거래 다운로드",
     report: "AI 리포트 생성 큐 등록",
     signalReport: "개별 기업 AI 리포트 생성 큐 등록",
     reportDownload: "종합 리포트 다운로드",

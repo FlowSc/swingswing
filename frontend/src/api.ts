@@ -415,4 +415,6 @@ export const api = {
   getHistoricalBacktestJob: (session: Session, jobId: string) =>
     request<BacktestJob>(`/backtest/historical/jobs/${encodeURIComponent(jobId)}`, session),
   historicalBacktestRuns: (session: Session) => request<BacktestJob[]>("/backtest/historical/runs", session),
+  historicalBacktestTrades: (session: Session, runId: number | string) =>
+    request<Array<Record<string, unknown>>>(`/backtest/historical/runs/${encodeURIComponent(String(runId))}/trades`, session),
 };

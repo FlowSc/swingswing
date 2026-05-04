@@ -31,6 +31,7 @@ export function DetailOverlay({
   onDownloadSignalReport,
   onDownloadSignalBlogReport,
   onDownloadReportStatus,
+  onDownloadBacktestTrades,
   onForceLiquidatePosition,
   aiReports,
   onClose,
@@ -43,6 +44,7 @@ export function DetailOverlay({
   onDownloadSignalReport: (row: Record<string, unknown>) => void;
   onDownloadSignalBlogReport: (row: Record<string, unknown>) => void;
   onDownloadReportStatus: (row: Record<string, unknown>) => void;
+  onDownloadBacktestTrades: (row: Record<string, unknown>) => void;
   onForceLiquidatePosition: (row: Record<string, unknown>) => void;
   aiReports: AiReportStatus[];
   onClose: () => void;
@@ -91,7 +93,13 @@ export function DetailOverlay({
         {detail.kind === "account" && <AccountDetail row={detail.row} />}
         {detail.kind === "decision" && <DecisionDetail row={detail.row} />}
         {detail.kind === "watcher" && <WatcherRunDetail row={detail.row} />}
-        {detail.kind === "backtest" && <BacktestRunDetail row={detail.row} />}
+        {detail.kind === "backtest" && (
+          <BacktestRunDetail
+            row={detail.row}
+            pending={pending === "backtestExport"}
+            onDownloadTrades={() => onDownloadBacktestTrades(detail.row)}
+          />
+        )}
         {detail.kind === "report" && (
           <ReportStatusDetail
             row={detail.row}
@@ -513,7 +521,15 @@ export function WatcherRunDetail({ row }: { row: Record<string, unknown> }) {
   );
 }
 
-export function BacktestRunDetail({ row }: { row: Record<string, unknown> }) {
+export function BacktestRunDetail({
+  row,
+  pending,
+  onDownloadTrades,
+}: {
+  row: Record<string, unknown>;
+  pending: boolean;
+  onDownloadTrades: () => void;
+}) {
   const progress = asRecord(row.progress);
   const result = asRecord(row.result);
   const trades = Array.isArray(result.trades) ? result.trades.map((item) => asRecord(item)) : [];
@@ -536,6 +552,9 @@ export function BacktestRunDetail({ row }: { row: Record<string, unknown> }) {
   const tradeColumns = ["date", "code", "name", "score", "entry", "exit", "return_pct", "hold_days", "reason"];
   return (
     <div className="detail-grid">
+      <button className="primary detail-action" type="button" disabled={pending || row.status !== "completed"} onClick={onDownloadTrades}>
+        {pending ? "CSV 생성 중..." : "전체 거래 엑셀용 CSV 다운로드"}
+      </button>
       <DetailSection title="실행 정보" items={[
         ["실행 ID", row.run_id || row.job_id],
         ["상태", translateBacktestStatus(row.status)],
