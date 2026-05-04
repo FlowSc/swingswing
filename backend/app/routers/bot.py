@@ -1,7 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
 from app.core.auth import CurrentUser, get_current_user
@@ -13,7 +13,7 @@ from app.services.memberships import require_admin_access, require_live_trading_
 from app.services.scanner import finalize_chunked_scan, prepare_chunked_scan_state, process_scan_chunk
 from app.services.strategy_settings import get_strategy_settings, save_strategy_settings
 from app.services.supabase_rest import SupabaseRest
-from app.services.watcher import run_watch_tick_for_user
+from app.services.watcher import force_liquidate_position_for_user, run_watch_tick_for_user
 
 
 router = APIRouter(prefix="/bot", tags=["bot"])
@@ -22,6 +22,10 @@ router = APIRouter(prefix="/bot", tags=["bot"])
 class SingleSignalReportIn(BaseModel):
     trade_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     code: str = Field(pattern=r"^\d{6}$")
+
+
+class ForceLiquidateIn(BaseModel):
+    dry_run: bool = False
 
 
 def now_iso() -> str:
@@ -252,6 +256,21 @@ async def watch_tick(
     if (credentials.get("mode") or "paper") == "live":
         await require_live_trading_access(user.id, user.email)
     return await run_watch_tick_for_user(credentials, test_mode=payload.test_mode, dry_run=payload.dry_run)
+
+
+@router.post("/positions/{code}/force-liquidate")
+async def force_liquidate_position(
+    code: str = Path(pattern=r"^\d{6}$"),
+    payload: ForceLiquidateIn | None = None,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    credentials = await get_decrypted_broker_credentials(user.id)
+    if (credentials.get("mode") or "paper") == "live":
+        await require_live_trading_access(user.id, user.email)
+    try:
+        return await force_liquidate_position_for_user(credentials, code, dry_run=bool((payload or ForceLiquidateIn()).dry_run))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def shared_signal_record_to_signal(row: dict) -> dict:

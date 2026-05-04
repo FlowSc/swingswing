@@ -282,6 +282,8 @@ export type BacktestJob = {
   result?: BacktestResult | null;
   error?: string | null;
   created_at?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
   completed_at?: string | null;
 };
 
@@ -385,6 +387,8 @@ export const api = {
     request<AiReportStatus[]>(`/bot/reports/status?trade_date=${encodeURIComponent(tradeDate)}`, session),
   watchTick: (session: Session, payload: { test_mode: boolean; dry_run: boolean }) =>
     request("/bot/watch-tick", session, { method: "POST", body: JSON.stringify(payload) }),
+  forceLiquidatePosition: (session: Session, code: string, dryRun = false) =>
+    request(`/bot/positions/${encodeURIComponent(code)}/force-liquidate`, session, { method: "POST", body: JSON.stringify({ dry_run: dryRun }) }),
   todaySignals: (session: Session) => request<Array<Record<string, unknown>>>("/signals/today", session),
   signalDates: (session: Session) => request<string[]>("/signals/dates", session),
   signalsByDate: (session: Session, tradeDate: string) => request<Array<Record<string, unknown>>>(`/signals?trade_date=${encodeURIComponent(tradeDate)}`, session),

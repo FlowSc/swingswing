@@ -48,6 +48,7 @@ REASON_LABELS = {
     "StopLoss": "손절가 도달",
     "StopLossRepriced": "손절 미체결 재주문",
     "StopLossMarketExit": "손절 최종 시장가 탈출",
+    "ManualLiquidation": "사용자 강제 시장가 청산",
     "TrailingStop": "추적 손절가 도달",
     "TimeExit": "최대 보유기간 도달",
     "TakeProfit1": "1차 익절가 도달",
@@ -1010,6 +1011,75 @@ async def place_buy(client, signal: dict, qty: int, price: int, *, dry_run: bool
     if dry_run:
         return {"dry_run": True, "side": "buy", "code": signal["code"], "qty": qty, "price": price}
     return await client.buy_limit(signal["code"], qty, price)
+
+
+async def force_liquidate_position_for_user(credentials: dict, code: str, *, dry_run: bool = False) -> dict:
+    settings = get_settings()
+    user_id = credentials["user_id"]
+    broker_account_id = credentials.get("id")
+    normalized_code = str(code).zfill(6)
+    is_live = (credentials.get("mode") or "paper") == "live"
+    allow_live_orders = bool(credentials.get("live_order_enabled")) and settings.allow_live_trading
+    client = client_from_credentials(credentials, enable_orders=not dry_run, allow_live_orders=allow_live_orders)
+
+    positions = await open_positions(user_id, broker_account_id)
+    position = next((item for item in positions if str(item.get("code") or "").zfill(6) == normalized_code), None)
+    if not position:
+        raise ValueError("Open position not found.")
+
+    balance = await client.get_balance()
+    holdings = parse_holdings(balance)
+    holding = next((item for item in holdings if str(item.get("code") or "").zfill(6) == normalized_code), None)
+    sell_qty = int((holding or {}).get("qty") or position.get("remaining_qty") or 0)
+    if sell_qty <= 0:
+        raise ValueError("No sellable quantity found in KIS balance or DB position.")
+
+    response = await place_market_sell(client, position, sell_qty, reason="ManualLiquidation", dry_run=dry_run)
+    raw = {
+        "manual_liquidation": True,
+        "requested_at": now_kst().isoformat(),
+        "position": position,
+        "holding": holding,
+        "order": response,
+        "dry_run": dry_run,
+    }
+
+    if dry_run:
+        await SupabaseRest().patch(
+            "positions",
+            filters={"id": f"eq.{position['id']}"},
+            payload={"status": "CLOSED", "remaining_qty": 0, "updated_at": now_kst().isoformat()},
+        )
+    else:
+        await insert_pending_order(
+            user_id,
+            broker_account_id,
+            side="SELL",
+            source=position,
+            qty=sell_qty,
+            price=0,
+            response=response,
+            reason="ManualLiquidation",
+            raw={"expected_position": position, **raw},
+        )
+
+    await insert_trade_log(user_id, broker_account_id, "SELL", position, 0, sell_qty, "ManualLiquidation", raw)
+    action = {
+        "action": "FORCE_SELL_ORDER" if not dry_run else "FORCE_SELL_DRY_RUN",
+        "code": normalized_code,
+        "name": display_name(position),
+        "qty": sell_qty,
+        "price": 0,
+        "reason": reason_label("ManualLiquidation"),
+        "plan": action_plan_summary(position),
+        "order": response,
+    }
+    await send_telegram_message_with_bot(
+        credentials.get("telegram_bot_token"),
+        credentials.get("telegram_chat_id"),
+        f"KOSPI 강제 청산 주문\n{action['name']} {normalized_code}\n수량 {sell_qty}주\n주문: 시장가\n사유: 사용자 강제 청산",
+    )
+    return action
 
 
 async def manage_positions(

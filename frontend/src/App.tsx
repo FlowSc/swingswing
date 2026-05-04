@@ -26,7 +26,7 @@ import { supabase } from "./supabase";
 
 type Status = { type: "idle" | "info" | "error"; message: string };
 type DashboardPage = "overview" | "signals" | "account" | "trading" | "strategy" | "admin";
-type DetailKind = "signal" | "log" | "position" | "account" | "decision" | "watcher" | "report";
+type DetailKind = "signal" | "log" | "position" | "account" | "decision" | "watcher" | "report" | "backtest";
 type DetailSelection = { title: string; kind: DetailKind; row: Record<string, unknown> };
 
 const emptyBroker: BrokerPayload = {
@@ -472,6 +472,24 @@ function Dashboard({ session }: { session: Session }) {
       key: reportType === "daily" || reportType === "daily_blog" ? "reportDownload" : "signalReportDownload",
       payload: { trade_date: tradeDate, report_type: reportType, code },
     });
+  }
+
+  async function forceLiquidatePosition(row: Record<string, unknown>) {
+    const code = String(row.code || "").padStart(6, "0");
+    const name = String(row.name || code);
+    if (!code) {
+      setStatus({ type: "error", message: "강제 청산할 종목코드가 없습니다." });
+      return;
+    }
+    const confirmed = window.confirm(`${name} (${code}) 포지션을 시장가로 강제 청산할까요? 이 작업은 실제 주문을 낼 수 있습니다.`);
+    if (!confirmed) return;
+    await run(
+      "forceLiquidate",
+      () => api.forceLiquidatePosition(session, code, false),
+      "강제 청산 주문 접수 완료:",
+    );
+    setDetail(null);
+    await Promise.all([refreshPositionsOnly(), refreshTradeLogsOnly()]);
   }
 
   async function downloadReport({
@@ -973,6 +991,11 @@ function Dashboard({ session }: { session: Session }) {
                 onDaysChange={setBacktestDays}
                 onRun={runBacktest}
                 onResume={resumeBacktest}
+                onRunDetail={(run) => setDetail({
+                  title: `백테스트 #${run.run_id || run.job_id}`,
+                  kind: "backtest",
+                  row: run as unknown as Record<string, unknown>,
+                })}
               />
             )}
           </div>
@@ -988,6 +1011,7 @@ function Dashboard({ session }: { session: Session }) {
           onDownloadSignalReport={downloadSingleSignalReport}
           onDownloadSignalBlogReport={downloadSingleSignalBlogReport}
           onDownloadReportStatus={downloadReportStatus}
+          onForceLiquidatePosition={forceLiquidatePosition}
           aiReports={aiReports}
           onClose={() => setDetail(null)}
         />
@@ -1307,6 +1331,7 @@ function BacktestPanel({
   onDaysChange,
   onRun,
   onResume,
+  onRunDetail,
 }: {
   result: BacktestResult | null;
   job: BacktestJob | null;
@@ -1316,6 +1341,7 @@ function BacktestPanel({
   onDaysChange: (days: number) => void;
   onRun: () => void;
   onResume: (runId: number | string) => void;
+  onRunDetail: (run: BacktestJob) => void;
 }) {
   const progress = job?.progress || {};
   const progressTotal = progress.total || 0;
@@ -1413,8 +1439,10 @@ function BacktestPanel({
               progress: `${run.progress?.processed || 0}/${run.progress?.total || 0}`,
               win_rate: run.result ? `${run.result.win_rate}%` : "-",
               avg_return: run.result ? `${run.result.avg_return_pct}%` : "-",
+              raw_run: run,
             }))}
             columns={["id", "status", "range", "strategy", "progress", "win_rate", "avg_return"]}
+            onRowClick={(row) => onRunDetail(row.raw_run as BacktestJob)}
           />
         </div>
       )}
@@ -1520,6 +1548,7 @@ function labelForPending(key: string) {
     reportDownload: "종합 리포트 다운로드",
     signalReportDownload: "개별 리포트 다운로드",
     watcherRunsRefresh: "와쳐 상태 확인",
+    forceLiquidate: "종목 강제 청산",
   };
   return labels[key] || "요청";
 }
@@ -1606,13 +1635,15 @@ function MiniTable({
   rows,
   columns,
   onRowClick,
+  emptyLabel = "보유 종목 없음",
 }: {
   rows: Array<Record<string, unknown>>;
   columns: string[];
   onRowClick?: (row: Record<string, unknown>) => void;
+  emptyLabel?: string;
 }) {
   if (rows.length === 0) {
-    return <p className="empty">보유 종목 없음</p>;
+    return <p className="empty">{emptyLabel}</p>;
   }
   return (
     <div className="table-wrap">
@@ -1790,6 +1821,7 @@ function DetailOverlay({
   onDownloadSignalReport,
   onDownloadSignalBlogReport,
   onDownloadReportStatus,
+  onForceLiquidatePosition,
   aiReports,
   onClose,
 }: {
@@ -1801,6 +1833,7 @@ function DetailOverlay({
   onDownloadSignalReport: (row: Record<string, unknown>) => void;
   onDownloadSignalBlogReport: (row: Record<string, unknown>) => void;
   onDownloadReportStatus: (row: Record<string, unknown>) => void;
+  onForceLiquidatePosition: (row: Record<string, unknown>) => void;
   aiReports: AiReportStatus[];
   onClose: () => void;
 }) {
@@ -1811,6 +1844,7 @@ function DetailOverlay({
           : detail.kind === "watcher" ? "와쳐 실행 상세"
             : detail.kind === "account" ? "계좌 상세"
               : detail.kind === "report" ? "AI 리포트 상세"
+                : detail.kind === "backtest" ? "백테스트 상세"
             : "포지션 상세";
   return (
     <div className="overlay-backdrop" onClick={onClose}>
@@ -1837,10 +1871,17 @@ function DetailOverlay({
           />
         )}
         {detail.kind === "log" && <TradeLogDetail row={detail.row} />}
-        {detail.kind === "position" && <PositionDetail row={detail.row} />}
+        {detail.kind === "position" && (
+          <PositionDetail
+            row={detail.row}
+            pending={pending === "forceLiquidate"}
+            onForceLiquidate={() => onForceLiquidatePosition(detail.row)}
+          />
+        )}
         {detail.kind === "account" && <AccountDetail row={detail.row} />}
         {detail.kind === "decision" && <DecisionDetail row={detail.row} />}
         {detail.kind === "watcher" && <WatcherRunDetail row={detail.row} />}
+        {detail.kind === "backtest" && <BacktestRunDetail row={detail.row} />}
         {detail.kind === "report" && (
           <ReportStatusDetail
             row={detail.row}
@@ -2104,10 +2145,24 @@ function ReportStatusDetail({
   );
 }
 
-function PositionDetail({ row }: { row: Record<string, unknown> }) {
+function PositionDetail({
+  row,
+  pending,
+  onForceLiquidate,
+}: {
+  row: Record<string, unknown>;
+  pending: boolean;
+  onForceLiquidate: () => void;
+}) {
   const raw = asRecord(row.raw);
+  const isOpen = String(row.status || "").toUpperCase() === "OPEN" && Number(row.remaining_qty || 0) > 0;
   return (
     <div className="detail-grid">
+      {isOpen && (
+        <button className="danger detail-action" type="button" disabled={pending} onClick={onForceLiquidate}>
+          {pending ? "강제 청산 주문 중..." : "이 종목 시장가 강제 청산"}
+        </button>
+      )}
       <DetailSection title="보유 정보" items={[
         ["종목", `${formatCell(row.name)} (${formatCell(row.code)})`],
         ["매수일", row.entry_date],
@@ -2244,6 +2299,64 @@ function WatcherRunDetail({ row }: { row: Record<string, unknown> }) {
         ["최소 매수/매도 잔량비", strategy.min_bid_ask_ratio],
         ["최대 호가 스프레드", strategy.max_realtime_spread_pct],
       ]} />
+    </div>
+  );
+}
+
+function BacktestRunDetail({ row }: { row: Record<string, unknown> }) {
+  const progress = asRecord(row.progress);
+  const result = asRecord(row.result);
+  const trades = Array.isArray(result.trades) ? result.trades.map((item) => asRecord(item)) : [];
+  const tested = result.signals_tested ?? progress.tested;
+  const generated = result.generated_signals ?? progress.signals;
+  return (
+    <div className="detail-grid">
+      <DetailSection title="실행 정보" items={[
+        ["실행 ID", row.run_id || row.job_id],
+        ["상태", translateBacktestStatus(row.status)],
+        ["기간", `${formatCell(row.start_date)} - ${formatCell(row.end_date)}`],
+        ["검증 범위", `${formatCell(row.days)}일`],
+        ["최대 검증 시그널", row.max_signals],
+        ["전략", `${formatCell(row.strategy_key)} / ${formatCell(row.strategy_version)}`],
+        ["유니버스", row.universe_scope],
+        ["생성 시간", formatDateTime(row.created_at)],
+        ["완료 시간", formatDateTime(row.finished_at || row.completed_at)],
+        ["오류", row.error],
+      ]} />
+      <DetailSection title="진행 상태" items={[
+        ["처리 종목", `${formatCell(progress.processed)}/${formatCell(progress.total)}`],
+        ["누적 후보", generated],
+        ["검증 거래", tested],
+        ["스킵", progress.skipped],
+      ]} />
+      <DetailSection title="성과 요약" items={[
+        ["승률", result.win_rate === undefined ? "-" : `${formatCell(result.win_rate)}%`],
+        ["평균 수익률", result.avg_return_pct === undefined ? "-" : `${formatCell(result.avg_return_pct)}%`],
+        ["평균 수익", result.avg_win_pct === undefined ? "-" : `${formatCell(result.avg_win_pct)}%`],
+        ["평균 손실", result.avg_loss_pct === undefined ? "-" : `${formatCell(result.avg_loss_pct)}%`],
+        ["최고 수익", result.best_return_pct === undefined ? "-" : `${formatCell(result.best_return_pct)}%`],
+        ["최악 손실", result.worst_return_pct === undefined ? "-" : `${formatCell(result.worst_return_pct)}%`],
+        ["평균 보유일", result.avg_hold_days === undefined ? "-" : `${formatCell(result.avg_hold_days)}일`],
+        ["승/패", `${formatCell(result.win_count)} / ${formatCell(result.loss_count)}`],
+      ]} />
+      <section className="detail-section">
+        <h3>거래 샘플</h3>
+        <MiniTable
+          rows={trades.slice(0, 20).map((trade) => ({
+            date: trade.trade_date,
+            code: trade.code,
+            name: trade.name,
+            score: trade.score,
+            entry: trade.entry,
+            exit: trade.exit_price,
+            return_pct: trade.return_pct === undefined ? "-" : `${formatCell(trade.return_pct)}%`,
+            hold_days: trade.hold_days,
+            reason: translateReason(trade.exit_reason),
+          }))}
+          columns={["date", "code", "name", "score", "entry", "exit", "return_pct", "hold_days", "reason"]}
+          emptyLabel="완료된 거래 샘플 없음"
+        />
+      </section>
     </div>
   );
 }

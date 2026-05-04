@@ -10,6 +10,7 @@ from app.services.broker_credentials import list_enabled_broker_credentials
 from app.services.ai_report import process_queued_ai_reports
 from app.services.scanner import scan_and_store_for_user
 from app.services.supabase_rest import SupabaseRest
+from app.services.telegram import send_telegram_message_with_bot
 from app.services.watcher import run_realtime_position_watch_for_user, run_watch_tick_for_user
 
 
@@ -30,8 +31,9 @@ async def intraday_watch_job() -> None:
     for credentials in credentials_rows:
         try:
             await run_watch_tick_for_user(credentials, test_mode=False, dry_run=False)
-        except Exception:
+        except Exception as exc:
             logger.exception("Intraday watcher failed: user_id=%s account_id=%s", credentials.get("user_id"), credentials.get("id"))
+            await notify_watcher_failure(credentials, "5분 와쳐", exc)
 
 
 async def realtime_position_watch_job() -> None:
@@ -39,8 +41,25 @@ async def realtime_position_watch_job() -> None:
     for credentials in credentials_rows:
         try:
             await run_realtime_position_watch_for_user(credentials, dry_run=False)
-        except Exception:
+        except Exception as exc:
             logger.exception("Realtime position watcher failed: user_id=%s account_id=%s", credentials.get("user_id"), credentials.get("id"))
+            await notify_watcher_failure(credentials, "1분 포지션 감시", exc)
+
+
+async def notify_watcher_failure(credentials: dict, job_name: str, exc: Exception) -> None:
+    message = "\n".join(
+        [
+            "KOSPI Swing Bot 오류",
+            f"작업: {job_name}",
+            f"계좌: {credentials.get('mode') or 'paper'} {credentials.get('kis_account_no')}-{credentials.get('kis_account_product_code') or '01'}",
+            f"오류: {str(exc)[:500]}",
+            "포지션과 미체결 주문을 확인하세요.",
+        ]
+    )
+    try:
+        await send_telegram_message_with_bot(credentials.get("telegram_bot_token"), credentials.get("telegram_chat_id"), message)
+    except Exception:
+        logger.exception("Failed to send watcher failure telegram: user_id=%s account_id=%s", credentials.get("user_id"), credentials.get("id"))
 
 
 async def ai_report_worker_job() -> None:
