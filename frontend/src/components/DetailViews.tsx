@@ -2,6 +2,7 @@ import type { AiReportStatus } from "../api";
 import type { DetailSelection } from "../types";
 import {
   asRecord,
+  buildSignalAnalysis,
   buildStopLossExplanation,
   buildTakeProfitExplanation,
   formatCell,
@@ -139,6 +140,7 @@ export function SignalDetail({
   const companyProfile = asRecord(raw.CompanyProfile);
   const code = String(row.code || "").padStart(6, "0");
   const naverUrl = `https://stock.naver.com/domestic/stock/${code}/price`;
+  const analysis = buildSignalAnalysis(row);
   return (
     <div className="detail-grid">
       <a className="naver-link" href={naverUrl} target="_blank" rel="noreferrer">
@@ -164,6 +166,29 @@ export function SignalDetail({
           )}
         </>
       )}
+      <section className="signal-analysis-card">
+        <div className="signal-analysis-head">
+          <span className={`analysis-badge ${analysis.suitability.tone}`}>
+            자동매매 적합도 {analysis.suitability.label} · {analysis.suitability.score}점
+          </span>
+          <p>{analysis.suitability.reason}</p>
+        </div>
+        <h3>한 줄 요약</h3>
+        <p>{analysis.summary}</p>
+      </section>
+      <section className="signal-analysis-grid">
+        <AnalysisBlock title="선정 근거" items={analysis.selectionReasons} />
+        <AnalysisBlock title="매수 관찰 포인트" items={analysis.entryGuide} />
+        <AnalysisBlock title="손절/익절 운영" items={analysis.exitGuide} />
+      </section>
+      <section className="signal-risk-grid">
+        {analysis.riskChecks.map((item) => (
+          <div className={`risk-card ${item.tone}`} key={item.label}>
+            <strong>{item.label}</strong>
+            <p>{item.text}</p>
+          </div>
+        ))}
+      </section>
       <DetailSection title="기업 개요" items={[
         ["시장", companyProfile.market || raw.Universe],
         ["섹터", companyProfile.sector],
@@ -220,6 +245,17 @@ export function SignalDetail({
         ["20일 수익률", `${formatCell(raw["Ret_20D(%)"])}%`],
         ["시장 20일 수익률", `${formatCell(raw["MarketRet_20D(%)"])}%`],
       ]} />
+    </div>
+  );
+}
+
+function AnalysisBlock({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="analysis-block">
+      <h3>{title}</h3>
+      <ul>
+        {items.filter(Boolean).map((item, index) => <li key={`${title}-${index}`}>{item}</li>)}
+      </ul>
     </div>
   );
 }

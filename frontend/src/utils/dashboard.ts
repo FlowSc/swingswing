@@ -67,6 +67,177 @@ export function buildTakeProfitExplanation(row: Record<string, unknown>) {
   return `진입가와 손절가 사이의 리스크를 1R로 보고, 1차 익절은 +1R(${tp1Pct}), 2차 익절은 +2R(${tp2Pct})로 설정. 기준 리스크는 ${riskPct}.`;
 }
 
+export type SignalAnalysis = {
+  summary: string;
+  suitability: {
+    label: string;
+    tone: "good" | "neutral" | "caution";
+    score: number;
+    reason: string;
+  };
+  selectionReasons: string[];
+  entryGuide: string[];
+  exitGuide: string[];
+  riskChecks: Array<{ label: string; tone: "good" | "neutral" | "caution"; text: string }>;
+};
+
+export function buildSignalAnalysis(row: Record<string, unknown>): SignalAnalysis {
+  const raw = asRecord(row.raw);
+  const score = numericValue(row.score) ?? numericValue(raw.Score) ?? 0;
+  const entry = row.entry ?? raw.Entry;
+  const stopLoss = row.stop_loss ?? raw.StopLoss;
+  const takeProfit1 = row.take_profit_1 ?? raw.TakeProfit1;
+  const takeProfit2 = row.take_profit_2 ?? raw.TakeProfit2;
+  const rsi = numericValue(raw.RSI14);
+  const bbWidth = numericValue(raw["BBWidth(%)"]);
+  const bbExpansion = numericValue(raw["BBExpansion(%)"]);
+  const volumeSpike = numericValue(raw.VolumeSpikeRatio);
+  const tradingValueSpike = numericValue(raw.TradingValueSpikeRatio);
+  const relativeStrength = numericValue(raw["RelativeStrength_20D(%)"]);
+  const atrPct = numericValue(raw["ATR(%)"]);
+  const stopPct = Math.abs(percentFromEntry(stopLoss, entry) ?? numericValue(raw.StopPct) ?? 0);
+  const gapPct = numericValue(raw["Gap(%)"]);
+  const upperShadow = numericValue(raw.UpperShadowRatio);
+  const distanceToKijun = numericValue(raw["DistanceToKijun(%)"]);
+  const marketPassed = isPassed(raw.MarketFilterPassed);
+  const coreUniverse = isCoreUniverseSignal(raw);
+  const reasons = translateReasons(raw.Reasons);
+
+  const positive: string[] = [];
+  if (score >= 20) positive.push(`점수 ${formatCell(score)}점으로 현재 전략 기준에서 상위권 후보입니다.`);
+  else if (score >= 12) positive.push(`점수 ${formatCell(score)}점으로 최소 조건은 통과했지만, 강한 후보인지는 추가 확인이 필요합니다.`);
+  if (rsi !== null) {
+    if (rsi >= 45 && rsi <= 60) positive.push(`RSI가 ${formatCell(rsi)}로 과열보다는 회복 초입에 가까운 구간입니다.`);
+    else if (rsi < 45) positive.push(`RSI가 ${formatCell(rsi)}로 아직 힘이 강하진 않지만, 과매도 탈출 후보로 볼 수 있습니다.`);
+    else positive.push(`RSI가 ${formatCell(rsi)}라 단기 과열 여부를 같이 확인해야 합니다.`);
+  }
+  if (distanceToKijun !== null) {
+    positive.push(distanceToKijun >= 0
+      ? `현재가가 일목 기준선보다 ${formatPlanPct(distanceToKijun)} 위에 있어 단기 추세 지지가 살아 있습니다.`
+      : `현재가가 일목 기준선보다 ${formatPlanPct(distanceToKijun)} 아래라 진입 전 기준선 회복 여부가 중요합니다.`);
+  }
+  if (bbWidth !== null || bbExpansion !== null) {
+    positive.push(`볼린저 밴드 폭 ${formatCell(bbWidth)}%, 확장률 ${formatCell(bbExpansion)}%로 가격 움직임이 커지는 구간인지 확인됩니다.`);
+  }
+  if (volumeSpike !== null || tradingValueSpike !== null) {
+    positive.push(`거래량 배율 ${formatCell(volumeSpike)}배, 거래대금 배율 ${formatCell(tradingValueSpike)}배로 수급 동반 여부를 봅니다.`);
+  }
+  if (relativeStrength !== null) {
+    positive.push(relativeStrength >= 0
+      ? `시장 대비 20일 상대강도는 ${formatPlanPct(relativeStrength)}로 시장보다 강한 편입니다.`
+      : `시장 대비 20일 상대강도는 ${formatPlanPct(relativeStrength)}로 아직 시장보다 약한 흐름입니다.`);
+  }
+  if (coreUniverse) positive.push(`${translateCoreUniverse(raw.CoreUniverseType)}에 속해 유동성/대표성 측면에서 우선 표시되는 후보입니다.`);
+  if (reasons && reasons !== "-") positive.push(`스캐너 핵심 사유: ${reasons}`);
+
+  const riskChecks = buildSignalRiskChecks({ stopPct, atrPct, gapPct, upperShadow, marketPassed, distanceToKijun });
+  const cautionCount = riskChecks.filter((item) => item.tone === "caution").length;
+  const suitabilityScore = Math.max(0, Math.min(100,
+    50
+    + (score >= 20 ? 18 : score >= 12 ? 8 : -10)
+    + (marketPassed ? 8 : -12)
+    + (coreUniverse ? 6 : 0)
+    + (relativeStrength !== null && relativeStrength >= 0 ? 6 : 0)
+    - cautionCount * 10
+    - (stopPct > 10 ? 8 : 0)
+  ));
+  const suitability = suitabilityLabel(suitabilityScore, cautionCount);
+  const summary = buildSignalSummary(score, suitability.label, cautionCount, distanceToKijun, relativeStrength);
+
+  return {
+    summary,
+    suitability: {
+      ...suitability,
+      score: suitabilityScore,
+    },
+    selectionReasons: positive.slice(0, 7),
+    entryGuide: [
+      `진입 기준가는 ${formatCell(entry)}원입니다. 장중 현재가가 이 기준가 주변에서 유지되는지 확인하는 후보입니다.`,
+      `자동매매는 14:30-15:20 구간에만 신규 매수를 검토합니다. 이 시간 전에 급등한 종목은 추격보다 눌림 확인이 우선입니다.`,
+      distanceToKijun !== null && distanceToKijun < 0
+        ? "일목 기준선 아래에 있는 경우, 기준선 회복 없이 진입하면 손절 가능성이 커질 수 있습니다."
+        : "기준선 위 흐름이 유지되면 단기 추세 훼손 가능성이 상대적으로 낮아집니다.",
+    ],
+    exitGuide: [
+      `손절가는 ${formatCell(stopLoss)}원(${formatPercentFromEntry(stopLoss, entry)})입니다. 이 가격은 틀렸을 때 빠지는 기준입니다.`,
+      `1차 익절은 ${formatCell(takeProfit1)}원(${formatPercentFromEntry(takeProfit1, entry)}), 2차 익절은 ${formatCell(takeProfit2)}원(${formatPercentFromEntry(takeProfit2, entry)})입니다.`,
+      "1차 익절 이후에는 잔여 수량을 추적 손절로 방어하는 구조라, 한 번에 전량 익절하는 방식보다 변동성 대응에 초점이 있습니다.",
+    ],
+    riskChecks,
+  };
+}
+
+function buildSignalRiskChecks({
+  stopPct,
+  atrPct,
+  gapPct,
+  upperShadow,
+  marketPassed,
+  distanceToKijun,
+}: {
+  stopPct: number;
+  atrPct: number | null;
+  gapPct: number | null;
+  upperShadow: number | null;
+  marketPassed: boolean;
+  distanceToKijun: number | null;
+}): Array<{ label: string; tone: "good" | "neutral" | "caution"; text: string }> {
+  return [
+    {
+      label: "손절폭",
+      tone: stopPct > 10 ? "caution" : stopPct >= 6 ? "neutral" : "good",
+      text: stopPct > 10
+        ? `손절폭이 ${stopPct.toFixed(2)}%로 넓습니다. 수량을 줄여야 계좌 리스크가 과도해지지 않습니다.`
+        : `손절폭은 ${stopPct.toFixed(2)}%입니다. 전략 설정의 1회 리스크 비중과 같이 봐야 합니다.`,
+    },
+    {
+      label: "변동성",
+      tone: atrPct !== null && atrPct >= 7 ? "caution" : atrPct !== null && atrPct >= 4 ? "neutral" : "good",
+      text: atrPct === null
+        ? "ATR 데이터가 없어 변동성 평가는 제한적입니다."
+        : `ATR 비율은 ${formatCell(atrPct)}%입니다. 높을수록 장중 흔들림이 커집니다.`,
+    },
+    {
+      label: "갭/윗꼬리",
+      tone: (gapPct !== null && gapPct >= 4) || (upperShadow !== null && upperShadow >= 0.45) ? "caution" : "neutral",
+      text: `갭 ${formatCell(gapPct)}%, 윗꼬리 비율 ${formatCell(upperShadow)}입니다. 갭 상승 후 윗꼬리가 길면 추격 매수는 피하는 편이 안전합니다.`,
+    },
+    {
+      label: "시장 필터",
+      tone: marketPassed ? "good" : "caution",
+      text: marketPassed ? "코스피 시장 필터는 통과했습니다." : "시장 필터가 약합니다. 지수 하락 구간에서는 신규 진입을 보수적으로 봅니다.",
+    },
+    {
+      label: "기준선 위치",
+      tone: distanceToKijun !== null && distanceToKijun < 0 ? "caution" : "good",
+      text: distanceToKijun === null
+        ? "일목 기준선 위치 데이터가 제한적입니다."
+        : `일목 기준선 대비 위치는 ${formatPlanPct(distanceToKijun)}입니다.`,
+    },
+  ];
+}
+
+function suitabilityLabel(score: number, cautionCount: number) {
+  if (score >= 72 && cautionCount <= 1) {
+    return { label: "높음", tone: "good" as const, reason: "점수와 시장 조건이 양호하고 큰 리스크 경고가 많지 않습니다." };
+  }
+  if (score >= 50) {
+    return { label: "보통", tone: "neutral" as const, reason: "후보 조건은 충족했지만 일부 리스크 확인이 필요합니다." };
+  }
+  return { label: "낮음", tone: "caution" as const, reason: "자동매매보다는 수동 관찰이 더 적합한 후보입니다." };
+}
+
+function buildSignalSummary(score: number, suitability: string, cautionCount: number, distanceToKijun: number | null, relativeStrength: number | null) {
+  const trendText = distanceToKijun !== null && distanceToKijun < 0
+    ? "기준선 아래에 있어 추세 확인이 필요한"
+    : "단기 추세 조건은 비교적 유지되는";
+  const strengthText = relativeStrength !== null && relativeStrength < 0
+    ? "시장 대비 힘은 아직 약한 편입니다"
+    : "시장 대비 힘은 나쁘지 않습니다";
+  const riskText = cautionCount >= 3 ? "다만 리스크 경고가 많아 보수적인 접근이 필요합니다." : "리스크 조건은 추가 확인하면서 접근할 수 있습니다.";
+  return `점수 ${formatCell(score)}점의 ${trendText} 스윙 후보입니다. 자동매매 적합도는 ${suitability}이며, ${strengthText}. ${riskText}`;
+}
+
 export function formatRiskPct(entry: unknown, stopLoss: unknown) {
   const entryValue = numericValue(entry);
   const stopValue = numericValue(stopLoss);
