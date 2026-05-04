@@ -79,6 +79,21 @@ export type SignupPayload = {
   invite_code: string;
 };
 
+export type MembershipRole = "admin" | "free" | "paid";
+
+export type Entitlements = {
+  user_id: string;
+  email?: string | null;
+  role: MembershipRole;
+  paid_until?: string | null;
+  report_enabled: boolean;
+  can_use_paper_trading: boolean;
+  can_use_live_trading: boolean;
+  can_use_reports: boolean;
+  can_run_admin_scan: boolean;
+  can_run_backtest: boolean;
+};
+
 export type BrokerStatus = {
   configured: boolean;
   id?: string;
@@ -303,6 +318,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  getEntitlements: (session: Session) => request<Entitlements>("/auth/me/entitlements", session),
   getBrokerStatus: (session: Session) => request<BrokerStatus>("/broker/kis/status", session),
   getBrokerAccounts: (session: Session) => request<BrokerAccount[]>("/broker/kis/accounts", session),
   saveBroker: (session: Session, payload: BrokerPayload) =>

@@ -10,6 +10,7 @@ import {
   type BrokerPayload,
   type BrokerStatus,
   type DailyDashboard,
+  type Entitlements,
   type KisAccount,
   type StrategyPreset,
   type StrategySettings,
@@ -17,9 +18,11 @@ import {
   type TradeDecisionLog,
   type WatcherRun,
 } from "./api";
+import { AuthCard } from "./components/AuthCard";
+import { Shell } from "./components/Shell";
+import { defaultStrategy, strategyPresets } from "./strategyPresets";
 import { supabase } from "./supabase";
 
-type AuthMode = "login" | "signup";
 type Status = { type: "idle" | "info" | "error"; message: string };
 type DetailKind = "signal" | "log" | "position" | "account" | "decision" | "watcher";
 type DetailSelection = { title: string; kind: DetailKind; row: Record<string, unknown> };
@@ -37,104 +40,6 @@ const emptyTelegramSettings: TelegramSettingsPayload = {
   telegram_bot_token: "",
   telegram_chat_id: "",
 };
-
-const strategyPresets: Record<StrategyPreset, StrategySettings> = {
-  conservative: {
-    preset: "conservative",
-    min_score: 13,
-    max_open_positions: 4,
-    max_new_positions_per_day: 1,
-    position_capital_pct: 0.12,
-    risk_per_trade_pct: 0.007,
-    min_order_amount: 100000,
-    min_entry_discount: 0.995,
-    max_entry_premium: 1.015,
-    max_pullback_from_day_high: 0.02,
-    use_kijun_filter: true,
-    use_bb_upper_filter: true,
-    use_day_candle_filter: false,
-    use_breakeven_after_tp1: false,
-    use_kijun_exit: false,
-    use_kijun_reentry_block: true,
-    use_daily_loss_limit: true,
-    daily_loss_limit_pct: 0.02,
-    use_unrealized_loss_limit: true,
-    unrealized_loss_limit_pct: 0.03,
-    use_market_crash_filter: true,
-    market_crash_limit_pct: -0.02,
-    commission_tax_pct: 0.002,
-    use_realtime_liquidity_filter: true,
-    min_realtime_strength: 80,
-    min_bid_ask_ratio: 0.7,
-    max_realtime_spread_pct: 0.01,
-    use_stoploss_reentry_block: true,
-    use_vi_filter: true,
-  },
-  balanced: {
-    preset: "balanced",
-    min_score: 12,
-    max_open_positions: 5,
-    max_new_positions_per_day: 2,
-    position_capital_pct: 0.18,
-    risk_per_trade_pct: 0.01,
-    min_order_amount: 100000,
-    min_entry_discount: 0.995,
-    max_entry_premium: 1.02,
-    max_pullback_from_day_high: 0.03,
-    use_kijun_filter: true,
-    use_bb_upper_filter: true,
-    use_day_candle_filter: false,
-    use_breakeven_after_tp1: false,
-    use_kijun_exit: false,
-    use_kijun_reentry_block: true,
-    use_daily_loss_limit: true,
-    daily_loss_limit_pct: 0.03,
-    use_unrealized_loss_limit: true,
-    unrealized_loss_limit_pct: 0.04,
-    use_market_crash_filter: true,
-    market_crash_limit_pct: -0.02,
-    commission_tax_pct: 0.002,
-    use_realtime_liquidity_filter: true,
-    min_realtime_strength: 75,
-    min_bid_ask_ratio: 0.65,
-    max_realtime_spread_pct: 0.012,
-    use_stoploss_reentry_block: true,
-    use_vi_filter: true,
-  },
-  aggressive: {
-    preset: "aggressive",
-    min_score: 10,
-    max_open_positions: 7,
-    max_new_positions_per_day: 3,
-    position_capital_pct: 0.25,
-    risk_per_trade_pct: 0.015,
-    min_order_amount: 100000,
-    min_entry_discount: 0.99,
-    max_entry_premium: 1.03,
-    max_pullback_from_day_high: 0.04,
-    use_kijun_filter: true,
-    use_bb_upper_filter: true,
-    use_day_candle_filter: false,
-    use_breakeven_after_tp1: false,
-    use_kijun_exit: false,
-    use_kijun_reentry_block: true,
-    use_daily_loss_limit: true,
-    daily_loss_limit_pct: 0.04,
-    use_unrealized_loss_limit: true,
-    unrealized_loss_limit_pct: 0.05,
-    use_market_crash_filter: true,
-    market_crash_limit_pct: -0.025,
-    commission_tax_pct: 0.002,
-    use_realtime_liquidity_filter: true,
-    min_realtime_strength: 70,
-    min_bid_ask_ratio: 0.6,
-    max_realtime_spread_pct: 0.015,
-    use_stoploss_reentry_block: true,
-    use_vi_filter: true,
-  },
-};
-
-const defaultStrategy = strategyPresets.balanced;
 
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -163,97 +68,6 @@ export function App() {
   return <Shell>{session ? <Dashboard session={session} /> : <AuthCard />}</Shell>;
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="page">
-      <section className="hero">
-        <div>
-          <p className="eyebrow">KOSPI AUTOMATED SWING</p>
-          <h1>스윙봇</h1>
-        </div>
-        <div className="hero-card">
-          <strong>KIS OPEN API 기반</strong>
-        </div>
-      </section>
-      {children}
-    </main>
-  );
-}
-
-function AuthCard() {
-  const [mode, setMode] = useState<AuthMode>("login");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [inviteCode, setInviteCode] = useState("");
-  const [status, setStatus] = useState<Status>({ type: "idle", message: "" });
-  const [pending, setPending] = useState(false);
-
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    setPending(true);
-    setStatus({ type: "idle", message: "" });
-
-    try {
-      if (mode === "signup") {
-        await api.signup({ email, password, invite_code: inviteCode });
-        const signIn = await supabase.auth.signInWithPassword({ email, password });
-        if (signIn.error) {
-          setStatus({ type: "info", message: "가입 완료. 이메일 인증 설정이 켜져 있으면 메일 확인 후 로그인하세요." });
-          return;
-        }
-        setStatus({ type: "info", message: "가입 및 로그인 완료." });
-        return;
-      }
-
-      const result = await supabase.auth.signInWithPassword({ email, password });
-      if (result.error) {
-        setStatus({ type: "error", message: result.error.message });
-        return;
-      }
-      setStatus({ type: "info", message: "로그인 완료." });
-    } catch (error) {
-      setStatus({ type: "error", message: error instanceof Error ? cleanErrorMessage(error.message) : String(error) });
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <section className="auth-grid">
-      <form className="panel auth-panel" onSubmit={submit}>
-        <div className="toggle">
-          <button type="button" className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>로그인</button>
-          <button type="button" className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")}>회원가입</button>
-        </div>
-
-        <label>
-          이메일
-          <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" placeholder="name@example.com" required />
-        </label>
-        <label>
-          비밀번호
-          <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" minLength={6} required />
-        </label>
-        {mode === "signup" && (
-          <label>
-            가입 코드
-            <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} type="password" required />
-          </label>
-        )}
-
-        <button className="primary" disabled={pending}>{pending ? "처리 중..." : mode === "login" ? "로그인" : "회원가입"}</button>
-        <StatusLine status={status} />
-      </form>
-
-      <aside className="panel explain">
-        <h2>흐름</h2>
-        <p>Supabase Auth로 로그인하고, FastAPI에는 Supabase access token만 전달합니다.</p>
-        <p>KIS app secret은 백엔드에서 암호화되어 Supabase에 저장됩니다.</p>
-      </aside>
-    </section>
-  );
-}
-
 function Dashboard({ session }: { session: Session }) {
   const [broker, setBroker] = useState<BrokerPayload>(emptyBroker);
   const [telegramSettings, setTelegramSettings] = useState<TelegramSettingsPayload>(emptyTelegramSettings);
@@ -270,6 +84,7 @@ function Dashboard({ session }: { session: Session }) {
   const [decisions, setDecisions] = useState<TradeDecisionLog[]>([]);
   const [watcherRuns, setWatcherRuns] = useState<WatcherRun[]>([]);
   const [dailyDashboard, setDailyDashboard] = useState<DailyDashboard | null>(null);
+  const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
   const [aiReports, setAiReports] = useState<AiReportStatus[]>([]);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
   const [backtestDays, setBacktestDays] = useState(120);
@@ -279,7 +94,9 @@ function Dashboard({ session }: { session: Session }) {
   const [autoLoadedAccountKey, setAutoLoadedAccountKey] = useState("");
   const [detail, setDetail] = useState<DetailSelection | null>(null);
   const [pending, setPending] = useState<string | null>(null);
-  const isScanAdmin = (session.user.email || "").toLowerCase() === "zelatool@gmail.com";
+  const isScanAdmin = Boolean(entitlements?.can_run_admin_scan);
+  const canUseLiveTrading = Boolean(entitlements?.can_use_live_trading);
+  const canUseReports = Boolean(entitlements?.can_use_reports);
   const dailyReportCompleted = hasCompletedReport(aiReports, "daily");
   const hasRunningScan = dailyDashboard?.latest_scan?.status === "running";
 
@@ -359,7 +176,7 @@ function Dashboard({ session }: { session: Session }) {
       const [signalResult, decisionResult, reportResult] = await Promise.all([
         api.signalsByDate(session, selectedSignalDate),
         api.tradeDecisions(session, selectedSignalDate).catch(() => []),
-        isScanAdmin ? api.getAiReportStatuses(session, selectedSignalDate).catch(() => []) : Promise.resolve([]),
+        canUseReports ? api.getAiReportStatuses(session, selectedSignalDate).catch(() => []) : Promise.resolve([]),
       ]);
       setSignals(signalResult);
       setDecisions(decisionResult);
@@ -616,6 +433,9 @@ function Dashboard({ session }: { session: Session }) {
 
   async function refresh() {
     try {
+      const entitlementResult = await api.getEntitlements(session);
+      setEntitlements(entitlementResult);
+
       const [brokerResult, accountResult, strategyResult, dateResult, positionResult, logResult, watcherRunResult, dashboardResult] = await Promise.all([
         api.getBrokerStatus(session),
         api.getBrokerAccounts(session),
@@ -631,7 +451,7 @@ function Dashboard({ session }: { session: Session }) {
         ? await Promise.all([
             api.signalsByDate(session, nextSignalDate),
             api.tradeDecisions(session, nextSignalDate).catch(() => []),
-            isScanAdmin ? api.getAiReportStatuses(session, nextSignalDate).catch(() => []) : Promise.resolve([]),
+            entitlementResult.can_use_reports ? api.getAiReportStatuses(session, nextSignalDate).catch(() => []) : Promise.resolve([]),
           ])
         : [[], [], []];
       setBrokerStatus(brokerResult);
@@ -665,6 +485,10 @@ function Dashboard({ session }: { session: Session }) {
 
   async function saveBroker(event: React.FormEvent) {
     event.preventDefault();
+    if (broker.mode === "live" && !canUseLiveTrading) {
+      setStatus({ type: "error", message: "무료회원은 실전투자 계좌를 저장할 수 없습니다." });
+      return;
+    }
     setKisAccount(null);
     setAutoLoadedAccountKey("");
     await run("broker", () => api.saveBroker(session, broker), "KIS 정보 저장 완료:");
@@ -703,7 +527,7 @@ function Dashboard({ session }: { session: Session }) {
         api.signalsByDate(session, tradeDate),
         api.tradeDecisions(session, tradeDate).catch(() => []),
       ]);
-      const reportResult = isScanAdmin ? await api.getAiReportStatuses(session, tradeDate).catch(() => []) : [];
+      const reportResult = canUseReports ? await api.getAiReportStatuses(session, tradeDate).catch(() => []) : [];
       setSignals(signalResult);
       setAiReports(reportResult);
       setDecisions(decisionResult);
@@ -728,6 +552,7 @@ function Dashboard({ session }: { session: Session }) {
               ? `KIS 저장됨 · ${brokerStatus.account_no}-${brokerStatus.account_product_code || "01"} · 자동매매 ${brokerStatus.enabled ? "ON" : "OFF"}`
               : "KIS 연결 정보 필요"}
           </span>
+          <span>회원 유형 {membershipLabel(entitlements?.role)}</span>
         </div>
         <button className="ghost" onClick={() => supabase.auth.signOut()}>로그아웃</button>
       </div>
@@ -764,12 +589,12 @@ function Dashboard({ session }: { session: Session }) {
                   key={account.id}
                   className={account.is_active ? "account-chip active" : "account-chip"}
                   type="button"
-                  disabled={pending !== null || account.is_active}
+                  disabled={pending !== null || account.is_active || (account.mode === "live" && !canUseLiveTrading)}
                   onClick={() => activateBrokerAccount(account.id)}
                 >
                   <strong>{account.mode === "live" ? "실전투자" : "모의투자"}</strong>
                   <span>{account.kis_account_no}-{account.kis_account_product_code}</span>
-                  <small>{account.is_active ? `현재 사용 중 · 자동매매 ${account.enabled ? "ON" : "OFF"} · 매매알림 ${account.telegram_configured ? "ON" : "OFF"}` : "교체하기"}</small>
+                  <small>{account.mode === "live" && !canUseLiveTrading ? "유료회원 이상 사용 가능" : account.is_active ? `현재 사용 중 · 자동매매 ${account.enabled ? "ON" : "OFF"} · 매매알림 ${account.telegram_configured ? "ON" : "OFF"}` : "교체하기"}</small>
                 </button>
               ))}
             </div>
@@ -799,9 +624,12 @@ function Dashboard({ session }: { session: Session }) {
                 계좌 모드
                 <select value={broker.mode} onChange={(event) => setBroker({ ...broker, mode: event.target.value as "paper" | "live", live_order_enabled: false })}>
                   <option value="paper">모의투자</option>
-                  <option value="live">실전투자</option>
+                  <option value="live" disabled={!canUseLiveTrading}>실전투자{canUseLiveTrading ? "" : " - 유료회원 이상"}</option>
                 </select>
               </label>
+              {!canUseLiveTrading && (
+                <p className="command-copy">무료회원은 모의투자만 사용할 수 있습니다. 실전투자 계좌 저장과 실전 자동매매는 백엔드에서도 차단됩니다.</p>
+              )}
               {broker.mode === "live" && (
                 <label className="check-row">
                   <input
@@ -896,12 +724,12 @@ function Dashboard({ session }: { session: Session }) {
               <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendBlogReport}>
                 {pending === "report" ? "블로그 글 생성 요청 중..." : "블로그 글 생성 요청"}
               </button>
-              {dailyReportCompleted && (
+              {canUseReports && dailyReportCompleted && (
                 <button disabled={pending !== null || !selectedSignalDate} onClick={downloadDailyReport}>
                   {pending === "reportDownload" ? "종합 리포트 확인 중..." : "종합 리포트 다운로드"}
                 </button>
               )}
-              {hasCompletedReport(aiReports, "daily_blog") && (
+              {canUseReports && hasCompletedReport(aiReports, "daily_blog") && (
                 <button disabled={pending !== null || !selectedSignalDate} onClick={downloadDailyBlogReport}>
                   {pending === "reportDownload" ? "블로그 글 확인 중..." : "종합 블로그 글 다운로드"}
                 </button>
@@ -998,7 +826,7 @@ function Dashboard({ session }: { session: Session }) {
             row,
           })}
         />
-        {isScanAdmin && (
+        {canUseReports && (
           <DataPanel
             title={selectedSignalDate ? `${selectedSignalDate} AI 리포트 상태` : "AI 리포트 상태"}
             rows={aiReports.map(normalizeAiReportStatusRow)}
@@ -1457,6 +1285,13 @@ function labelForPending(key: string) {
     watcherRunsRefresh: "와쳐 실행 로그 새로고침",
   };
   return labels[key] || "요청";
+}
+
+function membershipLabel(role?: string | null) {
+  if (!role) return "권한 확인 중";
+  if (role === "admin") return "관리자";
+  if (role === "paid") return "유료회원";
+  return "무료회원";
 }
 
 function AccountPanel({ account, onRefresh, refreshing }: { account: KisAccount | null; onRefresh: () => void; refreshing: boolean }) {

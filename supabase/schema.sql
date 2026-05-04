@@ -1,18 +1,3 @@
-create table if not exists broker_credentials (
-  user_id uuid primary key,
-  kis_app_key_enc text not null,
-  kis_app_secret_enc text not null,
-  kis_account_no text not null,
-  kis_account_product_code text not null default '01',
-  mode text not null default 'paper',
-  telegram_bot_token_enc text,
-  telegram_chat_id text,
-  live_order_enabled boolean not null default false,
-  enabled boolean not null default true,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
 create table if not exists broker_accounts (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null,
@@ -33,6 +18,29 @@ create table if not exists broker_accounts (
   updated_at timestamptz not null default now(),
   constraint uq_broker_accounts_user_mode unique (user_id, mode)
 );
+
+create table if not exists user_memberships (
+  user_id uuid primary key,
+  role text not null default 'free' check (role in ('admin', 'free', 'paid')),
+  paid_until timestamptz,
+  report_enabled boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+insert into user_memberships (user_id, role, report_enabled)
+select
+  id,
+  'admin',
+  true
+from auth.users
+on conflict (user_id) do nothing;
+
+update user_memberships
+set role = 'admin',
+    report_enabled = true,
+    updated_at = now()
+where user_id in (select id from auth.users);
 
 create table if not exists signals (
   id bigint generated always as identity primary key,
@@ -260,14 +268,12 @@ alter table positions add column if not exists take_profit_1_done boolean not nu
 alter table positions add column if not exists take_profit_2_done boolean not null default false;
 alter table positions add column if not exists broker_account_id uuid;
 alter table trade_logs add column if not exists broker_account_id uuid;
-alter table broker_credentials add column if not exists live_order_enabled boolean not null default false;
 alter table scan_runs add column if not exists started_at timestamptz;
 alter table scan_runs add column if not exists finished_at timestamptz;
 alter table scan_runs add column if not exists universe_scope text not null default 'all';
 alter table broker_accounts add column if not exists access_token_enc text;
 alter table broker_accounts add column if not exists access_token_expires_at timestamptz;
 alter table broker_accounts add column if not exists telegram_bot_token_enc text;
-alter table broker_credentials add column if not exists telegram_bot_token_enc text;
 alter table strategy_settings add column if not exists use_day_candle_filter boolean not null default false;
 alter table strategy_settings add column if not exists use_breakeven_after_tp1 boolean not null default false;
 alter table strategy_settings add column if not exists use_kijun_exit boolean not null default false;
@@ -311,38 +317,6 @@ alter table watcher_runs add column if not exists remaining_daily_slots integer;
 create index if not exists idx_positions_user_account_status on positions (user_id, broker_account_id, status);
 create index if not exists idx_trade_logs_user_account_created_at on trade_logs (user_id, broker_account_id, created_at desc);
 
-insert into broker_accounts (
-  user_id,
-  label,
-  kis_app_key_enc,
-  kis_app_secret_enc,
-  kis_account_no,
-  kis_account_product_code,
-  mode,
-  telegram_chat_id,
-  live_order_enabled,
-  enabled,
-  is_active,
-  created_at,
-  updated_at
-)
-select
-  user_id,
-  case when mode = 'live' then '실전투자' else '모의투자' end,
-  kis_app_key_enc,
-  kis_app_secret_enc,
-  kis_account_no,
-  kis_account_product_code,
-  mode,
-  telegram_chat_id,
-  live_order_enabled,
-  enabled,
-  true,
-  created_at,
-  updated_at
-from broker_credentials
-on conflict (user_id, mode) do nothing;
-
 update positions
 set broker_account_id = broker_accounts.id
 from broker_accounts
@@ -357,8 +331,8 @@ where trade_logs.broker_account_id is null
   and trade_logs.user_id = broker_accounts.user_id
   and broker_accounts.mode = 'paper';
 
-alter table broker_credentials enable row level security;
 alter table broker_accounts enable row level security;
+alter table user_memberships enable row level security;
 alter table signals enable row level security;
 alter table shared_signals enable row level security;
 alter table scan_runs enable row level security;
@@ -370,14 +344,14 @@ alter table trade_decision_logs enable row level security;
 alter table watcher_runs enable row level security;
 alter table ai_reports enable row level security;
 
-drop policy if exists "Users can read own broker credentials" on broker_credentials;
-create policy "Users can read own broker credentials"
-  on broker_credentials for select
-  using (auth.uid() = user_id);
-
 drop policy if exists "Users can read own broker accounts" on broker_accounts;
 create policy "Users can read own broker accounts"
   on broker_accounts for select
+  using (auth.uid() = user_id);
+
+drop policy if exists "Users can read own membership" on user_memberships;
+create policy "Users can read own membership"
+  on user_memberships for select
   using (auth.uid() = user_id);
 
 drop policy if exists "Users can read own signals" on signals;
@@ -426,6 +400,24 @@ create policy "Users can read own watcher runs"
   using (auth.uid() = user_id);
 
 drop policy if exists "Authenticated users can read ai reports" on ai_reports;
-create policy "Authenticated users can read ai reports"
+drop policy if exists "Report members can read ai reports" on ai_reports;
+create policy "Report members can read ai reports"
   on ai_reports for select
-  using (auth.uid() is not null);
+  using (
+    exists (
+      select 1
+      from user_memberships
+      where user_memberships.user_id = auth.uid()
+        and (
+          user_memberships.role = 'admin'
+          or (
+            user_memberships.role = 'paid'
+            and user_memberships.report_enabled = true
+            and user_memberships.paid_until is not null
+            and user_memberships.paid_until > now()
+          )
+        )
+    )
+  );
+
+drop table if exists broker_credentials;

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
@@ -12,6 +12,7 @@ from app.services.broker_credentials import (
     set_active_broker_account,
 )
 from app.services.kis import client_from_credentials, extract_cash, extract_total_equity
+from app.services.memberships import require_live_trading_access
 
 
 router = APIRouter(prefix="/broker", tags=["broker"])
@@ -107,6 +108,10 @@ async def save_kis_credentials(
     payload: BrokerCredentialIn,
     user: CurrentUser = Depends(get_current_user),
 ) -> BrokerCredentialOut:
+    if payload.mode not in {"paper", "live"}:
+        raise HTTPException(status_code=400, detail="Invalid KIS account mode.")
+    if payload.mode == "live":
+        await require_live_trading_access(user.id, user.email)
     row = await save_broker_credentials(user.id, payload)
     return account_out(row)
 
@@ -125,6 +130,10 @@ async def activate_kis_account(
     account_id: str,
     user: CurrentUser = Depends(get_current_user),
 ) -> BrokerAccountOut:
+    accounts = await list_broker_accounts(user.id)
+    target = next((account for account in accounts if account.get("id") == account_id), None)
+    if target and target.get("mode") == "live":
+        await require_live_trading_access(user.id, user.email)
     row = await set_active_broker_account(user.id, account_id)
     return BrokerAccountOut(**account_out(row).model_dump())
 
@@ -132,6 +141,8 @@ async def activate_kis_account(
 @router.get("/kis/account", response_model=KisAccountOut)
 async def get_kis_account(user: CurrentUser = Depends(get_current_user)) -> KisAccountOut:
     credentials = await get_decrypted_broker_credentials(user.id)
+    if (credentials.get("mode") or "paper") == "live":
+        await require_live_trading_access(user.id, user.email)
     client = client_from_credentials(credentials, enable_orders=False)
     account = f"{credentials['kis_account_no']}-{credentials.get('kis_account_product_code') or '01'}"
     mode = credentials.get("mode") or "paper"

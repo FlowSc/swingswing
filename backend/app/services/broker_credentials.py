@@ -6,10 +6,10 @@ from fastapi import HTTPException
 
 from app.core.security import decrypt_secret, encrypt_secret
 from app.schemas.broker import BrokerCredentialIn, TelegramSettingsIn
+from app.services.memberships import can_use_live_trading_for_user_id
 from app.services.supabase_rest import SupabaseRest
 
 
-TABLE = "broker_credentials"
 ACCOUNTS_TABLE = "broker_accounts"
 
 
@@ -180,8 +180,7 @@ async def get_broker_credentials(user_id: str) -> dict | None:
     if rows:
         return rows[0]
 
-    legacy_rows = await rest.select(TABLE, filters={"user_id": f"eq.{user_id}"}, limit=1)
-    return legacy_rows[0] if legacy_rows else None
+    return None
 
 
 async def get_decrypted_broker_credentials(user_id: str) -> dict:
@@ -195,19 +194,22 @@ async def list_enabled_broker_credentials() -> list[dict]:
     rest = SupabaseRest()
     rows = await rest.select(ACCOUNTS_TABLE, filters={"enabled": "eq.true", "is_active": "eq.true"})
     if rows:
-        return [_decrypt_account(row) for row in rows]
-    legacy_rows = await rest.select(TABLE, filters={"enabled": "eq.true"})
-    return [_decrypt_account(row) for row in legacy_rows]
+        credentials: list[dict] = []
+        for row in rows:
+            if (row.get("mode") or "paper") == "live" and not await can_use_live_trading_for_user_id(row["user_id"]):
+                continue
+            credentials.append(_decrypt_account(row))
+        return credentials
+    return []
 
 
 async def list_telegram_recipients() -> list[dict]:
     rest = SupabaseRest()
     rows = await rest.select(ACCOUNTS_TABLE, order="created_at.desc")
-    legacy_rows = await rest.select(TABLE, order="created_at.desc")
     recipients: list[dict] = []
     seen: set[tuple[str, str]] = set()
 
-    for row in [*rows, *legacy_rows]:
+    for row in rows:
         chat_id = row.get("telegram_chat_id")
         token_enc = row.get("telegram_bot_token_enc")
         if not chat_id or not token_enc:
@@ -240,11 +242,4 @@ async def set_bot_enabled(user_id: str, enabled: bool) -> dict:
     )
     if rows:
         return _public_account(rows[0])
-    legacy_rows = await rest.patch(
-        TABLE,
-        filters={"user_id": f"eq.{user_id}"},
-        payload={"enabled": enabled},
-    )
-    if not legacy_rows:
-        raise HTTPException(status_code=404, detail="Broker credentials not configured")
-    return legacy_rows[0]
+    raise HTTPException(status_code=404, detail="Broker credentials not configured")

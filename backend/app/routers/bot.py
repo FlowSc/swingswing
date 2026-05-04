@@ -9,6 +9,7 @@ from app.core.config import get_settings
 from app.schemas.bot import BotControlIn, BotControlOut, StrategySettingsIn, StrategySettingsOut, WatchTickIn
 from app.services.broker_credentials import get_decrypted_broker_credentials, set_bot_enabled
 from app.services.ai_report import queue_ai_report
+from app.services.memberships import require_admin_access, require_live_trading_access, require_report_access
 from app.services.scanner import finalize_chunked_scan, prepare_chunked_scan_state, process_scan_chunk
 from app.services.strategy_settings import get_strategy_settings, save_strategy_settings
 from app.services.supabase_rest import SupabaseRest
@@ -23,12 +24,6 @@ class SingleSignalReportIn(BaseModel):
     code: str = Field(pattern=r"^\d{6}$")
 
 
-def require_scan_admin(user: CurrentUser) -> None:
-    settings = get_settings()
-    if (user.email or "").lower() != settings.scan_admin_email.lower():
-        raise HTTPException(status_code=403, detail="Only scan admin can run signal scans")
-
-
 def now_iso() -> str:
     return datetime.now(ZoneInfo(get_settings().timezone)).isoformat()
 
@@ -38,6 +33,10 @@ async def control_bot(
     payload: BotControlIn,
     user: CurrentUser = Depends(get_current_user),
 ) -> BotControlOut:
+    if payload.enabled:
+        credentials = await get_decrypted_broker_credentials(user.id)
+        if (credentials.get("mode") or "paper") == "live":
+            await require_live_trading_access(user.id, user.email)
     row = await set_bot_enabled(user.id, payload.enabled)
     return BotControlOut(user_id=row["user_id"], enabled=row["enabled"])
 
@@ -60,7 +59,7 @@ async def scan(
     universe_scope: str = Query("all", pattern="^(limited|all)$"),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    require_scan_admin(user)
+    await require_admin_access(user.id, user.email)
     state = await prepare_chunked_scan_state(universe_scope=universe_scope)
     rows = await SupabaseRest().insert(
         "scan_runs",
@@ -87,7 +86,7 @@ async def scan(
 
 @router.post("/scan-runs/{scan_run_id}/step")
 async def scan_step(scan_run_id: int, user: CurrentUser = Depends(get_current_user)) -> dict:
-    require_scan_admin(user)
+    await require_admin_access(user.id, user.email)
     rows = await SupabaseRest().select("scan_runs", filters={"id": f"eq.{scan_run_id}"}, limit=1)
     if not rows:
         raise HTTPException(status_code=404, detail="Scan run not found")
@@ -154,7 +153,7 @@ async def send_daily_report(
     report_style: str = Query("report", pattern=r"^(report|blog)$"),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    require_scan_admin(user)
+    await require_report_access(user.id, user.email)
     target_date = trade_date or datetime.now(ZoneInfo(get_settings().timezone)).date().isoformat()
     rows = await SupabaseRest().select(
         "shared_signals",
@@ -180,7 +179,7 @@ async def send_single_signal_report(
     report_style: str = Query("report", pattern=r"^(report|blog)$"),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    require_scan_admin(user)
+    await require_report_access(user.id, user.email)
     rows = await SupabaseRest().select(
         "shared_signals",
         filters={"trade_date": f"eq.{payload.trade_date}", "code": f"eq.{payload.code}"},
@@ -212,7 +211,7 @@ async def get_report(
     code: str | None = Query(None, pattern=r"^\d{6}$"),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    require_scan_admin(user)
+    await require_report_access(user.id, user.email)
     filters = {
         "trade_date": f"eq.{trade_date}",
         "report_type": f"eq.{report_type}",
@@ -234,7 +233,7 @@ async def list_report_statuses(
     trade_date: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$"),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
-    require_scan_admin(user)
+    await require_report_access(user.id, user.email)
     return await SupabaseRest().select(
         "ai_reports",
         columns="id,trade_date,report_type,code,name,title,status,error,created_at,started_at,finished_at",
@@ -250,6 +249,8 @@ async def watch_tick(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     credentials = await get_decrypted_broker_credentials(user.id)
+    if (credentials.get("mode") or "paper") == "live":
+        await require_live_trading_access(user.id, user.email)
     return await run_watch_tick_for_user(credentials, test_mode=payload.test_mode, dry_run=payload.dry_run)
 
 
