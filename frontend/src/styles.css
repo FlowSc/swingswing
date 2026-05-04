@@ -789,6 +789,24 @@ a {
   font-size: 14px;
 }
 
+.admin-notice-box {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-notice-box textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 92px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+}
+
 .account-summary {
   display: flex;
   flex-wrap: wrap;

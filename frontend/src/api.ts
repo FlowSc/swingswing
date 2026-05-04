@@ -370,6 +370,8 @@ export const api = {
     request<ScanStartResult>(`/bot/scan?universe_scope=${encodeURIComponent(universeScope)}`, session, { method: "POST" }),
   scanStep: (session: Session, scanRunId: number) => request<ScanRun>(`/bot/scan-runs/${scanRunId}/step`, session, { method: "POST" }),
   latestScanRun: (session: Session) => request<ScanRun | null>("/bot/scan-runs/latest", session),
+  sendSharedTelegramNotice: (session: Session, message: string) =>
+    request<{ sent: boolean; message: string }>("/bot/telegram/shared-notice", session, { method: "POST", body: JSON.stringify({ message }) }),
   sendDailyReport: (session: Session, tradeDate?: string, reportStyle: "report" | "blog" = "report") => {
     const params = new URLSearchParams({ report_style: reportStyle });
     if (tradeDate) params.set("trade_date", tradeDate);

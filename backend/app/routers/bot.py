@@ -13,6 +13,7 @@ from app.services.memberships import require_admin_access, require_live_trading_
 from app.services.scanner import finalize_chunked_scan, get_scan_market_status, prepare_chunked_scan_state, process_scan_chunk
 from app.services.strategy_settings import get_strategy_settings, save_strategy_settings
 from app.services.supabase_rest import SupabaseRest
+from app.services.telegram import send_telegram_message
 from app.services.watcher import force_liquidate_position_for_user, run_watch_tick_for_user
 
 
@@ -26,6 +27,10 @@ class SingleSignalReportIn(BaseModel):
 
 class ForceLiquidateIn(BaseModel):
     dry_run: bool = False
+
+
+class SharedTelegramNoticeIn(BaseModel):
+    message: str = Field(min_length=1, max_length=3000)
 
 
 def now_iso() -> str:
@@ -159,6 +164,20 @@ async def scan_step(scan_run_id: int, user: CurrentUser = Depends(get_current_us
 async def latest_scan_run(user: CurrentUser = Depends(get_current_user)) -> dict | None:
     rows = await SupabaseRest().select("scan_runs", order="created_at.desc", limit=1)
     return rows[0] if rows else None
+
+
+@router.post("/telegram/shared-notice")
+async def send_shared_telegram_notice(
+    payload: SharedTelegramNoticeIn,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    await require_admin_access(user.id, user.email)
+    text = "\n".join(["[스윙봇 공지]", payload.message.strip()])
+    sent = await send_telegram_message(None, text)
+    return {
+        "sent": sent,
+        "message": "Shared telegram notice sent." if sent else "Shared telegram settings are missing or Telegram delivery failed.",
+    }
 
 
 @router.post("/reports/daily")
