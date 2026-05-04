@@ -11,6 +11,7 @@ from app.services.broker_credentials import get_broker_credentials
 from app.services.backtest import finalize_backtest_state, prepare_backtest_state, process_backtest_chunk, run_shared_signal_backtest
 from app.services.memberships import require_admin_access
 from app.services.supabase_rest import SupabaseRest
+from app.services.watcher import sort_signals_for_autotrading
 
 
 router = APIRouter(tags=["trading"])
@@ -29,12 +30,13 @@ async def signals_by_date(
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
     try:
-        return await SupabaseRest().select(
+        rows = await SupabaseRest().select(
             "shared_signals",
             filters={"trade_date": f"eq.{trade_date}"},
             order="score.desc",
-            limit=30,
+            limit=300,
         )
+        return sort_signals_for_autotrading(rows)[:30]
     except Exception:
         logger.exception("Failed to load signals: trade_date=%s user_id=%s", trade_date, user.id)
         return []

@@ -278,10 +278,12 @@ export function enrichPlanPercentRow(row: Record<string, unknown>) {
   const takeProfit1 = row.take_profit_1 ?? exitPlan.take_profit_1 ?? raw.TakeProfit1;
   const takeProfit2 = row.take_profit_2 ?? exitPlan.take_profit_2 ?? raw.TakeProfit2;
   const trailingStop = row.trailing_stop ?? exitPlan.trailing_stop ?? raw.TrailingStop;
+  const autoTradingScore = raw.AutoTradingScore ?? row.auto_trading_score;
   return {
     ...row,
     핵심군: isCoreUniverseSignal(raw) ? translateCoreUniverse(raw.CoreUniverseType) : "전종목",
-    auto_trading_score: raw.AutoTradingScore ?? row.auto_trading_score,
+    자동매매적합도: autoTradingScore,
+    auto_trading_score: autoTradingScore,
     stop_loss_pct: formatPlanPct(exitPlan.stop_loss_pct) || formatPercentFromEntry(stopLoss, entry),
     take_profit_1_pct: formatPlanPct(exitPlan.take_profit_1_pct) || formatPercentFromEntry(takeProfit1, entry),
     take_profit_2_pct: formatPlanPct(exitPlan.take_profit_2_pct) || formatPercentFromEntry(takeProfit2, entry),
