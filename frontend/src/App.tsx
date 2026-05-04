@@ -966,7 +966,7 @@ function Dashboard({ session }: { session: Session }) {
           <DataPanel
             title={selectedSignalDate ? `${selectedSignalDate} 시그널` : "시그널"}
             rows={signals.map(enrichPlanPercentRow)}
-            columns={["score", "핵심군", "name", "entry", "stop_loss", "stop_loss_pct", "take_profit_2", "take_profit_2_pct", "code"]}
+            columns={["auto_trading_score", "score", "핵심군", "name", "entry", "stop_loss", "stop_loss_pct", "take_profit_2", "take_profit_2_pct", "code"]}
             maxRows={30}
             headerAction={signalDates.length > 0 ? (
               <div className="panel-actions">

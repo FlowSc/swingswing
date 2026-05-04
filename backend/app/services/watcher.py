@@ -621,11 +621,94 @@ async def today_entry_codes(user_id: str, broker_account_id: str | None) -> set[
 
 
 async def today_signals() -> list[dict]:
-    return await SupabaseRest().select(
+    signals = await SupabaseRest().select(
         "shared_signals",
         filters={"trade_date": f"eq.{now_kst().date().isoformat()}"},
         order="score.desc",
     )
+    return sort_signals_for_autotrading(signals)
+
+
+def sort_signals_for_autotrading(signals: list[dict]) -> list[dict]:
+    enriched: list[dict] = []
+    for signal in signals:
+        auto_score, auto_factors = autotrading_score(signal)
+        raw = signal.get("raw") if isinstance(signal.get("raw"), dict) else {}
+        enriched.append(
+            {
+                **signal,
+                "auto_trading_score": auto_score,
+                "raw": {
+                    **raw,
+                    "AutoTradingScore": auto_score,
+                    "AutoTradingFactors": auto_factors,
+                },
+            }
+        )
+    return sorted(enriched, key=lambda item: (float(item.get("auto_trading_score") or 0), float(item.get("score") or 0)), reverse=True)
+
+
+def autotrading_score(signal: dict) -> tuple[float, dict]:
+    raw = signal.get("raw") if isinstance(signal.get("raw"), dict) else {}
+    base_score = _float(signal.get("score") or raw.get("Score"), 0.0)
+    stop_pct = abs(_percent_from_entry(signal.get("stop_loss") or raw.get("StopLoss"), signal.get("entry") or raw.get("Entry")) or _float(raw.get("StopPct"), 0.0))
+    atr_pct = _float(raw.get("ATR(%)"), 0.0)
+    gap_pct = _float(raw.get("Gap(%)"), 0.0)
+    upper_shadow = _float(raw.get("UpperShadowRatio"), 0.0)
+    relative_strength = _float(raw.get("RelativeStrength_20D(%)"), 0.0)
+    distance_to_kijun = _float(raw.get("DistanceToKijun(%)"), 0.0)
+    volume_spike = _float(raw.get("VolumeSpikeRatio"), 1.0)
+    trading_value_spike = _float(raw.get("TradingValueSpikeRatio"), 1.0)
+    market_passed = bool(raw.get("MarketFilterPassed"))
+    core_universe = bool(raw.get("CoreUniverse"))
+    cloud_pullback = bool(raw.get("CloudPullbackSupport"))
+    bear_cloud_breakout = bool(raw.get("BearCloudBreakoutPressure"))
+
+    score = 50.0
+    score += min(25.0, max(-15.0, (base_score - 12.0) * 1.4))
+    score += 8.0 if market_passed else -12.0
+    score += 6.0 if core_universe else 0.0
+    score += 6.0 if relative_strength >= 0 else -6.0
+    score += 5.0 if distance_to_kijun >= 0 else -8.0
+    score += 4.0 if volume_spike >= 1.2 else 0.0
+    score += 4.0 if trading_value_spike >= 1.2 else 0.0
+    score += 5.0 if cloud_pullback else 0.0
+    score += 3.0 if bear_cloud_breakout else 0.0
+    score -= 10.0 if stop_pct > 10 else 4.0 if stop_pct > 8 else 0.0
+    score -= 8.0 if atr_pct >= 7 else 3.0 if atr_pct >= 5 else 0.0
+    score -= 6.0 if gap_pct >= 4 else 0.0
+    score -= 6.0 if upper_shadow >= 0.45 else 0.0
+    final_score = round(max(0.0, min(100.0, score)), 2)
+    return final_score, {
+        "base_score": base_score,
+        "market_passed": market_passed,
+        "core_universe": core_universe,
+        "relative_strength_20d_pct": relative_strength,
+        "distance_to_kijun_pct": distance_to_kijun,
+        "stop_pct": stop_pct,
+        "atr_pct": atr_pct,
+        "gap_pct": gap_pct,
+        "upper_shadow_ratio": upper_shadow,
+        "volume_spike_ratio": volume_spike,
+        "trading_value_spike_ratio": trading_value_spike,
+    }
+
+
+def _float(value: object, default: float = 0.0) -> float:
+    try:
+        if value is None or value == "":
+            return default
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return default
+
+
+def _percent_from_entry(target: object, entry: object) -> float | None:
+    target_value = _float(target, 0.0)
+    entry_value = _float(entry, 0.0)
+    if entry_value <= 0 or target_value <= 0:
+        return None
+    return (target_value / entry_value - 1) * 100
 
 
 async def open_pending_orders(user_id: str, broker_account_id: str | None) -> list[dict]:
@@ -1285,10 +1368,20 @@ async def enter_positions(
                 "affordable_slots": affordable_slots,
                 "daily_slots": daily_slots,
                 "strategy": strategy,
+                "signal_ordering": "auto_trading_score_desc",
+                "top_auto_trading_scores": [
+                    {
+                        "code": signal.get("code"),
+                        "name": signal.get("name"),
+                        "score": signal.get("score"),
+                        "auto_trading_score": signal.get("auto_trading_score"),
+                    }
+                    for signal in signals[:10]
+                ],
             }
         )
     logger.warning(
-        "Watcher enter summary: user_id=%s account_id=%s cash=%s equity=%s signals=%s open=%s kis=%s pending=%s today_entries=%s pending_buys=%s remaining_daily_slots=%s available_slots=%s affordable_slots=%s daily_slots=%s min_order=%s max_new=%s position_pct=%s risk_pct=%s",
+        "Watcher enter summary: user_id=%s account_id=%s cash=%s equity=%s signals=%s open=%s kis=%s pending=%s today_entries=%s pending_buys=%s remaining_daily_slots=%s available_slots=%s affordable_slots=%s daily_slots=%s ordering=%s min_order=%s max_new=%s position_pct=%s risk_pct=%s",
         user_id,
         broker_account_id,
         cash,
@@ -1303,6 +1396,7 @@ async def enter_positions(
         available_slots,
         affordable_slots,
         daily_slots,
+        "auto_trading_score_desc",
         strategy["min_order_amount"],
         strategy["max_new_positions_per_day"],
         strategy["position_capital_pct"],
@@ -1332,12 +1426,12 @@ async def enter_positions(
             await insert_decision_log(user_id, broker_account_id, "SKIP", signal, reason, raw={"strategy": strategy})
             continue
         if score < float(strategy["min_score"]):
-            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "ScoreBelowMinimum", raw={"strategy": strategy})
+            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "ScoreBelowMinimum", raw={"strategy": strategy, "auto_trading_score": signal.get("auto_trading_score")})
             continue
 
         quote = await get_quote_safe(client, signal["code"])
         if quote is None:
-            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "QuoteFailed", raw={"strategy": strategy})
+            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "QuoteFailed", raw={"strategy": strategy, "auto_trading_score": signal.get("auto_trading_score")})
             continue
         if quote["current_price"] <= 0:
             await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "InvalidQuote", raw={"quote": quote, "strategy": strategy})

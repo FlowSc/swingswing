@@ -214,6 +214,7 @@ export function SignalDetail({
       ]} />
       <DetailSection title="진입 근거" items={[
         ["점수", row.score],
+        ["자동매매지수", analysis.suitability.score],
         ["사유", translateReasons(raw.Reasons)],
         ["RSI14", raw.RSI14],
         ["일목 전환선", raw.Tenkan],

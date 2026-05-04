@@ -281,6 +281,7 @@ export function enrichPlanPercentRow(row: Record<string, unknown>) {
   return {
     ...row,
     핵심군: isCoreUniverseSignal(raw) ? translateCoreUniverse(raw.CoreUniverseType) : "전종목",
+    auto_trading_score: raw.AutoTradingScore ?? row.auto_trading_score,
     stop_loss_pct: formatPlanPct(exitPlan.stop_loss_pct) || formatPercentFromEntry(stopLoss, entry),
     take_profit_1_pct: formatPlanPct(exitPlan.take_profit_1_pct) || formatPercentFromEntry(takeProfit1, entry),
     take_profit_2_pct: formatPlanPct(exitPlan.take_profit_2_pct) || formatPercentFromEntry(takeProfit2, entry),
