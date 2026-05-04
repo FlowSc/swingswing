@@ -177,6 +177,63 @@ def sizing_reject_detail(sizing: dict) -> str:
     return f"주문 기준가 {price:,}원, 주당 손실위험 {per_share_risk:,}원, 리스크 가능수량 {qty_by_risk}주, 자금 가능수량 {qty_by_capital}주 기준으로 매수 수량이 나오지 않았습니다."
 
 
+def decision_reason_detail(reason: str, signal: dict, *, price: int | None = None, raw: dict | None = None) -> str:
+    raw = raw or {}
+    quote = raw.get("quote") if isinstance(raw.get("quote"), dict) else {}
+    strategy = raw.get("strategy") if isinstance(raw.get("strategy"), dict) else {}
+    sizing = raw.get("sizing") if isinstance(raw.get("sizing"), dict) else {}
+    realtime = raw.get("realtime") if isinstance(raw.get("realtime"), dict) else {}
+    current_price = int(price or quote.get("current_price") or 0)
+    entry = int(float(signal.get("entry") or 0))
+
+    if raw.get("sizing_detail"):
+        return str(raw["sizing_detail"])
+    if reason == "ScoreBelowMinimum":
+        return f"시그널 점수 {float(signal.get('score') or 0):.2f}점이 전략 최소 점수 {float(strategy.get('min_score') or 0):.2f}점보다 낮아서 제외했습니다."
+    if reason == "BelowEntryBand":
+        threshold = int(entry * float(strategy.get("min_entry_discount") or 0))
+        return f"현재가 {current_price:,}원이 진입가 {entry:,}원 × 하단 허용배율 {float(strategy.get('min_entry_discount') or 0):.3f} = {threshold:,}원보다 낮아서 제외했습니다."
+    if reason == "AboveEntryBand":
+        threshold = int(entry * float(strategy.get("max_entry_premium") or 0))
+        return f"현재가 {current_price:,}원이 진입가 {entry:,}원 × 상단 허용배율 {float(strategy.get('max_entry_premium') or 0):.3f} = {threshold:,}원보다 높아서 제외했습니다."
+    if reason == "BelowKijun":
+        kijun = int(float((signal.get("raw") or {}).get("Kijun") or 0))
+        return f"현재가 {current_price:,}원이 일목 기준선 {kijun:,}원보다 낮아서 제외했습니다."
+    if reason == "AboveBBUpper":
+        bb_upper = int(float((signal.get("raw") or {}).get("BBUpper") or 0))
+        return f"현재가 {current_price:,}원이 볼린저 상단 {bb_upper:,}원보다 높아서 제외했습니다."
+    if reason == "PulledBackFromDayHigh":
+        day_high = int(quote.get("day_high") or 0)
+        limit_pct = float(strategy.get("max_pullback_from_day_high") or 0)
+        threshold = int(day_high * (1 - limit_pct))
+        return f"당일 고점 {day_high:,}원에서 허용 하락폭 {limit_pct * 100:.2f}% 기준선은 {threshold:,}원인데, 현재가가 {current_price:,}원이라 제외했습니다."
+    if reason == "OrderableCashExceeded":
+        cash = int(float(raw.get("cash") or sizing.get("cash") or 0))
+        order_price = int(float(raw.get("order_price") or sizing.get("price") or current_price or 0))
+        qty = int(float(raw.get("qty") or sizing.get("original_qty") or sizing.get("candidate_qty") or 0))
+        max_qty = int(float(raw.get("max_orderable_qty") or 0))
+        attempted_amount = qty * order_price
+        max_amount = max_qty * order_price
+        return f"KIS 주문가능현금 {cash:,}원 기준 최대 {max_qty}주({max_amount:,}원)까지 가능한데, 주문 시도 수량 {qty}주({attempted_amount:,}원)가 더 커서 제외했습니다."
+    if reason.startswith("Realtime"):
+        return f"실시간 필터 결과 체결강도 {realtime.get('strength', '-')}, 매수/매도 호가잔량 비율 {realtime.get('bid_ask_ratio', '-')}, 스프레드 {realtime.get('spread_pct', '-')} 기준으로 제외했습니다."
+    if reason == "AlreadyHeld":
+        return "DB 포지션 또는 KIS 잔고에 이미 보유 중인 종목이라 중복 매수를 막았습니다."
+    if reason == "PendingOrderExists":
+        return "동일 종목의 미체결 주문이 남아 있어 추가 주문을 막았습니다."
+    if reason == "StoppedOutToday":
+        return "오늘 손절로 매도된 종목이라 당일 재매수를 막았습니다."
+    if reason == "KijunExitedToday":
+        return "오늘 일목 기준선 이탈로 매도된 종목이라 당일 재진입을 막았습니다."
+    if reason == "QuoteFailed":
+        return "KIS 현재가 조회가 실패해 주문 가격과 리스크를 계산할 수 없어 제외했습니다."
+    if reason == "InvalidQuote":
+        return f"KIS 현재가 값이 {current_price:,}원으로 비정상이라 제외했습니다."
+    if reason == "VolatilityInterruption":
+        return "KIS 현재가 응답에서 VI 발동 상태로 확인되어 신규 매수를 막았습니다."
+    return reason_label(reason)
+
+
 def realtime_reason_code(reason: str) -> str:
     return {
         "realtime_strength_weak": "RealtimeStrengthWeak",
@@ -513,6 +570,13 @@ async def insert_decision_log(
     raw: dict | None = None,
 ) -> None:
     today = now_kst().date().isoformat()
+    payload_raw = {
+        **(raw or {}),
+        "reason_code": reason,
+        "reason_ko": reason_label(reason),
+        "reason_detail": decision_reason_detail(reason, signal, price=price, raw=raw or {}),
+        "logged_at": now_kst().isoformat(),
+    }
     try:
         await SupabaseRest().upsert(
             "trade_decision_logs",
@@ -527,12 +591,7 @@ async def insert_decision_log(
                 "score": signal.get("score"),
                 "reason_code": reason,
                 "reason": reason_label(reason),
-                "raw": {
-                    **(raw or {}),
-                    "reason_code": reason,
-                    "reason_ko": reason_label(reason),
-                    "logged_at": now_kst().isoformat(),
-                },
+                "raw": payload_raw,
                 "created_at": now_kst().isoformat(),
             },
             on_conflict="decision_date,user_id,broker_account_id,code,reason_code",
