@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import date, datetime, timedelta
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 import FinanceDataReader as fdr
@@ -22,13 +23,18 @@ logger = logging.getLogger(__name__)
 LOOKBACK_DAYS = 430
 FORWARD_DAYS = 35
 MAX_DAILY_SIGNALS = 10
+ProgressCallback = Callable[[dict], None]
 
 
 async def run_shared_signal_backtest(days: int = 120, max_signals: int = 200) -> dict:
     return await asyncio.to_thread(run_historical_rescan_backtest_sync, days, max_signals)
 
 
-def run_historical_rescan_backtest_sync(days: int = 120, max_signals: int = 200) -> dict:
+def run_historical_rescan_backtest_sync(
+    days: int = 120,
+    max_signals: int = 200,
+    progress_callback: ProgressCallback | None = None,
+) -> dict:
     end = datetime.now(ZoneInfo(get_settings().timezone)).date()
     start = end - timedelta(days=days)
     fetch_start = start - timedelta(days=LOOKBACK_DAYS)
@@ -86,11 +92,31 @@ def run_historical_rescan_backtest_sync(days: int = 120, max_signals: int = 200)
             continue
         if index == 1 or index % 50 == 0:
             logger.warning("Historical backtest progress: %s/%s signals=%s skipped=%s", index, len(universe), len(signals), skipped)
+            if progress_callback:
+                progress_callback(
+                    {
+                        "processed": index,
+                        "total": len(universe),
+                        "signals": len(signals),
+                        "skipped": skipped,
+                    }
+                )
 
     daily_ranked = rank_daily_signals(signals)
     ranked_for_test = sorted(daily_ranked, key=lambda item: item["trade_date"], reverse=True)[:max_signals]
     trades = [trade for item in ranked_for_test if (trade := simulate_generated_signal_safe(item))]
-    return summarize_trades(days, trades, source="historical_rescan", generated_signals=len(daily_ranked), skipped_symbols=skipped)
+    result = summarize_trades(days, trades, source="historical_rescan", generated_signals=len(daily_ranked), skipped_symbols=skipped)
+    if progress_callback:
+        progress_callback(
+            {
+                "processed": len(universe),
+                "total": len(universe),
+                "signals": len(signals),
+                "skipped": skipped,
+                "tested": len(trades),
+            }
+        )
+    return result
 
 
 def load_market_frame(start: date, end: date) -> pd.DataFrame:

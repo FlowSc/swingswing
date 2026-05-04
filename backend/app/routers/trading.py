@@ -1,18 +1,21 @@
 from fastapi import APIRouter, Depends, Query
+import asyncio
 from datetime import datetime
 import logging
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
 from app.services.broker_credentials import get_broker_credentials
-from app.services.backtest import run_shared_signal_backtest
+from app.services.backtest import run_historical_rescan_backtest_sync, run_shared_signal_backtest
 from app.services.memberships import require_admin_access
 from app.services.supabase_rest import SupabaseRest
 
 
 router = APIRouter(tags=["trading"])
 logger = logging.getLogger(__name__)
+BACKTEST_JOBS: dict[str, dict] = {}
 
 
 @router.get("/signals/today")
@@ -202,6 +205,60 @@ async def backtest_shared_signals(
 ) -> dict:
     await require_admin_access(user.id, user.email)
     return await run_shared_signal_backtest(days=days, max_signals=max_signals)
+
+
+@router.post("/backtest/historical/start")
+async def start_historical_backtest(
+    days: int = Query(120, ge=30, le=730),
+    max_signals: int = Query(200, ge=10, le=1000),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    await require_admin_access(user.id, user.email)
+    job_id = str(uuid4())
+    BACKTEST_JOBS[job_id] = {
+        "job_id": job_id,
+        "user_id": user.id,
+        "status": "running",
+        "days": days,
+        "max_signals": max_signals,
+        "progress": {"processed": 0, "total": 0, "signals": 0, "skipped": 0},
+        "result": None,
+        "error": None,
+        "created_at": datetime.now(ZoneInfo(get_settings().timezone)).isoformat(),
+        "completed_at": None,
+    }
+    asyncio.create_task(_run_historical_backtest_job(job_id, days, max_signals))
+    return BACKTEST_JOBS[job_id]
+
+
+@router.get("/backtest/historical/jobs/{job_id}")
+async def get_historical_backtest_job(
+    job_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    await require_admin_access(user.id, user.email)
+    job = BACKTEST_JOBS.get(job_id)
+    if not job or job.get("user_id") != user.id:
+        return {"job_id": job_id, "status": "not_found", "progress": {}, "result": None, "error": "Backtest job not found."}
+    return job
+
+
+async def _run_historical_backtest_job(job_id: str, days: int, max_signals: int) -> None:
+    job = BACKTEST_JOBS[job_id]
+
+    def update_progress(progress: dict) -> None:
+        job["progress"] = progress
+
+    try:
+        result = await asyncio.to_thread(run_historical_rescan_backtest_sync, days, max_signals, update_progress)
+        job["result"] = result
+        job["status"] = "completed"
+    except Exception as exc:
+        logger.exception("Historical backtest job failed: job_id=%s", job_id)
+        job["error"] = str(exc)
+        job["status"] = "failed"
+    finally:
+        job["completed_at"] = datetime.now(ZoneInfo(get_settings().timezone)).isoformat()
 
 
 def summarize_reasons(rows: list[dict]) -> list[dict]:

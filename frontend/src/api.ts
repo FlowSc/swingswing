@@ -261,6 +261,24 @@ export type BacktestResult = {
   trades: BacktestTrade[];
 };
 
+export type BacktestJob = {
+  job_id: string;
+  status: "running" | "completed" | "failed" | "not_found";
+  days?: number;
+  max_signals?: number;
+  progress?: {
+    processed?: number;
+    total?: number;
+    signals?: number;
+    skipped?: number;
+    tested?: number;
+  };
+  result?: BacktestResult | null;
+  error?: string | null;
+  created_at?: string;
+  completed_at?: string | null;
+};
+
 export type AiReportType = "daily" | "signal" | "daily_blog" | "signal_blog";
 
 export type AiReport = {
@@ -374,4 +392,8 @@ export const api = {
   dailyDashboard: (session: Session) => request<DailyDashboard>("/dashboard/daily", session),
   backtestSharedSignals: (session: Session, days = 120, maxSignals = 200) =>
     request<BacktestResult>(`/backtest/shared-signals?days=${days}&max_signals=${maxSignals}`, session),
+  startHistoricalBacktest: (session: Session, days = 120, maxSignals = 200) =>
+    request<BacktestJob>(`/backtest/historical/start?days=${days}&max_signals=${maxSignals}`, session, { method: "POST" }),
+  getHistoricalBacktestJob: (session: Session, jobId: string) =>
+    request<BacktestJob>(`/backtest/historical/jobs/${encodeURIComponent(jobId)}`, session),
 };

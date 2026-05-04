@@ -5,6 +5,7 @@ import {
   type AiReport,
   type AiReportType,
   type AiReportStatus,
+  type BacktestJob,
   type BacktestResult,
   type BrokerAccount,
   type BrokerPayload,
@@ -88,6 +89,7 @@ function Dashboard({ session }: { session: Session }) {
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
   const [aiReports, setAiReports] = useState<AiReportStatus[]>([]);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
+  const [backtestJob, setBacktestJob] = useState<BacktestJob | null>(null);
   const [backtestDays, setBacktestDays] = useState(120);
   const [kisAccount, setKisAccount] = useState<KisAccount | null>(null);
   const [strategy, setStrategy] = useState<StrategySettings>(defaultStrategy);
@@ -301,14 +303,43 @@ function Dashboard({ session }: { session: Session }) {
 
   async function runBacktest() {
     setPending("backtest");
-    setStatus({ type: "info", message: "백테스트 실행 중..." });
+    setStatus({ type: "info", message: "백테스트 잡 시작 중..." });
     try {
-      const result = await api.backtestSharedSignals(session, backtestDays, 300);
-      setBacktest(result);
-      setStatus({
-        type: "info",
-        message: `백테스트 완료: 재생성 후보 ${result.generated_signals || 0}개 / 검증 ${result.signals_tested}건 / 승률 ${result.win_rate}% / 평균 ${result.avg_return_pct}%`,
-      });
+      const started = await api.startHistoricalBacktest(session, backtestDays, 300);
+      setBacktestJob(started);
+      setStatus({ type: "info", message: "백테스트 실행 중: 서버에서 백그라운드로 계산합니다." });
+      let current = started;
+      let fetchFailures = 0;
+      for (let attempt = 0; attempt < 240; attempt += 1) {
+        await delay(5000);
+        try {
+          current = await api.getHistoricalBacktestJob(session, started.job_id);
+          fetchFailures = 0;
+        } catch (error) {
+          fetchFailures += 1;
+          if (fetchFailures >= 3) throw error;
+          setStatus({ type: "info", message: "백테스트 상태 확인이 잠시 실패했습니다. 계산은 계속 진행 중일 수 있어 재확인합니다." });
+          continue;
+        }
+        setBacktestJob(current);
+        const progress = current.progress || {};
+        if (current.status === "completed" && current.result) {
+          setBacktest(current.result);
+          setStatus({
+            type: "info",
+            message: `백테스트 완료: 재생성 후보 ${current.result.generated_signals || 0}개 / 검증 ${current.result.signals_tested}건 / 승률 ${current.result.win_rate}% / 평균 ${current.result.avg_return_pct}%`,
+          });
+          return;
+        }
+        if (current.status === "failed") {
+          throw new Error(current.error || "백테스트 실패");
+        }
+        setStatus({
+          type: "info",
+          message: `백테스트 진행: ${progress.processed || 0}/${progress.total || 0}개 처리 / 누적 후보 ${progress.signals || 0}개`,
+        });
+      }
+      setStatus({ type: "info", message: "백테스트 상태 확인 시간이 길어졌습니다. 잠시 후 다시 실행하면 새 잡으로 시작됩니다." });
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -886,6 +917,7 @@ function Dashboard({ session }: { session: Session }) {
             {isScanAdmin && (
               <BacktestPanel
                 result={backtest}
+                job={backtestJob}
                 days={backtestDays}
                 pending={pending === "backtest"}
                 onDaysChange={setBacktestDays}
@@ -1216,17 +1248,23 @@ function StrategyPanel({
 
 function BacktestPanel({
   result,
+  job,
   days,
   pending,
   onDaysChange,
   onRun,
 }: {
   result: BacktestResult | null;
+  job: BacktestJob | null;
   days: number;
   pending: boolean;
   onDaysChange: (days: number) => void;
   onRun: () => void;
 }) {
+  const progress = job?.progress || {};
+  const progressTotal = progress.total || 0;
+  const progressProcessed = progress.processed || 0;
+  const progressPct = progressTotal > 0 ? Math.min(100, Math.round((progressProcessed / progressTotal) * 100)) : 0;
   const summary = result
     ? [
         ["생성 후보", result.generated_signals || 0],
@@ -1254,6 +1292,18 @@ function BacktestPanel({
           </button>
         </div>
       </div>
+      {pending && (
+        <div className="backtest-progress">
+          <div className="backtest-progress-bar">
+            <span style={{ width: `${progressPct}%` }} />
+          </div>
+          <p>
+            {progressTotal > 0
+              ? `${progressProcessed}/${progressTotal}개 처리, 누적 후보 ${progress.signals || 0}개`
+              : "백테스트 잡을 준비 중입니다."}
+          </p>
+        </div>
+      )}
       {!result ? (
         <p className="empty">저장된 시그널이 없어도 과거 가격 데이터를 다시 스캔해 당시 조건으로 후보를 재생성한 뒤, 진입가·손절가·익절가·최대 보유일을 검증합니다.</p>
       ) : (
@@ -2311,4 +2361,8 @@ function formatDateTime(value: unknown) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
