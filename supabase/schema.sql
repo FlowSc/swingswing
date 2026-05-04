@@ -239,6 +239,24 @@ create table if not exists watcher_runs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists watch_jobs (
+  id bigint generated always as identity primary key,
+  job_type text not null check (job_type in ('intraday', 'realtime_position')),
+  user_id uuid not null,
+  broker_account_id uuid not null,
+  status text not null default 'pending' check (status in ('pending', 'running', 'completed', 'failed', 'skipped')),
+  scheduled_for timestamptz not null,
+  run_after timestamptz not null default now(),
+  attempts integer not null default 0,
+  locked_by text,
+  locked_until timestamptz,
+  error text,
+  result jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  started_at timestamptz,
+  finished_at timestamptz
+);
+
 create table if not exists ai_reports (
   id bigint generated always as identity primary key,
   trade_date date not null,
@@ -273,6 +291,11 @@ create index if not exists idx_trade_logs_user_created_at on trade_logs (user_id
 create index if not exists idx_trade_decision_logs_user_date on trade_decision_logs (user_id, decision_date, created_at desc);
 create index if not exists idx_watcher_runs_user_created_at on watcher_runs (user_id, created_at desc);
 create index if not exists idx_watcher_runs_account_created_at on watcher_runs (user_id, broker_account_id, created_at desc);
+create unique index if not exists uq_watch_jobs_type_account_scheduled
+  on watch_jobs (job_type, broker_account_id, scheduled_for);
+create index if not exists idx_watch_jobs_status_run_after
+  on watch_jobs (job_type, status, run_after, scheduled_for);
+create index if not exists idx_watch_jobs_user_created_at on watch_jobs (user_id, created_at desc);
 create index if not exists idx_broker_accounts_user_active on broker_accounts (user_id, is_active);
 create index if not exists idx_ai_reports_trade_date on ai_reports (trade_date desc, report_type, code);
 create index if not exists idx_ai_reports_status_created_at on ai_reports (status, created_at);
@@ -355,6 +378,7 @@ alter table trade_logs enable row level security;
 alter table pending_orders enable row level security;
 alter table trade_decision_logs enable row level security;
 alter table watcher_runs enable row level security;
+alter table watch_jobs enable row level security;
 alter table ai_reports enable row level security;
 
 drop policy if exists "Users can read own broker accounts" on broker_accounts;
@@ -405,6 +429,11 @@ create policy "Users can read own trade decision logs"
 drop policy if exists "Users can read own watcher runs" on watcher_runs;
 create policy "Users can read own watcher runs"
   on watcher_runs for select
+  using (auth.uid() = user_id);
+
+drop policy if exists "Users can read own watch jobs" on watch_jobs;
+create policy "Users can read own watch jobs"
+  on watch_jobs for select
   using (auth.uid() = user_id);
 
 drop policy if exists "Authenticated users can read ai reports" on ai_reports;

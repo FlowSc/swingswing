@@ -313,6 +313,41 @@ alter table backtest_trades
   add column if not exists remaining_qty_ratio numeric;
 ```
 
+자동매매 와쳐 큐를 쓰려면 기존 DB에 아래 테이블도 추가해야 합니다.
+
+```sql
+create table if not exists watch_jobs (
+  id bigint generated always as identity primary key,
+  job_type text not null check (job_type in ('intraday', 'realtime_position')),
+  user_id uuid not null,
+  broker_account_id uuid not null,
+  status text not null default 'pending' check (status in ('pending', 'running', 'completed', 'failed', 'skipped')),
+  scheduled_for timestamptz not null,
+  run_after timestamptz not null default now(),
+  attempts integer not null default 0,
+  locked_by text,
+  locked_until timestamptz,
+  error text,
+  result jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  started_at timestamptz,
+  finished_at timestamptz
+);
+
+create unique index if not exists uq_watch_jobs_type_account_scheduled
+  on watch_jobs (job_type, broker_account_id, scheduled_for);
+create index if not exists idx_watch_jobs_status_run_after
+  on watch_jobs (job_type, status, run_after, scheduled_for);
+create index if not exists idx_watch_jobs_user_created_at on watch_jobs (user_id, created_at desc);
+
+alter table watch_jobs enable row level security;
+
+drop policy if exists "Users can read own watch jobs" on watch_jobs;
+create policy "Users can read own watch jobs"
+  on watch_jobs for select
+  using (auth.uid() = user_id);
+```
+
 ## 현재 상태
 
 - Git 저장소 초기화 완료

@@ -190,6 +190,18 @@ async def get_decrypted_broker_credentials(user_id: str) -> dict:
     return _decrypt_account(row)
 
 
+async def get_decrypted_broker_credentials_by_account_id(account_id: str) -> dict | None:
+    rows = await SupabaseRest().select(ACCOUNTS_TABLE, filters={"id": f"eq.{account_id}"}, limit=1)
+    if not rows:
+        return None
+    row = rows[0]
+    if not row.get("enabled") or not row.get("is_active"):
+        return None
+    if (row.get("mode") or "paper") == "live" and not await can_use_live_trading_for_user_id(row["user_id"]):
+        return None
+    return _decrypt_account(row)
+
+
 async def list_enabled_broker_credentials() -> list[dict]:
     rest = SupabaseRest()
     rows = await rest.select(ACCOUNTS_TABLE, filters={"enabled": "eq.true", "is_active": "eq.true"})
@@ -201,6 +213,22 @@ async def list_enabled_broker_credentials() -> list[dict]:
             credentials.append(_decrypt_account(row))
         return credentials
     return []
+
+
+async def list_enabled_broker_accounts_for_watch() -> list[dict]:
+    rows = await SupabaseRest().select(ACCOUNTS_TABLE, filters={"enabled": "eq.true", "is_active": "eq.true"})
+    accounts: list[dict] = []
+    for row in rows:
+        if (row.get("mode") or "paper") == "live" and not await can_use_live_trading_for_user_id(row["user_id"]):
+            continue
+        accounts.append(
+            {
+                "id": row.get("id"),
+                "user_id": row.get("user_id"),
+                "mode": row.get("mode") or "paper",
+            }
+        )
+    return accounts
 
 
 async def list_telegram_recipients() -> list[dict]:

@@ -11,6 +11,7 @@ from app.services.ai_report import process_queued_ai_reports
 from app.services.scanner import get_scan_market_status, scan_and_store_for_user
 from app.services.supabase_rest import SupabaseRest
 from app.services.telegram import send_telegram_message_with_bot
+from app.services.watch_jobs import enqueue_watch_jobs, process_watch_jobs
 from app.services.watcher import run_realtime_position_watch_for_user, run_watch_tick_for_user
 
 
@@ -31,23 +32,63 @@ async def daily_scan_job() -> None:
 
 
 async def intraday_watch_job() -> None:
+    settings = get_settings()
+    try:
+        await enqueue_watch_jobs("intraday", interval_minutes=5)
+        await process_watch_jobs(
+            "intraday",
+            run_intraday_watch_credentials,
+            batch_size=max(1, int(settings.watch_worker_batch_size)),
+            worker_id="scheduler:intraday",
+        )
+        return
+    except RuntimeError:
+        logger.exception("Queued intraday watcher failed. Falling back to direct execution.")
+
     credentials_rows = await list_enabled_broker_credentials()
     for credentials in credentials_rows:
         try:
-            await run_watch_tick_for_user(credentials, test_mode=False, dry_run=False)
+            await run_intraday_watch_credentials(credentials)
         except Exception as exc:
             logger.exception("Intraday watcher failed: user_id=%s account_id=%s", credentials.get("user_id"), credentials.get("id"))
-            await notify_watcher_failure(credentials, "5분 와쳐", exc)
 
 
 async def realtime_position_watch_job() -> None:
+    settings = get_settings()
+    try:
+        await enqueue_watch_jobs("realtime_position", interval_minutes=1)
+        await process_watch_jobs(
+            "realtime_position",
+            run_realtime_position_watch_credentials,
+            batch_size=max(1, int(settings.realtime_watch_worker_batch_size)),
+            worker_id="scheduler:realtime_position",
+        )
+        return
+    except RuntimeError:
+        logger.exception("Queued realtime position watcher failed. Falling back to direct execution.")
+
     credentials_rows = await list_enabled_broker_credentials()
     for credentials in credentials_rows:
         try:
-            await run_realtime_position_watch_for_user(credentials, dry_run=False)
+            await run_realtime_position_watch_credentials(credentials)
         except Exception as exc:
             logger.exception("Realtime position watcher failed: user_id=%s account_id=%s", credentials.get("user_id"), credentials.get("id"))
-            await notify_watcher_failure(credentials, "1분 포지션 감시", exc)
+
+
+async def run_intraday_watch_credentials(credentials: dict) -> dict:
+    try:
+        return await run_watch_tick_for_user(credentials, test_mode=False, dry_run=False)
+    except Exception as exc:
+        await notify_watcher_failure(credentials, "5분 와쳐", exc)
+        raise
+
+
+async def run_realtime_position_watch_credentials(credentials: dict) -> dict:
+    try:
+        return await run_realtime_position_watch_for_user(credentials, dry_run=False)
+    except Exception as exc:
+        await notify_watcher_failure(credentials, "1분 포지션 감시", exc)
+        raise
 
 
 async def notify_watcher_failure(credentials: dict, job_name: str, exc: Exception) -> None:
