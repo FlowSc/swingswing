@@ -2314,6 +2314,11 @@ function translateReason(reason: unknown) {
     QuoteFailed: "현재가 조회 실패",
     InvalidQuote: "현재가 값 비정상",
     SizingRejected: "수량/리스크/최소주문금액 조건 미충족",
+    SizingRiskBudgetTooSmall: "리스크 허용손실이 너무 작음",
+    SizingCapitalTooSmall: "현금/종목당 배정금액 부족",
+    SizingBelowMinOrder: "계산 주문금액이 최소 주문금액 미만",
+    SizingInvalidPrice: "진입가 또는 손절가 비정상",
+    OrderableCashExceeded: "주문가능금액 초과",
     StrategySellCooldown: "매수 직후 전략 매도 쿨다운",
     UnrealizedLossLimit: "미실현손실 한도 도달",
   };

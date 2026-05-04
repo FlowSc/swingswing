@@ -75,6 +75,10 @@ REASON_LABELS = {
     "QuoteFailed": "현재가 조회 실패",
     "InvalidQuote": "현재가 값 비정상",
     "SizingRejected": "수량/리스크/최소주문금액 조건 미충족",
+    "SizingRiskBudgetTooSmall": "리스크 1회 허용손실이 너무 작음",
+    "SizingCapitalTooSmall": "현금/종목당 배정금액이 부족함",
+    "SizingBelowMinOrder": "계산된 주문금액이 최소 주문금액보다 작음",
+    "SizingInvalidPrice": "진입가 또는 손절가가 비정상",
     "OrderableCashExceeded": "주문가능금액 초과",
     "StrategySellCooldown": "매수 직후 전략 매도 쿨다운",
     "DailyLossLimit": "하루 손실 한도 도달",
@@ -132,6 +136,43 @@ def in_strategy_sell_cooldown(position: dict) -> bool:
 
 def reason_label(reason_code: str) -> str:
     return REASON_LABELS.get(reason_code, reason_code)
+
+
+def sizing_reject_reason_code(sizing: dict) -> str:
+    reason = sizing.get("reject_reason")
+    if reason == "risk_budget_too_small":
+        return "SizingRiskBudgetTooSmall"
+    if reason == "cash_or_position_capital_too_small":
+        return "SizingCapitalTooSmall"
+    if reason == "below_min_order_amount":
+        return "SizingBelowMinOrder"
+    if reason == "invalid_price_or_stop":
+        return "SizingInvalidPrice"
+    return "SizingRejected"
+
+
+def sizing_reject_detail(sizing: dict) -> str:
+    reason = sizing.get("reject_reason")
+    price = int(float(sizing.get("price") or 0))
+    per_share_risk = int(float(sizing.get("per_share_risk") or 0))
+    max_risk = int(float(sizing.get("max_risk_capital") or 0))
+    usable = int(float(sizing.get("usable_capital") or 0))
+    qty_by_risk = int(float(sizing.get("qty_by_risk") or 0))
+    qty_by_capital = int(float(sizing.get("qty_by_capital") or 0))
+    candidate_amount = int(float(sizing.get("candidate_order_amount") or 0))
+    min_order = int(float(sizing.get("min_order_amount") or 0))
+    risk_pct = float(sizing.get("risk_per_trade_pct") or 0) * 100
+    position_pct = float(sizing.get("position_capital_pct") or 0) * 100
+
+    if reason == "risk_budget_too_small":
+        return f"1회 리스크 허용손실 {max_risk:,}원이 주당 손실위험 {per_share_risk:,}원보다 작아 1주도 살 수 없습니다. 현재 리스크 설정은 {risk_pct:.2f}%입니다."
+    if reason == "cash_or_position_capital_too_small":
+        return f"주문 기준가 {price:,}원 대비 사용 가능 배정금액 {usable:,}원이 부족합니다. 종목당 최대 비중 설정은 {position_pct:.1f}%입니다."
+    if reason == "below_min_order_amount":
+        return f"리스크/현금 기준 계산 수량이 리스크 {qty_by_risk}주, 자금 {qty_by_capital}주라 주문금액 {candidate_amount:,}원에 그칩니다. 최소 주문금액 {min_order:,}원보다 작습니다."
+    if reason == "invalid_price_or_stop":
+        return f"진입가 {price:,}원 또는 주당 손실위험 {per_share_risk:,}원이 비정상이라 수량 계산을 중단했습니다."
+    return f"주문 기준가 {price:,}원, 주당 손실위험 {per_share_risk:,}원, 리스크 가능수량 {qty_by_risk}주, 자금 가능수량 {qty_by_capital}주 기준으로 매수 수량이 나오지 않았습니다."
 
 
 def realtime_reason_code(reason: str) -> str:
@@ -1205,7 +1246,16 @@ async def enter_positions(
             min_order_amount=int(strategy["min_order_amount"]),
         )
         if qty <= 0:
-            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "SizingRejected", price=current_price, raw={"quote": quote, "sizing": sizing, "strategy": strategy})
+            sizing_reason = sizing_reject_reason_code(sizing)
+            await insert_decision_log(
+                user_id,
+                broker_account_id,
+                "SKIP",
+                signal,
+                sizing_reason,
+                price=current_price,
+                raw={"quote": quote, "sizing": sizing, "sizing_detail": sizing_reject_detail(sizing), "strategy": strategy},
+            )
             continue
         max_orderable_qty = int((cash * BUY_ORDER_CASH_BUFFER) // max(order_price, 1))
         if max_orderable_qty <= 0 or max_orderable_qty * order_price < int(strategy["min_order_amount"]):
