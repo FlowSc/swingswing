@@ -167,7 +167,9 @@ def sizing_reject_detail(sizing: dict) -> str:
     if reason == "risk_budget_too_small":
         return f"1회 리스크 허용손실 {max_risk:,}원이 주당 손실위험 {per_share_risk:,}원보다 작아 1주도 살 수 없습니다. 현재 리스크 설정은 {risk_pct:.2f}%입니다."
     if reason == "cash_or_position_capital_too_small":
-        return f"주문 기준가 {price:,}원 대비 사용 가능 배정금액 {usable:,}원이 부족합니다. 종목당 최대 비중 설정은 {position_pct:.1f}%입니다."
+        cash = int(float(sizing.get("cash") or 0))
+        max_position = int(float(sizing.get("max_position_capital") or 0))
+        return f"주문 기준가 {price:,}원 대비 봇이 확인한 주문가능현금 {cash:,}원, 종목당 배정한도 {max_position:,}원, 실제 사용 가능 배정금액 {usable:,}원이라 1주도 살 수 없습니다. 프론트 예수금과 다르면 KIS 주문가능현금 또는 미체결 주문을 확인해야 합니다."
     if reason == "below_min_order_amount":
         return f"리스크/현금 기준 계산 수량이 리스크 {qty_by_risk}주, 자금 {qty_by_capital}주라 주문금액 {candidate_amount:,}원에 그칩니다. 최소 주문금액 {min_order:,}원보다 작습니다."
     if reason == "invalid_price_or_stop":
@@ -1236,10 +1238,11 @@ async def enter_positions(
             continue
 
         sizing_signal = {**signal, "entry": order_price}
+        effective_total_equity = total_equity if total_equity > 0 else DEFAULT_CAPITAL
         qty, sizing = calculate_order_qty(
             sizing_signal,
             cash=cash,
-            total_equity=max(total_equity, DEFAULT_CAPITAL),
+            total_equity=effective_total_equity,
             available_slots=1,
             position_capital_pct=float(strategy["position_capital_pct"]),
             risk_per_trade_pct=float(strategy["risk_per_trade_pct"]),
