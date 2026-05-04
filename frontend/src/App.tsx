@@ -19,38 +19,39 @@ import {
   type WatcherRun,
 } from "./api";
 import { AuthCard } from "./components/AuthCard";
+import { BacktestPanel, ReportCalendarPanel } from "./components/AdminPanels";
 import {
   AccountPanel,
   AutoTradingRules,
-  BacktestPanel,
   cleanErrorMessage,
   DailyDashboardPanel,
   dashboardPages,
   DashboardNav,
   DataPanel,
-  delay,
-  DetailOverlay,
   downloadHtmlReport,
-  enrichPlanPercentRow,
-  enrichTradeLogRow,
-  formatCell,
-  formatDateTime,
   hasCompletedReport,
   labelForPending,
-  latestWatcherIssue,
   membershipLabel,
-  normalizeDecisionRow,
-  normalizeTradeLogRow,
-  normalizeWatcherRunRow,
-  ReportCalendarPanel,
   StatusLine,
   StrategyPanel,
   WatcherIssuePanel,
 } from "./components/DashboardParts";
+import { DetailOverlay } from "./components/DetailViews";
 import { Shell } from "./components/Shell";
 import { defaultStrategy, strategyPresets } from "./strategyPresets";
 import { supabase } from "./supabase";
 import type { DashboardPage, DetailSelection, Status } from "./types";
+import {
+  delay,
+  enrichPlanPercentRow,
+  enrichTradeLogRow,
+  formatCell,
+  formatDateTime,
+  latestWatcherIssue,
+  normalizeDecisionRow,
+  normalizeTradeLogRow,
+  normalizeWatcherRunRow,
+} from "./utils/dashboard";
 
 const emptyBroker: BrokerPayload = {
   kis_app_key: "",
