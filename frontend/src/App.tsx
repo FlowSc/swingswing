@@ -26,7 +26,7 @@ import { supabase } from "./supabase";
 
 type Status = { type: "idle" | "info" | "error"; message: string };
 type DashboardPage = "overview" | "signals" | "account" | "trading" | "strategy" | "admin";
-type DetailKind = "signal" | "log" | "position" | "account" | "decision" | "watcher";
+type DetailKind = "signal" | "log" | "position" | "account" | "decision" | "watcher" | "report";
 type DetailSelection = { title: string; kind: DetailKind; row: Record<string, unknown> };
 
 const emptyBroker: BrokerPayload = {
@@ -459,6 +459,21 @@ function Dashboard({ session }: { session: Session }) {
     });
   }
 
+  async function downloadReportStatus(row: Record<string, unknown>) {
+    const reportType = String(row.report_type || "") as AiReportType;
+    const tradeDate = String(row.trade_date || selectedSignalDate || "");
+    const rawCode = String(row.code || "");
+    const code = rawCode && rawCode !== "ALL" ? rawCode.padStart(6, "0") : undefined;
+    if (!tradeDate || !reportType) {
+      setStatus({ type: "error", message: "다운로드할 리포트 날짜 또는 종류가 없습니다." });
+      return;
+    }
+    await downloadReport({
+      key: reportType === "daily" || reportType === "daily_blog" ? "reportDownload" : "signalReportDownload",
+      payload: { trade_date: tradeDate, report_type: reportType, code },
+    });
+  }
+
   async function downloadReport({
     key,
     payload,
@@ -738,7 +753,12 @@ function Dashboard({ session }: { session: Session }) {
         )}
       </form>
 
-      <AccountPanel account={kisAccount} onRefresh={loadKisAccount} refreshing={pending === "account"} />
+      <AccountPanel
+        account={kisAccount}
+        onRefresh={loadKisAccount}
+        refreshing={pending === "account"}
+        onDetail={(title, row) => setDetail({ title, kind: "account", row })}
+      />
     </div>
   );
 
@@ -931,6 +951,11 @@ function Dashboard({ session }: { session: Session }) {
                 rows={aiReports.map(normalizeAiReportStatusRow)}
                 columns={["report_kind_ko", "name", "code", "status_ko", "created_at", "started_at", "finished_at", "error"]}
                 maxRows={20}
+                onRowClick={(row) => setDetail({
+                  title: `${formatCell(row.report_kind_ko)} ${formatCell(row.name || row.code)}`,
+                  kind: "report",
+                  row,
+                })}
                 headerAction={(
                   <button className="ghost small" type="button" disabled={pending === "signalsRefresh" || !selectedSignalDate} onClick={refreshSignalsOnly}>
                     {pending === "signalsRefresh" ? "갱신 중" : "새로고침"}
@@ -962,6 +987,7 @@ function Dashboard({ session }: { session: Session }) {
           onSendSignalBlogReport={sendSingleSignalBlogReport}
           onDownloadSignalReport={downloadSingleSignalReport}
           onDownloadSignalBlogReport={downloadSingleSignalBlogReport}
+          onDownloadReportStatus={downloadReportStatus}
           aiReports={aiReports}
           onClose={() => setDetail(null)}
         />
@@ -1505,16 +1531,39 @@ function membershipLabel(role?: string | null) {
   return "무료회원";
 }
 
-function AccountPanel({ account, onRefresh, refreshing }: { account: KisAccount | null; onRefresh: () => void; refreshing: boolean }) {
+function AccountPanel({
+  account,
+  onRefresh,
+  refreshing,
+  onDetail,
+}: {
+  account: KisAccount | null;
+  onRefresh: () => void;
+  refreshing: boolean;
+  onDetail: (title: string, row: Record<string, unknown>) => void;
+}) {
   const rows = account?.holdings.map((holding) => ({
+    row_type: "holding",
+    account: account.account,
     code: holding.code,
     name: holding.name,
     qty: holding.qty,
     avg_price: holding.avg_price,
     current_price: holding.current_price,
+    evaluation_amount: holding.evaluation_amount,
     profit_loss: holding.profit_loss,
     profit_loss_rate: holding.profit_loss_rate,
   })) || [];
+  const accountSummary = account
+    ? {
+        row_type: "summary",
+        account: account.account,
+        cash: account.cash,
+        total_equity: account.total_equity,
+        holdings_count: account.holdings_count,
+        holdings: account.holdings,
+      }
+    : null;
 
   return (
     <section className="panel data-panel account-panel">
@@ -1528,20 +1577,40 @@ function AccountPanel({ account, onRefresh, refreshing }: { account: KisAccount 
         <p className="empty">계좌 조회 전</p>
       ) : (
         <>
-          <div className="account-summary">
+          <div
+            className="account-summary clickable-summary"
+            role="button"
+            tabIndex={0}
+            onClick={() => accountSummary && onDetail(`${account.account} 계좌`, accountSummary)}
+            onKeyDown={(event) => {
+              if ((event.key === "Enter" || event.key === " ") && accountSummary) onDetail(`${account.account} 계좌`, accountSummary);
+            }}
+          >
             <span>계좌 {account.account}</span>
             <strong>예수금 {formatCell(account.cash)}원</strong>
             <strong>총평가 {formatCell(account.total_equity)}원</strong>
             <span>보유 {account.holdings_count}종목</span>
           </div>
-          <MiniTable rows={rows} columns={["code", "name", "qty", "avg_price", "current_price", "profit_loss", "profit_loss_rate"]} />
+          <MiniTable
+            rows={rows}
+            columns={["code", "name", "qty", "avg_price", "current_price", "evaluation_amount", "profit_loss", "profit_loss_rate"]}
+            onRowClick={(row) => onDetail(`${formatCell(row.name)} (${formatCell(row.code)})`, row)}
+          />
         </>
       )}
     </section>
   );
 }
 
-function MiniTable({ rows, columns }: { rows: Array<Record<string, unknown>>; columns: string[] }) {
+function MiniTable({
+  rows,
+  columns,
+  onRowClick,
+}: {
+  rows: Array<Record<string, unknown>>;
+  columns: string[];
+  onRowClick?: (row: Record<string, unknown>) => void;
+}) {
   if (rows.length === 0) {
     return <p className="empty">보유 종목 없음</p>;
   }
@@ -1553,7 +1622,11 @@ function MiniTable({ rows, columns }: { rows: Array<Record<string, unknown>>; co
         </thead>
         <tbody>
           {rows.map((row, index) => (
-            <tr key={String(row.code || index)}>
+            <tr
+              key={String(row.code || row.id || index)}
+              className={onRowClick ? "clickable-row" : undefined}
+              onClick={onRowClick ? () => onRowClick(row) : undefined}
+            >
               {columns.map((column) => <td key={column}>{formatCell(row[column])}</td>)}
             </tr>
           ))}
@@ -1716,6 +1789,7 @@ function DetailOverlay({
   onSendSignalBlogReport,
   onDownloadSignalReport,
   onDownloadSignalBlogReport,
+  onDownloadReportStatus,
   aiReports,
   onClose,
 }: {
@@ -1726,6 +1800,7 @@ function DetailOverlay({
   onSendSignalBlogReport: (row: Record<string, unknown>) => void;
   onDownloadSignalReport: (row: Record<string, unknown>) => void;
   onDownloadSignalBlogReport: (row: Record<string, unknown>) => void;
+  onDownloadReportStatus: (row: Record<string, unknown>) => void;
   aiReports: AiReportStatus[];
   onClose: () => void;
 }) {
@@ -1734,7 +1809,9 @@ function DetailOverlay({
       : detail.kind === "log" ? "매매 로그 상세"
         : detail.kind === "decision" ? "매수 제외 상세"
           : detail.kind === "watcher" ? "와쳐 실행 상세"
-          : "포지션 상세";
+            : detail.kind === "account" ? "계좌 상세"
+              : detail.kind === "report" ? "AI 리포트 상세"
+            : "포지션 상세";
   return (
     <div className="overlay-backdrop" onClick={onClose}>
       <aside className="detail-popover" onClick={(event) => event.stopPropagation()}>
@@ -1761,8 +1838,16 @@ function DetailOverlay({
         )}
         {detail.kind === "log" && <TradeLogDetail row={detail.row} />}
         {detail.kind === "position" && <PositionDetail row={detail.row} />}
+        {detail.kind === "account" && <AccountDetail row={detail.row} />}
         {detail.kind === "decision" && <DecisionDetail row={detail.row} />}
         {detail.kind === "watcher" && <WatcherRunDetail row={detail.row} />}
+        {detail.kind === "report" && (
+          <ReportStatusDetail
+            row={detail.row}
+            pending={pending === "reportDownload" || pending === "signalReportDownload"}
+            onDownload={() => onDownloadReportStatus(detail.row)}
+          />
+        )}
       </aside>
     </div>
   );
@@ -1927,6 +2012,94 @@ function TradeLogDetail({ row }: { row: Record<string, unknown> }) {
         ["샘플 수", realtime.samples],
         ["판단", realtime.reason],
       ]} />
+    </div>
+  );
+}
+
+function AccountDetail({ row }: { row: Record<string, unknown> }) {
+  const rowType = String(row.row_type || "");
+  const holdings = Array.isArray(row.holdings) ? row.holdings : [];
+  if (rowType === "summary") {
+    return (
+      <div className="detail-grid">
+        <DetailSection title="계좌 요약" items={[
+          ["계좌", row.account],
+          ["예수금", `${formatCell(row.cash)}원`],
+          ["총평가", `${formatCell(row.total_equity)}원`],
+          ["보유 종목 수", `${formatCell(row.holdings_count)}종목`],
+        ]} />
+        <DetailSection title="보유 종목 요약" items={[
+          ["보유 종목", holdings.length > 0 ? holdings.map((item) => {
+            const holding = asRecord(item);
+            return `${formatCell(holding.name || holding.code)} ${formatCell(holding.qty)}주`;
+          }).join(" / ") : "보유 종목 없음"],
+        ]} />
+      </div>
+    );
+  }
+
+  const avgPrice = Number(row.avg_price || 0);
+  const currentPrice = Number(row.current_price || 0);
+  const qty = Number(row.qty || 0);
+  const evaluationAmount = Number(row.evaluation_amount || currentPrice * qty || 0);
+  const investedAmount = avgPrice * qty;
+  return (
+    <div className="detail-grid">
+      <DetailSection title="보유 종목" items={[
+        ["계좌", row.account],
+        ["종목", `${formatCell(row.name)} (${formatCell(row.code)})`],
+        ["보유 수량", `${formatCell(row.qty)}주`],
+        ["평균 매입가", `${formatCell(row.avg_price)}원`],
+        ["현재가", `${formatCell(row.current_price)}원`],
+        ["평가금액", `${formatCell(evaluationAmount)}원`],
+        ["매입금액", `${formatCell(investedAmount)}원`],
+      ]} />
+      <DetailSection title="손익" items={[
+        ["평가손익", `${formatCell(row.profit_loss)}원`],
+        ["손익률", `${formatCell(row.profit_loss_rate)}%`],
+        ["주당 손익", `${formatCell(currentPrice - avgPrice)}원`],
+      ]} />
+      <DetailSection title="확인 포인트" items={[
+        ["자동매매 DB 포지션", "KIS 계좌 잔고 기준 정보입니다. 자동매매 포지션 상세는 포지션 메뉴에서 확인합니다."],
+        ["가격 기준", "KIS 계좌 조회 시점의 현재가/평가금액 기준입니다."],
+      ]} />
+    </div>
+  );
+}
+
+function ReportStatusDetail({
+  row,
+  pending,
+  onDownload,
+}: {
+  row: Record<string, unknown>;
+  pending: boolean;
+  onDownload: () => void;
+}) {
+  const completed = row.status === "completed";
+  return (
+    <div className="detail-grid">
+      {completed && (
+        <button className="primary detail-action" type="button" disabled={pending} onClick={onDownload}>
+          {pending ? "다운로드 확인 중..." : "완료된 리포트 다운로드"}
+        </button>
+      )}
+      <DetailSection title="리포트 상태" items={[
+        ["종류", row.report_kind_ko],
+        ["상태", row.status_ko],
+        ["날짜", row.trade_date],
+        ["종목", row.code === "ALL" ? "종합 리포트" : `${formatCell(row.name)} (${formatCell(row.code)})`],
+        ["제목", row.title],
+        ["생성 요청", formatDateTime(row.created_at)],
+        ["시작", formatDateTime(row.started_at)],
+        ["완료", formatDateTime(row.finished_at)],
+        ["오류", row.error],
+      ]} />
+      {!completed && (
+        <DetailSection title="다운로드 안내" items={[
+          ["상태", "완료된 리포트만 다운로드할 수 있습니다."],
+        ]} />
+      )}
     </div>
   );
 }

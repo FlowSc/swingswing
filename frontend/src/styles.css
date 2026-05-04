@@ -740,6 +740,15 @@ a {
   background: rgba(31, 93, 58, 0.1);
 }
 
+.clickable-summary {
+  cursor: pointer;
+}
+
+.clickable-summary:hover span,
+.clickable-summary:hover strong {
+  background: rgba(31, 93, 58, 0.16);
+}
+
 .empty {
   color: var(--muted);
 }
