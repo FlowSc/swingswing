@@ -24,6 +24,7 @@ import { defaultStrategy, strategyPresets } from "./strategyPresets";
 import { supabase } from "./supabase";
 
 type Status = { type: "idle" | "info" | "error"; message: string };
+type DashboardPage = "overview" | "signals" | "account" | "trading" | "strategy" | "admin";
 type DetailKind = "signal" | "log" | "position" | "account" | "decision" | "watcher";
 type DetailSelection = { title: string; kind: DetailKind; row: Record<string, unknown> };
 
@@ -94,6 +95,7 @@ function Dashboard({ session }: { session: Session }) {
   const [autoLoadedAccountKey, setAutoLoadedAccountKey] = useState("");
   const [detail, setDetail] = useState<DetailSelection | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+  const [activePage, setActivePage] = useState<DashboardPage>("overview");
   const isScanAdmin = Boolean(entitlements?.can_run_admin_scan);
   const canUseLiveTrading = Boolean(entitlements?.can_use_live_trading);
   const canUseReports = Boolean(entitlements?.can_use_reports);
@@ -541,6 +543,147 @@ function Dashboard({ session }: { session: Session }) {
 
   const shouldShowBrokerForm = !brokerStatus?.configured || editingBroker;
   const shouldShowTelegramForm = Boolean(brokerStatus?.configured && (!brokerStatus.telegram_configured || editingTelegram));
+  const pages = dashboardPages({ isScanAdmin, canUseReports });
+  const accountSection = (
+    <div className="grid two">
+      <form className="panel" onSubmit={saveBroker}>
+        <div className="section-title">
+          <h2>KIS 연결</h2>
+          {brokerStatus?.configured && (
+            <button className="ghost small" type="button" onClick={() => setEditingBroker((value) => !value)}>
+              {editingBroker ? "변경 취소" : "변경하기"}
+            </button>
+          )}
+        </div>
+
+        {brokerStatus?.configured && !editingBroker && (
+          <div className="saved-box">
+            <strong>저장된 연결 정보를 사용 중입니다.</strong>
+            <span>계좌 {brokerStatus.account_no}-{brokerStatus.account_product_code || "01"}</span>
+            <span>모드 {brokerStatus.mode || "paper"}</span>
+            <span>실전주문 {brokerStatus.live_order_enabled ? "사용자 허용" : "사용자 차단"}</span>
+            <span>매매 알림 {brokerStatus.telegram_configured ? "개인 봇 설정됨" : "미설정"}</span>
+            {brokerStatus.mode === "live" && !brokerStatus.server_live_trading_allowed && (
+              <span>서버 안전장치: 실전주문 차단 중</span>
+            )}
+            <p>앱키와 시크릿은 보안상 다시 표시하지 않습니다. 바꾸려면 변경하기를 누르고 새로 저장하세요.</p>
+          </div>
+        )}
+
+        {brokerAccounts.length > 0 && (
+          <div className="account-switcher">
+            {brokerAccounts.map((account) => (
+              <button
+                key={account.id}
+                className={account.is_active ? "account-chip active" : "account-chip"}
+                type="button"
+                disabled={pending !== null || account.is_active || (account.mode === "live" && !canUseLiveTrading)}
+                onClick={() => activateBrokerAccount(account.id)}
+              >
+                <strong>{account.mode === "live" ? "실전투자" : "모의투자"}</strong>
+                <span>{account.kis_account_no}-{account.kis_account_product_code}</span>
+                <small>{account.mode === "live" && !canUseLiveTrading ? "유료회원 이상 사용 가능" : account.is_active ? `현재 사용 중 · 자동매매 ${account.enabled ? "ON" : "OFF"} · 매매알림 ${account.telegram_configured ? "ON" : "OFF"}` : "교체하기"}</small>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {shouldShowBrokerForm && (
+          <>
+            <label>
+              KIS App Key
+              <input value={broker.kis_app_key} onChange={(event) => setBroker({ ...broker, kis_app_key: event.target.value })} required />
+            </label>
+            <label>
+              KIS App Secret
+              <textarea value={broker.kis_app_secret} onChange={(event) => setBroker({ ...broker, kis_app_secret: event.target.value })} required />
+            </label>
+            <div className="grid two tight">
+              <label>
+                계좌번호 8자리
+                <input value={broker.kis_account_no} onChange={(event) => setBroker({ ...broker, kis_account_no: event.target.value })} required />
+              </label>
+              <label>
+                상품코드
+                <input value={broker.kis_account_product_code} onChange={(event) => setBroker({ ...broker, kis_account_product_code: event.target.value })} required />
+              </label>
+            </div>
+            <label>
+              계좌 모드
+              <select value={broker.mode} onChange={(event) => setBroker({ ...broker, mode: event.target.value as "paper" | "live", live_order_enabled: false })}>
+                <option value="paper">모의투자</option>
+                <option value="live" disabled={!canUseLiveTrading}>실전투자{canUseLiveTrading ? "" : " - 유료회원 이상"}</option>
+              </select>
+            </label>
+            {!canUseLiveTrading && (
+              <p className="command-copy">무료회원은 모의투자만 사용할 수 있습니다. 실전투자 계좌 저장과 실전 자동매매는 백엔드에서도 차단됩니다.</p>
+            )}
+            {broker.mode === "live" && (
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={broker.live_order_enabled}
+                  onChange={(event) => setBroker({ ...broker, live_order_enabled: event.target.checked })}
+                />
+                실전 주문을 이 계정에서 허용
+              </label>
+            )}
+            <button className="primary" disabled={pending === "broker"}>{pending === "broker" ? "저장 중..." : "저장"}</button>
+          </>
+        )}
+      </form>
+
+      <form className="panel" onSubmit={saveTelegram}>
+        <div className="section-title">
+          <h2>매매 알림</h2>
+          {brokerStatus?.configured && brokerStatus.telegram_configured && (
+            <button className="ghost small" type="button" onClick={() => setEditingTelegram((value) => !value)}>
+              {editingTelegram ? "변경 취소" : "변경하기"}
+            </button>
+          )}
+        </div>
+        {brokerStatus?.configured && brokerStatus.telegram_configured && !editingTelegram && (
+          <div className="saved-box">
+            <strong>개인 텔레그램 봇 알림을 사용 중입니다.</strong>
+            <span>Chat ID {brokerStatus.telegram_chat_id || "저장됨"}</span>
+            <span>매수/매도 알림 ON</span>
+            <span>Shared signal 알림 ON</span>
+            <p>봇 토큰은 보안상 다시 표시하지 않습니다. 바꾸려면 변경하기를 누르고 새 토큰을 저장하세요.</p>
+          </div>
+        )}
+        {!brokerStatus?.configured && (
+          <p className="command-copy">KIS 계좌를 먼저 저장한 뒤 매매 알림을 설정할 수 있습니다.</p>
+        )}
+        {shouldShowTelegramForm && (
+          <>
+            <p className="command-copy">KIS 키와 별도로 저장합니다. 매수/매도 알림과 shared signal 알림을 받을 개인 텔레그램 봇 설정입니다.</p>
+            <label>
+              Telegram Bot Token
+              <input
+                value={telegramSettings.telegram_bot_token || ""}
+                onChange={(event) => setTelegramSettings({ ...telegramSettings, telegram_bot_token: event.target.value })}
+                placeholder="개인 봇 토큰"
+              />
+              <small>이미 저장된 토큰은 다시 표시하지 않습니다. 비워두면 기존 토큰을 유지합니다.</small>
+            </label>
+            <label>
+              Telegram Chat ID
+              <input
+                value={telegramSettings.telegram_chat_id || ""}
+                onChange={(event) => setTelegramSettings({ ...telegramSettings, telegram_chat_id: event.target.value })}
+                placeholder="예: 6583699681"
+              />
+            </label>
+            <button className="primary" disabled={pending === "telegram"}>
+              {pending === "telegram" ? "저장 중..." : "매매 알림 저장"}
+            </button>
+          </>
+        )}
+      </form>
+
+      <AccountPanel account={kisAccount} onRefresh={loadKisAccount} refreshing={pending === "account"} />
+    </div>
+  );
 
   return (
     <section className="dashboard">
@@ -557,315 +700,208 @@ function Dashboard({ session }: { session: Session }) {
         <button className="ghost" onClick={() => supabase.auth.signOut()}>로그아웃</button>
       </div>
 
-      <div className="grid two">
-        <form className="panel" onSubmit={saveBroker}>
-          <div className="section-title">
-            <h2>KIS 연결</h2>
-            {brokerStatus?.configured && (
-              <button className="ghost small" type="button" onClick={() => setEditingBroker((value) => !value)}>
-                {editingBroker ? "변경 취소" : "변경하기"}
+      <DashboardNav pages={pages} activePage={activePage} onChange={setActivePage} />
+
+      {activePage === "overview" && (
+        <div className="page-stack">
+          <div className="grid two">
+            <div className="panel command">
+              <h2>자동매매</h2>
+              <p className="command-copy">현재 활성 계정 기준으로 주문 감시를 켜거나 끕니다. 상세 설정은 전략 페이지에서 조정합니다.</p>
+              <button disabled={pending !== null || !brokerStatus?.configured || brokerStatus?.enabled} onClick={() => run("enable", () => api.setAutoTradingEnabled(session, true), "자동매매 ON 완료:")}>
+                {pending === "enable" ? "자동매매 켜는 중..." : "자동매매 ON"}
               </button>
-            )}
+              <button disabled={pending !== null || !brokerStatus?.configured || !brokerStatus?.enabled} onClick={() => run("disable", () => api.setAutoTradingEnabled(session, false), "자동매매 OFF 완료:")}>
+                {pending === "disable" ? "자동매매 끄는 중..." : "자동매매 OFF"}
+              </button>
+              <button disabled={pending !== null || !brokerStatus?.configured} onClick={loadKisAccount}>
+                {pending === "account" ? "계좌 조회 중..." : "KIS 계좌 조회"}
+              </button>
+              <a className="telegram-link" href="https://t.me/sc_swingbot" target="_blank" rel="noreferrer">
+                텔레그램 봇 추가하기
+              </a>
+              <StatusLine status={status} />
+            </div>
+            <DailyDashboardPanel dashboard={dailyDashboard} onRefresh={refreshDashboardOnly} refreshing={pending === "dashboardRefresh"} />
           </div>
-
-          {brokerStatus?.configured && !editingBroker && (
-            <div className="saved-box">
-              <strong>저장된 연결 정보를 사용 중입니다.</strong>
-              <span>계좌 {brokerStatus.account_no}-{brokerStatus.account_product_code || "01"}</span>
-              <span>모드 {brokerStatus.mode || "paper"}</span>
-              <span>실전주문 {brokerStatus.live_order_enabled ? "사용자 허용" : "사용자 차단"}</span>
-              <span>매매 알림 {brokerStatus.telegram_configured ? "개인 봇 설정됨" : "미설정"}</span>
-              {brokerStatus.mode === "live" && !brokerStatus.server_live_trading_allowed && (
-                <span>서버 안전장치: 실전주문 차단 중</span>
-              )}
-              <p>앱키와 시크릿은 보안상 다시 표시하지 않습니다. 바꾸려면 변경하기를 누르고 새로 저장하세요.</p>
-            </div>
-          )}
-
-          {brokerAccounts.length > 0 && (
-            <div className="account-switcher">
-              {brokerAccounts.map((account) => (
-                <button
-                  key={account.id}
-                  className={account.is_active ? "account-chip active" : "account-chip"}
-                  type="button"
-                  disabled={pending !== null || account.is_active || (account.mode === "live" && !canUseLiveTrading)}
-                  onClick={() => activateBrokerAccount(account.id)}
-                >
-                  <strong>{account.mode === "live" ? "실전투자" : "모의투자"}</strong>
-                  <span>{account.kis_account_no}-{account.kis_account_product_code}</span>
-                  <small>{account.mode === "live" && !canUseLiveTrading ? "유료회원 이상 사용 가능" : account.is_active ? `현재 사용 중 · 자동매매 ${account.enabled ? "ON" : "OFF"} · 매매알림 ${account.telegram_configured ? "ON" : "OFF"}` : "교체하기"}</small>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {shouldShowBrokerForm && (
-            <>
-              <label>
-                KIS App Key
-                <input value={broker.kis_app_key} onChange={(event) => setBroker({ ...broker, kis_app_key: event.target.value })} required />
-              </label>
-              <label>
-                KIS App Secret
-                <textarea value={broker.kis_app_secret} onChange={(event) => setBroker({ ...broker, kis_app_secret: event.target.value })} required />
-              </label>
-              <div className="grid two tight">
-            <label>
-              계좌번호 8자리
-              <input value={broker.kis_account_no} onChange={(event) => setBroker({ ...broker, kis_account_no: event.target.value })} required />
-            </label>
-            <label>
-              상품코드
-              <input value={broker.kis_account_product_code} onChange={(event) => setBroker({ ...broker, kis_account_product_code: event.target.value })} required />
-            </label>
-              </div>
-              <label>
-                계좌 모드
-                <select value={broker.mode} onChange={(event) => setBroker({ ...broker, mode: event.target.value as "paper" | "live", live_order_enabled: false })}>
-                  <option value="paper">모의투자</option>
-                  <option value="live" disabled={!canUseLiveTrading}>실전투자{canUseLiveTrading ? "" : " - 유료회원 이상"}</option>
-                </select>
-              </label>
-              {!canUseLiveTrading && (
-                <p className="command-copy">무료회원은 모의투자만 사용할 수 있습니다. 실전투자 계좌 저장과 실전 자동매매는 백엔드에서도 차단됩니다.</p>
-              )}
-              {broker.mode === "live" && (
-                <label className="check-row">
-                  <input
-                    type="checkbox"
-                    checked={broker.live_order_enabled}
-                    onChange={(event) => setBroker({ ...broker, live_order_enabled: event.target.checked })}
-                  />
-                  실전 주문을 이 계정에서 허용
-                </label>
-              )}
-              <button className="primary" disabled={pending === "broker"}>{pending === "broker" ? "저장 중..." : "저장"}</button>
-            </>
-          )}
-        </form>
-
-        <form className="panel" onSubmit={saveTelegram}>
-          <div className="section-title">
-            <h2>매매 알림</h2>
-            {brokerStatus?.configured && brokerStatus.telegram_configured && (
-              <button className="ghost small" type="button" onClick={() => setEditingTelegram((value) => !value)}>
-                {editingTelegram ? "변경 취소" : "변경하기"}
-              </button>
-            )}
-          </div>
-          {brokerStatus?.configured && brokerStatus.telegram_configured && !editingTelegram && (
-            <div className="saved-box">
-              <strong>개인 텔레그램 봇 알림을 사용 중입니다.</strong>
-              <span>Chat ID {brokerStatus.telegram_chat_id || "저장됨"}</span>
-              <span>매수/매도 알림 ON</span>
-              <span>Shared signal 알림 ON</span>
-              <p>봇 토큰은 보안상 다시 표시하지 않습니다. 바꾸려면 변경하기를 누르고 새 토큰을 저장하세요.</p>
-            </div>
-          )}
-          {!brokerStatus?.configured && (
-            <p className="command-copy">KIS 계좌를 먼저 저장한 뒤 매매 알림을 설정할 수 있습니다.</p>
-          )}
-          {shouldShowTelegramForm && (
-            <>
-              <p className="command-copy">KIS 키와 별도로 저장합니다. 매수/매도 알림과 shared signal 알림을 받을 개인 텔레그램 봇 설정입니다.</p>
-              <label>
-                Telegram Bot Token
-                <input
-                  value={telegramSettings.telegram_bot_token || ""}
-                  onChange={(event) => setTelegramSettings({ ...telegramSettings, telegram_bot_token: event.target.value })}
-                  placeholder="개인 봇 토큰"
-                />
-                <small>이미 저장된 토큰은 다시 표시하지 않습니다. 비워두면 기존 토큰을 유지합니다.</small>
-              </label>
-              <label>
-                Telegram Chat ID
-                <input
-                  value={telegramSettings.telegram_chat_id || ""}
-                  onChange={(event) => setTelegramSettings({ ...telegramSettings, telegram_chat_id: event.target.value })}
-                  placeholder="예: 6583699681"
-                />
-              </label>
-              <button className="primary" disabled={pending === "telegram"}>
-                {pending === "telegram" ? "저장 중..." : "매매 알림 저장"}
-              </button>
-            </>
-          )}
-        </form>
-
-        <div className="panel command">
-          <h2>자동매매</h2>
-          <p className="command-copy">현재 활성 계정 기준으로 주문 감시를 켜거나 끕니다. 오늘 시그널은 관리자가 생성한 공용 스캔 데이터를 표시합니다.</p>
-          <button disabled={pending !== null || !brokerStatus?.configured || brokerStatus?.enabled} onClick={() => run("enable", () => api.setAutoTradingEnabled(session, true), "자동매매 ON 완료:")}>
-            {pending === "enable" ? "자동매매 켜는 중..." : "자동매매 ON"}
-          </button>
-          <button disabled={pending !== null || !brokerStatus?.configured || !brokerStatus?.enabled} onClick={() => run("disable", () => api.setAutoTradingEnabled(session, false), "자동매매 OFF 완료:")}>
-            {pending === "disable" ? "자동매매 끄는 중..." : "자동매매 OFF"}
-          </button>
-          <button disabled={pending !== null || !brokerStatus?.configured} onClick={loadKisAccount}>
-            {pending === "account" ? "계좌 조회 중..." : "KIS 계좌 조회"}
-          </button>
-          {isScanAdmin ? (
-            <>
-              <button disabled={pending !== null} onClick={() => startScan("all")}>
-                {pending === "scan" ? "스캔 중... 100개씩 처리" : "오늘 시그널 스캔"}
-              </button>
-              <button disabled={pending !== null} onClick={() => startScan("limited")}>
-                {pending === "scan" ? "스캔 중..." : "제한 유니버스 스캔"}
-              </button>
-              {hasRunningScan && (
-                <button disabled={pending !== null} onClick={continueLatestScan}>
-                  {pending === "scan" ? "스캔 중..." : "진행 중 스캔 이어하기"}
-                </button>
-              )}
-              <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendReport}>
-                {pending === "report" ? "리포트 생성 요청 중..." : "AI 리포트 생성 요청"}
-              </button>
-              <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendBlogReport}>
-                {pending === "report" ? "블로그 글 생성 요청 중..." : "블로그 글 생성 요청"}
-              </button>
-              {canUseReports && dailyReportCompleted && (
-                <button disabled={pending !== null || !selectedSignalDate} onClick={downloadDailyReport}>
-                  {pending === "reportDownload" ? "종합 리포트 확인 중..." : "종합 리포트 다운로드"}
-                </button>
-              )}
-              {canUseReports && hasCompletedReport(aiReports, "daily_blog") && (
-                <button disabled={pending !== null || !selectedSignalDate} onClick={downloadDailyBlogReport}>
-                  {pending === "reportDownload" ? "블로그 글 확인 중..." : "종합 블로그 글 다운로드"}
-                </button>
-              )}
-            </>
-          ) : (
-            <p className="command-copy">스캔 실행은 관리자만 가능하고, 사용자는 생성된 오늘 시그널만 조회합니다.</p>
-          )}
-          <a className="telegram-link" href="https://t.me/sc_swingbot" target="_blank" rel="noreferrer">
-            텔레그램 봇 추가하기
-          </a>
-          <StatusLine status={status} />
+          <AutoTradingRules strategy={strategy} mode={brokerStatus?.mode} liveOrderEnabled={brokerStatus?.live_order_enabled || false} serverLiveTradingAllowed={brokerStatus?.server_live_trading_allowed || false} />
         </div>
-        <DailyDashboardPanel dashboard={dailyDashboard} onRefresh={refreshDashboardOnly} refreshing={pending === "dashboardRefresh"} />
-      </div>
+      )}
 
-      <StrategyPanel
-        strategy={strategy}
-        editing={editingStrategy}
-        pending={pending === "strategy"}
-        onToggleEdit={() => setEditingStrategy((value) => !value)}
-        onPresetChange={applyStrategyPreset}
-        onChange={setStrategy}
-        onSave={saveStrategy}
-      />
-
-      <div className="grid">
-        <DataPanel
-          title={selectedSignalDate ? `${selectedSignalDate} 시그널` : "시그널"}
-          rows={signals.map(enrichPlanPercentRow)}
-          columns={["score", "핵심군", "name", "entry", "stop_loss", "stop_loss_pct", "take_profit_2", "take_profit_2_pct", "code"]}
-          maxRows={30}
-          headerAction={signalDates.length > 0 ? (
-            <div className="panel-actions">
-              <select className="compact-select" value={selectedSignalDate} onChange={(event) => changeSignalDate(event.target.value)}>
-                {signalDates.map((tradeDate) => <option key={tradeDate} value={tradeDate}>{tradeDate}</option>)}
-              </select>
-              <button className="ghost small" type="button" disabled={pending === "signalsRefresh"} onClick={refreshSignalsOnly}>
-                {pending === "signalsRefresh" ? "갱신 중" : "새로고침"}
-              </button>
-            </div>
-          ) : undefined}
-          onRowClick={(row) => setDetail({ title: `${formatCell(row.name)} (${formatCell(row.code)})`, kind: "signal", row })}
-        />
-      </div>
-
-      <div className="grid three">
-        <AccountPanel account={kisAccount} onRefresh={loadKisAccount} refreshing={pending === "account"} />
-        <DataPanel
-          title="포지션"
-          rows={positions.map(enrichPlanPercentRow)}
-          columns={["code", "name", "entry_price", "stop_loss_pct", "take_profit_2_pct", "qty", "remaining_qty", "status"]}
-          headerAction={(
-            <button className="ghost small" type="button" disabled={pending === "positionsRefresh"} onClick={refreshPositionsOnly}>
-              {pending === "positionsRefresh" ? "갱신 중" : "새로고침"}
-            </button>
-          )}
-          onRowClick={(row) => setDetail({ title: `${formatCell(row.name)} 포지션`, kind: "position", row })}
-        />
-        <DataPanel
-          title="매매 로그"
-          rows={logs.map(normalizeTradeLogRow).map(enrichPlanPercentRow)}
-          columns={["action_ko", "name", "price", "qty", "stop_loss_pct", "take_profit_2_pct", "reason_ko", "created_at"]}
-          className="trade-log-panel"
-          pagination
-          pageSize={12}
-          headerAction={(
-            <button className="ghost small" type="button" disabled={pending === "logsRefresh"} onClick={refreshTradeLogsOnly}>
-              {pending === "logsRefresh" ? "갱신 중" : "새로고침"}
-            </button>
-          )}
-          onRowClick={(row) => setDetail({
-            title: `${formatCell(row.action_ko)} ${formatCell(row.code)}`,
-            kind: "log",
-            row: enrichTradeLogRow(row, positions, signals),
-          })}
-        />
-      </div>
-
-      <div className="grid two">
-        <DataPanel
-          title={selectedSignalDate ? `${selectedSignalDate} 매수 제외 로그` : "매수 제외 로그"}
-          rows={decisions.map(normalizeDecisionRow)}
-          columns={["code", "name", "score", "price", "reason", "created_at"]}
-          maxRows={30}
-          headerAction={(
-            <button className="ghost small" type="button" disabled={pending === "decisionsRefresh" || !selectedSignalDate} onClick={refreshDecisionsOnly}>
-              {pending === "decisionsRefresh" ? "갱신 중" : "새로고침"}
-            </button>
-          )}
-          onRowClick={(row) => setDetail({
-            title: `${formatCell(row.name)} 제외 사유`,
-            kind: "decision",
-            row,
-          })}
-        />
-        {canUseReports && (
+      {activePage === "signals" && (
+        <div className="grid">
           <DataPanel
-            title={selectedSignalDate ? `${selectedSignalDate} AI 리포트 상태` : "AI 리포트 상태"}
-            rows={aiReports.map(normalizeAiReportStatusRow)}
-            columns={["report_kind_ko", "name", "code", "status_ko", "created_at", "started_at", "finished_at", "error"]}
-            maxRows={20}
-            headerAction={(
-              <button className="ghost small" type="button" disabled={pending === "signalsRefresh" || !selectedSignalDate} onClick={refreshSignalsOnly}>
-                {pending === "signalsRefresh" ? "갱신 중" : "새로고침"}
-              </button>
+            title={selectedSignalDate ? `${selectedSignalDate} 시그널` : "시그널"}
+            rows={signals.map(enrichPlanPercentRow)}
+            columns={["score", "핵심군", "name", "entry", "stop_loss", "stop_loss_pct", "take_profit_2", "take_profit_2_pct", "code"]}
+            maxRows={30}
+            headerAction={signalDates.length > 0 ? (
+              <div className="panel-actions">
+                <select className="compact-select" value={selectedSignalDate} onChange={(event) => changeSignalDate(event.target.value)}>
+                  {signalDates.map((tradeDate) => <option key={tradeDate} value={tradeDate}>{tradeDate}</option>)}
+                </select>
+                <button className="ghost small" type="button" disabled={pending === "signalsRefresh"} onClick={refreshSignalsOnly}>
+                  {pending === "signalsRefresh" ? "갱신 중" : "새로고침"}
+                </button>
+              </div>
+            ) : undefined}
+            onRowClick={(row) => setDetail({ title: `${formatCell(row.name)} (${formatCell(row.code)})`, kind: "signal", row })}
+          />
+        </div>
+      )}
+
+      {activePage === "account" && accountSection}
+
+      {activePage === "trading" && (
+        <div className="page-stack">
+          <div className="grid two">
+            <DataPanel
+              title="포지션"
+              rows={positions.map(enrichPlanPercentRow)}
+              columns={["code", "name", "entry_price", "stop_loss_pct", "take_profit_2_pct", "qty", "remaining_qty", "status"]}
+              headerAction={(
+                <button className="ghost small" type="button" disabled={pending === "positionsRefresh"} onClick={refreshPositionsOnly}>
+                  {pending === "positionsRefresh" ? "갱신 중" : "새로고침"}
+                </button>
+              )}
+              onRowClick={(row) => setDetail({ title: `${formatCell(row.name)} 포지션`, kind: "position", row })}
+            />
+            <DataPanel
+              title="매매 로그"
+              rows={logs.map(normalizeTradeLogRow).map(enrichPlanPercentRow)}
+              columns={["action_ko", "name", "price", "qty", "stop_loss_pct", "take_profit_2_pct", "reason_ko", "created_at"]}
+              className="trade-log-panel"
+              pagination
+              pageSize={12}
+              headerAction={(
+                <button className="ghost small" type="button" disabled={pending === "logsRefresh"} onClick={refreshTradeLogsOnly}>
+                  {pending === "logsRefresh" ? "갱신 중" : "새로고침"}
+                </button>
+              )}
+              onRowClick={(row) => setDetail({
+                title: `${formatCell(row.action_ko)} ${formatCell(row.code)}`,
+                kind: "log",
+                row: enrichTradeLogRow(row, positions, signals),
+              })}
+            />
+          </div>
+          <div className="grid two">
+            <DataPanel
+              title={selectedSignalDate ? `${selectedSignalDate} 매수 제외 로그` : "매수 제외 로그"}
+              rows={decisions.map(normalizeDecisionRow)}
+              columns={["code", "name", "score", "price", "reason", "created_at"]}
+              maxRows={30}
+              headerAction={(
+                <button className="ghost small" type="button" disabled={pending === "decisionsRefresh" || !selectedSignalDate} onClick={refreshDecisionsOnly}>
+                  {pending === "decisionsRefresh" ? "갱신 중" : "새로고침"}
+                </button>
+              )}
+              onRowClick={(row) => setDetail({
+                title: `${formatCell(row.name)} 제외 사유`,
+                kind: "decision",
+                row,
+              })}
+            />
+            <DataPanel
+              title="와쳐 실행 로그"
+              rows={watcherRuns.map(normalizeWatcherRunRow)}
+              columns={["created_at", "mode", "orders_allowed_ko", "cash", "remaining_daily_slots", "daily_slots", "action_count", "skip_reason_ko"]}
+              maxRows={30}
+              headerAction={(
+                <button className="ghost small" type="button" disabled={pending === "watcherRunsRefresh"} onClick={refreshWatcherRunsOnly}>
+                  {pending === "watcherRunsRefresh" ? "갱신 중" : "새로고침"}
+                </button>
+              )}
+              onRowClick={(row) => setDetail({
+                title: `${formatCell(row.created_at)} 와쳐 실행`,
+                kind: "watcher",
+                row,
+              })}
+            />
+          </div>
+        </div>
+      )}
+
+      {activePage === "strategy" && (
+        <div className="page-stack">
+          <StrategyPanel
+            strategy={strategy}
+            editing={editingStrategy}
+            pending={pending === "strategy"}
+            onToggleEdit={() => setEditingStrategy((value) => !value)}
+            onPresetChange={applyStrategyPreset}
+            onChange={setStrategy}
+            onSave={saveStrategy}
+          />
+          <AutoTradingRules strategy={strategy} mode={brokerStatus?.mode} liveOrderEnabled={brokerStatus?.live_order_enabled || false} serverLiveTradingAllowed={brokerStatus?.server_live_trading_allowed || false} />
+        </div>
+      )}
+
+      {activePage === "admin" && (
+        <div className="page-stack">
+          <div className="panel command admin-command">
+            <h2>관리자 메뉴</h2>
+            {isScanAdmin ? (
+              <>
+                <button disabled={pending !== null} onClick={() => startScan("all")}>
+                  {pending === "scan" ? "스캔 중... 100개씩 처리" : "오늘 시그널 스캔"}
+                </button>
+                <button disabled={pending !== null} onClick={() => startScan("limited")}>
+                  {pending === "scan" ? "스캔 중..." : "제한 유니버스 스캔"}
+                </button>
+                {hasRunningScan && (
+                  <button disabled={pending !== null} onClick={continueLatestScan}>
+                    {pending === "scan" ? "스캔 중..." : "진행 중 스캔 이어하기"}
+                  </button>
+                )}
+                <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendReport}>
+                  {pending === "report" ? "리포트 생성 요청 중..." : "AI 리포트 생성 요청"}
+                </button>
+                <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendBlogReport}>
+                  {pending === "report" ? "블로그 글 생성 요청 중..." : "블로그 글 생성 요청"}
+                </button>
+                {canUseReports && dailyReportCompleted && (
+                  <button disabled={pending !== null || !selectedSignalDate} onClick={downloadDailyReport}>
+                    {pending === "reportDownload" ? "종합 리포트 확인 중..." : "종합 리포트 다운로드"}
+                  </button>
+                )}
+                {canUseReports && hasCompletedReport(aiReports, "daily_blog") && (
+                  <button disabled={pending !== null || !selectedSignalDate} onClick={downloadDailyBlogReport}>
+                    {pending === "reportDownload" ? "블로그 글 확인 중..." : "종합 블로그 글 다운로드"}
+                  </button>
+                )}
+              </>
+            ) : (
+              <p className="command-copy">관리자 권한이 없습니다.</p>
             )}
-          />
-        )}
-        <DataPanel
-          title="와쳐 실행 로그"
-          rows={watcherRuns.map(normalizeWatcherRunRow)}
-          columns={["created_at", "mode", "orders_allowed_ko", "cash", "remaining_daily_slots", "daily_slots", "action_count", "skip_reason_ko"]}
-          maxRows={30}
-          headerAction={(
-            <button className="ghost small" type="button" disabled={pending === "watcherRunsRefresh"} onClick={refreshWatcherRunsOnly}>
-              {pending === "watcherRunsRefresh" ? "갱신 중" : "새로고침"}
-            </button>
-          )}
-          onRowClick={(row) => setDetail({
-            title: `${formatCell(row.created_at)} 와쳐 실행`,
-            kind: "watcher",
-            row,
-          })}
-        />
-        {isScanAdmin && (
-          <BacktestPanel
-            result={backtest}
-            days={backtestDays}
-            pending={pending === "backtest"}
-            onDaysChange={setBacktestDays}
-            onRun={runBacktest}
-          />
-        )}
-      </div>
-      <AutoTradingRules strategy={strategy} mode={brokerStatus?.mode} liveOrderEnabled={brokerStatus?.live_order_enabled || false} serverLiveTradingAllowed={brokerStatus?.server_live_trading_allowed || false} />
+            <StatusLine status={status} />
+          </div>
+          <div className="grid two">
+            {canUseReports && (
+              <DataPanel
+                title={selectedSignalDate ? `${selectedSignalDate} AI 리포트 상태` : "AI 리포트 상태"}
+                rows={aiReports.map(normalizeAiReportStatusRow)}
+                columns={["report_kind_ko", "name", "code", "status_ko", "created_at", "started_at", "finished_at", "error"]}
+                maxRows={20}
+                headerAction={(
+                  <button className="ghost small" type="button" disabled={pending === "signalsRefresh" || !selectedSignalDate} onClick={refreshSignalsOnly}>
+                    {pending === "signalsRefresh" ? "갱신 중" : "새로고침"}
+                  </button>
+                )}
+              />
+            )}
+            {isScanAdmin && (
+              <BacktestPanel
+                result={backtest}
+                days={backtestDays}
+                pending={pending === "backtest"}
+                onDaysChange={setBacktestDays}
+                onRun={runBacktest}
+              />
+            )}
+          </div>
+        </div>
+      )}
       {detail && (
         <DetailOverlay
           detail={detail}
@@ -880,6 +916,46 @@ function Dashboard({ session }: { session: Session }) {
         />
       )}
     </section>
+  );
+}
+
+function dashboardPages({ isScanAdmin, canUseReports }: { isScanAdmin: boolean; canUseReports: boolean }) {
+  const pages: Array<{ key: DashboardPage; label: string; description: string }> = [
+    { key: "overview", label: "개요", description: "자동매매 상태와 오늘 요약" },
+    { key: "signals", label: "시그널", description: "오늘 후보와 종목 상세" },
+    { key: "account", label: "계좌", description: "KIS 연결과 알림 설정" },
+    { key: "trading", label: "매매", description: "포지션, 로그, 와쳐 기록" },
+    { key: "strategy", label: "전략", description: "자동매매 조건 설정" },
+  ];
+  if (isScanAdmin || canUseReports) {
+    pages.push({ key: "admin", label: "관리자", description: "스캔, 리포트, 백테스트" });
+  }
+  return pages;
+}
+
+function DashboardNav({
+  pages,
+  activePage,
+  onChange,
+}: {
+  pages: Array<{ key: DashboardPage; label: string; description: string }>;
+  activePage: DashboardPage;
+  onChange: (page: DashboardPage) => void;
+}) {
+  return (
+    <nav className="dashboard-nav" aria-label="대시보드 메뉴">
+      {pages.map((page) => (
+        <button
+          key={page.key}
+          type="button"
+          className={activePage === page.key ? "nav-card active" : "nav-card"}
+          onClick={() => onChange(page.key)}
+        >
+          <strong>{page.label}</strong>
+          <span>{page.description}</span>
+        </button>
+      ))}
+    </nav>
   );
 }
 

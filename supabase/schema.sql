@@ -28,20 +28,6 @@ create table if not exists user_memberships (
   updated_at timestamptz not null default now()
 );
 
-insert into user_memberships (user_id, role, report_enabled)
-select
-  id,
-  'admin',
-  true
-from auth.users
-on conflict (user_id) do nothing;
-
-update user_memberships
-set role = 'admin',
-    report_enabled = true,
-    updated_at = now()
-where user_id in (select id from auth.users);
-
 create table if not exists signals (
   id bigint generated always as identity primary key,
   trade_date date not null,

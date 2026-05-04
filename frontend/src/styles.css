@@ -253,6 +253,50 @@ a {
   gap: 18px;
 }
 
+.dashboard-nav {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.nav-card {
+  display: grid;
+  gap: 6px;
+  min-height: 88px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: rgba(255, 250, 240, 0.66);
+  color: var(--ink);
+  text-align: left;
+  box-shadow: none;
+}
+
+.nav-card strong {
+  font-size: 17px;
+}
+
+.nav-card span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.nav-card.active {
+  background: #172213;
+  color: #fffaf0;
+  border-color: #172213;
+}
+
+.nav-card.active span {
+  color: #d9dec9;
+}
+
+.page-stack {
+  display: grid;
+  gap: 18px;
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;
@@ -268,6 +312,17 @@ a {
   display: grid;
   align-content: start;
   gap: 12px;
+}
+
+.admin-command {
+  grid-template-columns: repeat(auto-fit, minmax(180px, max-content));
+  align-items: center;
+}
+
+.admin-command h2,
+.admin-command .status,
+.admin-command .command-copy {
+  grid-column: 1 / -1;
 }
 
 .command-copy {
@@ -797,7 +852,8 @@ th {
   .hero,
   .auth-grid,
   .two,
-  .three {
+  .three,
+  .dashboard-nav {
     grid-template-columns: 1fr;
   }
 
