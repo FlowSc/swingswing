@@ -102,6 +102,9 @@ export function buildSignalAnalysis(row: Record<string, unknown>): SignalAnalysi
   const marketPassed = isPassed(raw.MarketFilterPassed);
   const coreUniverse = isCoreUniverseSignal(raw);
   const reasons = translateReasons(raw.Reasons);
+  const sharedAutoTradingScore = numericValue(row["자동매매적합도"])
+    ?? numericValue(row.auto_trading_score)
+    ?? numericValue(raw.AutoTradingScore);
 
   const positive: string[] = [];
   if (score >= 20) positive.push(`점수 ${formatCell(score)}점으로 현재 전략 기준에서 상위권 후보입니다.`);
@@ -132,7 +135,7 @@ export function buildSignalAnalysis(row: Record<string, unknown>): SignalAnalysi
 
   const riskChecks = buildSignalRiskChecks({ stopPct, atrPct, gapPct, upperShadow, marketPassed, distanceToKijun });
   const cautionCount = riskChecks.filter((item) => item.tone === "caution").length;
-  const suitabilityScore = Math.max(0, Math.min(100,
+  const fallbackSuitabilityScore = Math.max(0, Math.min(100,
     50
     + (score >= 20 ? 18 : score >= 12 ? 8 : -10)
     + (marketPassed ? 8 : -12)
@@ -141,6 +144,7 @@ export function buildSignalAnalysis(row: Record<string, unknown>): SignalAnalysi
     - cautionCount * 10
     - (stopPct > 10 ? 8 : 0)
   ));
+  const suitabilityScore = sharedAutoTradingScore ?? fallbackSuitabilityScore;
   const suitability = suitabilityLabel(suitabilityScore, cautionCount);
   const summary = buildSignalSummary(score, suitability.label, cautionCount, distanceToKijun, relativeStrength);
 
