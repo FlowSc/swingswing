@@ -15,8 +15,8 @@ from app.services.scanner import (
     load_scan_universe,
     score_swing_setup,
     shared_signal_to_record,
-    sort_top_signals,
 )
+from app.services.watcher import sort_signals_for_autotrading
 
 
 logger = logging.getLogger(__name__)
@@ -51,8 +51,8 @@ def prepare_backtest_state_sync(days: int = 120, max_signals: int = 200) -> dict
     ]
     return {
         "source": "historical_rescan",
-        "strategy_key": "swing_default",
-        "strategy_version": "2026-05-04",
+        "strategy_key": "swing_auto_trading_suitability",
+        "strategy_version": "2026-05-04-auto-score",
         "days": days,
         "max_signals": max_signals,
         "start_date": start.isoformat(),
@@ -267,10 +267,24 @@ def rank_daily_signals(items: list[dict]) -> list[dict]:
 
     ranked: list[dict] = []
     for trade_date in sorted(by_date):
-        day_signals = [item["signal"] for item in by_date[trade_date]]
-        top_signals = sort_top_signals(day_signals)[:MAX_DAILY_SIGNALS]
-        top_codes = {signal["Code"] for signal in top_signals}
-        ranked.extend(item for item in by_date[trade_date] if item["signal"]["Code"] in top_codes)
+        day_records = [
+            sort_source_record(item["trade_date"], item["signal"])
+            for item in by_date[trade_date]
+        ]
+        top_records = sort_signals_for_autotrading(day_records)[:MAX_DAILY_SIGNALS]
+        top_by_code = {str(record.get("code")).zfill(6): record for record in top_records}
+        for item in by_date[trade_date]:
+            code = str(item["signal"].get("Code") or "").zfill(6)
+            ranked_record = top_by_code.get(code)
+            if not ranked_record:
+                continue
+            raw = ranked_record.get("raw") if isinstance(ranked_record.get("raw"), dict) else {}
+            item["signal"] = {
+                **item["signal"],
+                "AutoTradingScore": ranked_record.get("auto_trading_score"),
+                "AutoTradingFactors": raw.get("AutoTradingFactors"),
+            }
+            ranked.append(item)
     return ranked
 
 
@@ -281,9 +295,13 @@ def rank_daily_signal_records(items: list[dict]) -> list[dict]:
 
     ranked: list[dict] = []
     for trade_date in sorted(by_date):
-        day_signals = sorted(by_date[trade_date], key=lambda item: float(item.get("score") or 0), reverse=True)
+        day_signals = sort_signals_for_autotrading(by_date[trade_date])
         ranked.extend(day_signals[:MAX_DAILY_SIGNALS])
     return ranked
+
+
+def sort_source_record(trade_date: date, signal: dict) -> dict:
+    return shared_signal_to_record(trade_date, signal)
 
 
 def simulate_signal_safe(row: dict) -> dict | None:
@@ -386,6 +404,7 @@ def simulate_signal_with_frame(row: dict, frame: pd.DataFrame) -> dict | None:
         "code": row["code"],
         "name": row.get("name"),
         "score": row.get("score"),
+        "auto_trading_score": row.get("auto_trading_score") or raw.get("AutoTradingScore"),
         "entry": round(entry, 2),
         "exit_price": round(target_exit_price, 2),
         "return_pct": round(realized, 2),
@@ -405,6 +424,7 @@ def summarize_trades(days: int, trades: list[dict], *, source: str, generated_si
     return {
         "source": source,
         "days": days,
+        "ranking_method": "auto_trading_score_desc",
         "generated_signals": generated_signals,
         "skipped_symbols": skipped_symbols,
         "signals_tested": len(trades),
