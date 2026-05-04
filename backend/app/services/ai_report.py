@@ -20,6 +20,7 @@ INVESTMENT_NOTICE_TEXT = (
     "모든 투자 판단과 책임은 투자자 본인에게 있습니다. 주식 투자는 원금 손실 가능성이 있습니다."
 )
 INVESTMENT_NOTICE_HTML = f'<p style="color:#d93025;">{INVESTMENT_NOTICE_TEXT}</p>'
+BLOCKED_REPORT_STATUSES = {"queued", "running", "completed"}
 HANJA_REPLACEMENTS = {
     "乖離": "괴리",
     "·": "/",
@@ -447,7 +448,12 @@ async def queue_ai_report(
     style_name = "블로그 글" if report_style(report_type) == "blog" else "AI 리포트"
     title_name = name or ("상위 시그널" if base_type == "daily" else "개별 종목")
     title = f"{trade_date.isoformat()} {title_name} {style_name}"
-    rows = await SupabaseRest().upsert(
+    rest = SupabaseRest()
+    existing = await get_existing_ai_report(trade_date, report_type, code)
+    if is_report_generation_blocked(existing):
+        return existing_report_response(existing or {})
+
+    rows = await rest.upsert(
         "ai_reports",
         {
             "trade_date": trade_date.isoformat(),
@@ -473,6 +479,36 @@ async def queue_ai_report(
     )
     row = rows[0] if rows else {}
     return {"queued": True, "stage": "queued", "error": None, "report_id": row.get("id"), "title": row.get("title")}
+
+
+async def get_existing_ai_report(trade_date: date, report_type: str, code: str | None = None) -> dict | None:
+    rows = await SupabaseRest().select(
+        "ai_reports",
+        columns="id,trade_date,report_type,code,name,title,status,error,created_at,started_at,finished_at",
+        filters={
+            "trade_date": f"eq.{trade_date.isoformat()}",
+            "report_type": f"eq.{report_type}",
+            "code": f"eq.{code or 'ALL'}",
+        },
+        order="created_at.desc",
+        limit=1,
+    )
+    return rows[0] if rows else None
+
+
+def is_report_generation_blocked(row: dict | None) -> bool:
+    return bool(row and row.get("status") in BLOCKED_REPORT_STATUSES)
+
+
+def existing_report_response(row: dict) -> dict:
+    return {
+        "queued": False,
+        "stage": f"already_{row.get('status')}",
+        "error": None,
+        "report_id": row.get("id"),
+        "title": row.get("title"),
+        "status": row.get("status"),
+    }
 
 
 async def process_queued_ai_reports(limit: int = 1) -> list[dict]:

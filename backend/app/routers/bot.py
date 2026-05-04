@@ -8,7 +8,12 @@ from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
 from app.schemas.bot import BotControlIn, BotControlOut, StrategySettingsIn, StrategySettingsOut, WatchTickIn
 from app.services.broker_credentials import get_decrypted_broker_credentials, set_bot_enabled
-from app.services.ai_report import queue_ai_report
+from app.services.ai_report import (
+    existing_report_response,
+    get_existing_ai_report,
+    is_report_generation_blocked,
+    queue_ai_report,
+)
 from app.services.memberships import require_admin_access, require_live_trading_access, require_report_access
 from app.services.scanner import finalize_chunked_scan, get_scan_market_status, prepare_chunked_scan_state, process_scan_chunk
 from app.services.strategy_settings import get_strategy_settings, save_strategy_settings
@@ -189,24 +194,11 @@ async def send_daily_report(
     await require_report_access(user.id, user.email)
     target_date = trade_date or datetime.now(ZoneInfo(get_settings().timezone)).date().isoformat()
     report_type = "daily_blog" if report_style == "blog" else "daily"
-    existing = await SupabaseRest().select(
-        "ai_reports",
-        columns="id,trade_date,report_type,code,name,title,status,error,created_at,started_at,finished_at",
-        filters={"trade_date": f"eq.{target_date}", "report_type": f"eq.{report_type}", "code": "eq.ALL"},
-        order="created_at.desc",
-        limit=1,
-    )
-    if existing and existing[0].get("status") == "completed":
-        return {
-            "trade_date": target_date,
-            "signals": 0,
-            "queued": False,
-            "stage": "already_completed",
-            "error": None,
-            "report_id": existing[0].get("id"),
-            "title": existing[0].get("title"),
-            "message": "Report already completed. Download existing report.",
-        }
+    report_date = datetime.fromisoformat(target_date).date()
+    existing = await get_existing_ai_report(report_date, report_type)
+    if is_report_generation_blocked(existing):
+        return {"trade_date": target_date, "signals": 0, **existing_report_response(existing or {})}
+
     rows = await SupabaseRest().select(
         "shared_signals",
         filters={"trade_date": f"eq.{target_date}"},
@@ -219,7 +211,7 @@ async def send_daily_report(
     signals = [shared_signal_record_to_signal(row) for row in rows]
     result = await queue_ai_report(
         signals,
-        datetime.fromisoformat(target_date).date(),
+        report_date,
         report_type=report_type,
     )
     return {"trade_date": target_date, "signals": len(signals), **result}
@@ -232,6 +224,17 @@ async def send_single_signal_report(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     await require_report_access(user.id, user.email)
+    report_type = "signal_blog" if report_style == "blog" else "signal"
+    report_date = datetime.fromisoformat(payload.trade_date).date()
+    existing = await get_existing_ai_report(report_date, report_type, payload.code)
+    if is_report_generation_blocked(existing):
+        return {
+            "trade_date": payload.trade_date,
+            "code": payload.code,
+            "name": existing.get("name") if existing else None,
+            **existing_report_response(existing or {}),
+        }
+
     rows = await SupabaseRest().select(
         "shared_signals",
         filters={"trade_date": f"eq.{payload.trade_date}", "code": f"eq.{payload.code}"},
@@ -243,8 +246,8 @@ async def send_single_signal_report(
     signal = shared_signal_record_to_signal(rows[0])
     result = await queue_ai_report(
         [signal],
-        datetime.fromisoformat(payload.trade_date).date(),
-        report_type="signal_blog" if report_style == "blog" else "signal",
+        report_date,
+        report_type=report_type,
         code=payload.code,
         name=signal.get("Name"),
     )
