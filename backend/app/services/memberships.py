@@ -42,7 +42,8 @@ def _paid_active(row: dict | None) -> bool:
 
 
 def build_entitlements(user_id: str, email: str | None, row: dict | None) -> dict:
-    role = "admin" if _is_admin_email(email) else _normalize_role(row.get("role") if row else None)
+    is_scan_admin = _is_admin_email(email)
+    role = "admin" if is_scan_admin else _normalize_role(row.get("role") if row else None)
     if role == "paid" and not _paid_active(row):
         role = "free"
 
@@ -56,8 +57,8 @@ def build_entitlements(user_id: str, email: str | None, row: dict | None) -> dic
         "can_use_paper_trading": True,
         "can_use_live_trading": role in {"admin", "paid"},
         "can_use_reports": can_use_reports,
-        "can_run_admin_scan": role == "admin",
-        "can_run_backtest": role == "admin",
+        "can_run_admin_scan": is_scan_admin,
+        "can_run_backtest": is_scan_admin,
     }
 
 

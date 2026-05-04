@@ -56,7 +56,11 @@ export function dashboardPages({ isScanAdmin, canUseReports }: { isScanAdmin: bo
     { key: "strategy", label: "전략", description: "자동매매 조건 설정" },
   ];
   if (isScanAdmin || canUseReports) {
-    pages.push({ key: "admin", label: "관리자", description: "스캔, 리포트, 백테스트" });
+    pages.push({
+      key: "admin",
+      label: "관리자",
+      description: isScanAdmin ? "스캔, 공지, 리포트, 백테스트" : "리포트",
+    });
   }
   return pages;
 }

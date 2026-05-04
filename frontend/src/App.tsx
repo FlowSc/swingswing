@@ -1035,9 +1035,9 @@ function Dashboard({ session }: { session: Session }) {
 
       {activePage === "admin" && (
         <div className="page-stack">
-          <div className="panel command admin-command">
-            <h2>관리자 메뉴</h2>
-            {isScanAdmin ? (
+          {isScanAdmin && (
+            <div className="panel command admin-command">
+              <h2>스캔/공지 관리자 메뉴</h2>
               <>
                 <button disabled={pending !== null} onClick={() => startScan("all")}>
                   {pending === "scan" ? "스캔 중... 100개씩 처리" : "오늘 시그널 스캔"}
@@ -1062,11 +1062,9 @@ function Dashboard({ session }: { session: Session }) {
                   </button>
                 </div>
               </>
-            ) : (
-              <p className="command-copy">관리자 권한이 없습니다.</p>
-            )}
-            <StatusLine status={status} />
-          </div>
+            </div>
+          )}
+          <StatusLine status={status} />
           <div className="grid two">
             {canUseReports && (
               <ReportCalendarPanel
