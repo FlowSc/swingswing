@@ -922,8 +922,8 @@ function Dashboard({ session }: { session: Session }) {
               <button disabled={pending !== null || !brokerStatus?.configured} onClick={loadKisAccount}>
                 {pending === "account" ? "계좌 조회 중..." : "KIS 계좌 조회"}
               </button>
-              <a className="telegram-link" href="https://t.me/sc_swingbot" target="_blank" rel="noreferrer">
-                텔레그램 봇 추가하기
+              <a className="telegram-link" href="https://t.me/+TG17XtRVldkwYThl" target="_blank" rel="noreferrer">
+                공용 텔레그램 공지방 추가하기
               </a>
               <StatusLine status={status} />
             </div>
