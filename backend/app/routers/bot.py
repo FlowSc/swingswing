@@ -10,7 +10,7 @@ from app.schemas.bot import BotControlIn, BotControlOut, StrategySettingsIn, Str
 from app.services.broker_credentials import get_decrypted_broker_credentials, set_bot_enabled
 from app.services.ai_report import queue_ai_report
 from app.services.memberships import require_admin_access, require_live_trading_access, require_report_access
-from app.services.scanner import finalize_chunked_scan, prepare_chunked_scan_state, process_scan_chunk
+from app.services.scanner import finalize_chunked_scan, get_scan_market_status, prepare_chunked_scan_state, process_scan_chunk
 from app.services.strategy_settings import get_strategy_settings, save_strategy_settings
 from app.services.supabase_rest import SupabaseRest
 from app.services.watcher import force_liquidate_position_for_user, run_watch_tick_for_user
@@ -64,6 +64,16 @@ async def scan(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     await require_admin_access(user.id, user.email)
+    market_status = get_scan_market_status()
+    if not market_status["is_open"]:
+        return {
+            "queued": False,
+            "skipped": True,
+            "reason": market_status["reason"],
+            "trade_date": market_status["trade_date"],
+            "message": market_status["message"],
+            "market_status": market_status,
+        }
     state = await prepare_chunked_scan_state(universe_scope=universe_scope)
     rows = await SupabaseRest().insert(
         "scan_runs",

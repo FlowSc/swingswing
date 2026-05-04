@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from app.core.config import get_settings
 from app.services.broker_credentials import list_enabled_broker_credentials
 from app.services.ai_report import process_queued_ai_reports
-from app.services.scanner import scan_and_store_for_user
+from app.services.scanner import get_scan_market_status, scan_and_store_for_user
 from app.services.supabase_rest import SupabaseRest
 from app.services.telegram import send_telegram_message_with_bot
 from app.services.watcher import run_realtime_position_watch_for_user, run_watch_tick_for_user
@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 async def daily_scan_job() -> None:
     settings = get_settings()
+    market_status = get_scan_market_status()
+    if not market_status["is_open"]:
+        logger.warning("Daily scan skipped before start: %s", market_status)
+        return
     admin = await SupabaseRest().find_user_by_email(settings.scan_admin_email)
     if not admin:
         return

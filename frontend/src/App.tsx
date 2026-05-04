@@ -253,6 +253,11 @@ function Dashboard({ session }: { session: Session }) {
     setStatus({ type: "info", message: universeScope === "all" ? "전 종목 스캔 요청 중..." : "스캔 요청 중..." });
     try {
       const started = await api.scan(session, universeScope);
+      if (started.skipped || !started.queued || !started.scan_run_id) {
+        setStatus({ type: "info", message: started.message || "오늘은 장이 열리지 않아 스캔을 실행하지 않았습니다." });
+        await refresh();
+        return;
+      }
       setStatus({ type: "info", message: `${universeScope === "all" ? "전 종목" : "제한 유니버스"} 스캔 시작: 0/${started.total}개 처리` });
       await runScanSteps(started.scan_run_id);
     } catch (error) {

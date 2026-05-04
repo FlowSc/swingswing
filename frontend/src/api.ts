@@ -164,9 +164,12 @@ export type ScanRun = {
 
 export type ScanStartResult = {
   queued: boolean;
-  scan_run_id: number;
-  offset: number;
-  total: number;
+  skipped?: boolean;
+  reason?: string;
+  trade_date?: string;
+  scan_run_id?: number;
+  offset?: number;
+  total?: number;
   message: string;
 };
 

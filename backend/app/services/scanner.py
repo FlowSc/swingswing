@@ -52,6 +52,55 @@ HOLD_MAX_DAYS = 15
 EXCLUDED_NAME_KEYWORDS = ("스팩", "리츠", "우")
 
 
+def get_scan_market_status(today: date | None = None) -> dict:
+    base_date = today or datetime.now(ZoneInfo(get_settings().timezone)).date()
+    if base_date.weekday() >= 5:
+        return {
+            "is_open": False,
+            "trade_date": base_date.isoformat(),
+            "reason": "weekend",
+            "message": "주말은 국내 증시 휴장일이라 시그널 스캔을 실행하지 않습니다.",
+        }
+
+    start = (datetime.combine(base_date, datetime.min.time()) - timedelta(days=10)).strftime("%Y-%m-%d")
+    try:
+        frame = fdr.DataReader("KS11", start=start)
+    except Exception as exc:
+        logger.warning("Market open check failed: date=%s error=%s", base_date.isoformat(), exc)
+        return {
+            "is_open": False,
+            "trade_date": base_date.isoformat(),
+            "reason": "market_data_unavailable",
+            "message": "KOSPI 지수 데이터를 확인하지 못해 시그널 스캔을 보류합니다.",
+        }
+
+    if frame is None or frame.empty:
+        return {
+            "is_open": False,
+            "trade_date": base_date.isoformat(),
+            "reason": "market_data_empty",
+            "message": "오늘 KOSPI 지수 데이터가 없어 시그널 스캔을 실행하지 않습니다.",
+        }
+
+    latest_date = pd.Timestamp(frame.index[-1]).date()
+    if latest_date != base_date:
+        return {
+            "is_open": False,
+            "trade_date": base_date.isoformat(),
+            "latest_market_date": latest_date.isoformat(),
+            "reason": "market_closed",
+            "message": "오늘 장이 열리지 않았거나 아직 KOSPI 지수 데이터가 없어 시그널 스캔을 실행하지 않습니다.",
+        }
+
+    return {
+        "is_open": True,
+        "trade_date": base_date.isoformat(),
+        "latest_market_date": latest_date.isoformat(),
+        "reason": "market_open",
+        "message": "오늘 국내 증시 거래가 확인되어 시그널 스캔을 실행할 수 있습니다.",
+    }
+
+
 def is_excluded_name(name: str) -> bool:
     return any(keyword in name for keyword in EXCLUDED_NAME_KEYWORDS)
 
@@ -471,6 +520,9 @@ def sort_top_signals(results: list[dict]) -> list[dict]:
 
 def prepare_chunked_scan_state_sync(today: date | None = None, universe_scope: str = SCAN_UNIVERSE_ALL) -> dict:
     base_date = today or datetime.now(ZoneInfo(get_settings().timezone)).date()
+    market_status = get_scan_market_status(base_date)
+    if not market_status["is_open"]:
+        raise RuntimeError(market_status["message"])
     scope = SCAN_UNIVERSE_ALL if universe_scope == SCAN_UNIVERSE_ALL else SCAN_UNIVERSE_LIMITED
     logger.warning("Signal scan universe load started: date=%s scope=%s", base_date.isoformat(), scope)
     universe = load_scan_universe(scope)
@@ -481,6 +533,7 @@ def prepare_chunked_scan_state_sync(today: date | None = None, universe_scope: s
     start = (datetime.combine(base_date, datetime.min.time()) - timedelta(days=420)).strftime("%Y-%m-%d")
     return {
         "trade_date": base_date.isoformat(),
+        "market_status": market_status,
         "universe_scope": scope,
         "universe": universe.to_dict("records"),
         "market_ok": market_ok,
@@ -659,6 +712,16 @@ def format_top_signals_message(signals: list[dict], trade_date: date) -> str:
 
 async def scan_and_store_for_user(user_id: str, telegram_chat_id: str | None = None) -> dict:
     trade_date = datetime.now(ZoneInfo(get_settings().timezone)).date()
+    market_status = get_scan_market_status(trade_date)
+    if not market_status["is_open"]:
+        logger.warning("Signal scan skipped: %s", market_status)
+        return {
+            "skipped": True,
+            "reason": market_status["reason"],
+            "message": market_status["message"],
+            "trade_date": trade_date.isoformat(),
+            "market_status": market_status,
+        }
     signals = await scan_kospi_signals(trade_date)
     shared_saved = await save_shared_signals(signals, trade_date)
     telegram_sent = await send_shared_signal_message(format_top_signals_message(signals, trade_date), telegram_chat_id)
