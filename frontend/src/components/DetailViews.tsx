@@ -213,8 +213,8 @@ export function SignalDetail({
         ["매입 허용 시간", "14:30-15:20"],
       ]} />
       <DetailSection title="진입 근거" items={[
-        ["점수", row.score],
-        ["자동매매지수", analysis.suitability.score],
+        ["자동매매 적합도", analysis.suitability.score],
+        ["후보 선정 점수", row.score],
         ["사유", translateReasons(raw.Reasons)],
         ["RSI14", raw.RSI14],
         ["일목 전환선", raw.Tenkan],

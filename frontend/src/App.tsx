@@ -962,11 +962,11 @@ function Dashboard({ session }: { session: Session }) {
       )}
 
       {activePage === "signals" && (
-        <div className="grid">
+        <div className="page-stack">
           <DataPanel
             title={selectedSignalDate ? `${selectedSignalDate} 시그널` : "시그널"}
             rows={signals.map(enrichPlanPercentRow)}
-            columns={["자동매매적합도", "score", "핵심군", "name", "entry", "stop_loss", "stop_loss_pct", "take_profit_2", "take_profit_2_pct", "code"]}
+            columns={["자동매매적합도", "후보선정점수", "핵심군", "종목명", "진입가", "손절가", "손절률", "2차익절가", "2차익절률", "종목코드"]}
             maxRows={30}
             headerAction={signalDates.length > 0 ? (
               <div className="panel-actions">
@@ -980,6 +980,17 @@ function Dashboard({ session }: { session: Session }) {
             ) : undefined}
             onRowClick={(row) => setDetail({ title: `${formatCell(row.name)} (${formatCell(row.code)})`, kind: "signal", row })}
           />
+          <section className="panel signal-score-guide">
+            <div>
+              <strong>자동매매적합도</strong>
+              <p>봇이 실제로 매수하기 좋은 순서를 정하는 점수입니다. 후보선정점수에 더해 손절폭, 변동성, 갭, 윗꼬리, 기준선 위치, 시장 대비 힘 같은 자동매매 리스크를 반영합니다.</p>
+            </div>
+            <div>
+              <strong>후보선정점수</strong>
+              <p>스캐너가 종목을 스윙 후보로 뽑을 만한지 평가한 기본 점수입니다. 일목균형표, 볼린저밴드, RSI, 거래량, 시장 필터, 패턴 조건 등을 종합합니다.</p>
+            </div>
+            <p className="score-guide-note">자동매매는 후보선정점수 1등부터가 아니라 자동매매적합도가 높은 종목부터 검토합니다.</p>
+          </section>
         </div>
       )}
 

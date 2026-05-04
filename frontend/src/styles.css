@@ -659,6 +659,33 @@ a {
   margin: 0;
 }
 
+.signal-score-guide {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.signal-score-guide strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 16px;
+}
+
+.signal-score-guide p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.signal-score-guide .score-guide-note {
+  grid-column: 1 / -1;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: rgba(201, 240, 90, 0.24);
+  color: var(--green);
+  font-weight: 800;
+}
+
 .panel-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1165,7 +1192,8 @@ th {
   }
 
   .signal-analysis-grid,
-  .signal-risk-grid {
+  .signal-risk-grid,
+  .signal-score-guide {
     grid-template-columns: 1fr;
   }
 
