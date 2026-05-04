@@ -426,6 +426,30 @@ function Dashboard({ session }: { session: Session }) {
     );
   }
 
+  async function handleDailyReportAction(tradeDate = selectedReportDate) {
+    const completed = reportStatuses.some((report) => report.trade_date === tradeDate && report.report_type === "daily" && report.status === "completed");
+    if (completed) {
+      await downloadReport({
+        key: "reportDownload",
+        payload: { trade_date: tradeDate, report_type: "daily" as const },
+      });
+      return;
+    }
+    await sendReport(tradeDate);
+  }
+
+  async function handleDailyBlogReportAction(tradeDate = selectedReportDate) {
+    const completed = reportStatuses.some((report) => report.trade_date === tradeDate && report.report_type === "daily_blog" && report.status === "completed");
+    if (completed) {
+      await downloadReport({
+        key: "reportDownload",
+        payload: { trade_date: tradeDate, report_type: "daily_blog" as const },
+      });
+      return;
+    }
+    await sendBlogReport(tradeDate);
+  }
+
   async function sendSingleSignalReport(row: Record<string, unknown>) {
     const code = String(row.code || "").padStart(6, "0");
     if (!selectedSignalDate || !code) {
@@ -981,10 +1005,11 @@ function Dashboard({ session }: { session: Session }) {
                 rows={reportStatuses}
                 refreshing={pending === "reportsRefresh"}
                 reportPending={pending === "report"}
+                downloadPending={pending === "reportDownload"}
                 onDateChange={changeReportDate}
                 onRefresh={() => refreshReportsOnly()}
-                onGenerateReport={() => sendReport(selectedReportDate)}
-                onGenerateBlogReport={() => sendBlogReport(selectedReportDate)}
+                onDailyReportAction={() => handleDailyReportAction(selectedReportDate)}
+                onDailyBlogReportAction={() => handleDailyBlogReportAction(selectedReportDate)}
                 onRowClick={(row) => setDetail({
                   title: `${formatCell(row.report_kind_ko)} ${formatCell(row.name || row.code)}`,
                   kind: "report",
@@ -1684,10 +1709,11 @@ function ReportCalendarPanel({
   rows,
   refreshing,
   reportPending,
+  downloadPending,
   onDateChange,
   onRefresh,
-  onGenerateReport,
-  onGenerateBlogReport,
+  onDailyReportAction,
+  onDailyBlogReportAction,
   onRowClick,
 }: {
   selectedDate: string;
@@ -1695,10 +1721,11 @@ function ReportCalendarPanel({
   rows: AiReportStatus[];
   refreshing: boolean;
   reportPending: boolean;
+  downloadPending: boolean;
   onDateChange: (tradeDate: string) => void;
   onRefresh: () => void;
-  onGenerateReport: () => void;
-  onGenerateBlogReport: () => void;
+  onDailyReportAction: () => void;
+  onDailyBlogReportAction: () => void;
   onRowClick: (row: Record<string, unknown>) => void;
 }) {
   const normalizedRows = rows
@@ -1707,6 +1734,9 @@ function ReportCalendarPanel({
   const dailyReports = normalizedRows.filter((row) => row.report_type === "daily" || row.report_type === "daily_blog");
   const signalReports = normalizedRows.filter((row) => row.report_type === "signal" || row.report_type === "signal_blog");
   const recentDates = dates.slice(0, 12);
+  const dailyReportCompleted = dailyReports.some((row) => row.report_type === "daily" && row.status === "completed");
+  const dailyBlogReportCompleted = dailyReports.some((row) => row.report_type === "daily_blog" && row.status === "completed");
+  const actionPending = reportPending || downloadPending;
 
   return (
     <section className="panel data-panel report-calendar-panel">
@@ -1726,11 +1756,15 @@ function ReportCalendarPanel({
           onChange={(event) => onDateChange(event.target.value)}
         />
         <div className="report-generate-actions">
-          <button className="primary small" type="button" disabled={reportPending || !selectedDate} onClick={onGenerateReport}>
-            {reportPending ? "생성 요청 중..." : "선택 날짜 종합 리포트 생성"}
+          <button className="primary small" type="button" disabled={actionPending || !selectedDate} onClick={onDailyReportAction}>
+            {downloadPending && dailyReportCompleted ? "다운로드 중..."
+              : reportPending && !dailyReportCompleted ? "생성 요청 중..."
+                : dailyReportCompleted ? "선택 날짜 종합 리포트 다운로드" : "선택 날짜 종합 리포트 생성"}
           </button>
-          <button className="small" type="button" disabled={reportPending || !selectedDate} onClick={onGenerateBlogReport}>
-            {reportPending ? "생성 요청 중..." : "선택 날짜 블로그 글 생성"}
+          <button className="small" type="button" disabled={actionPending || !selectedDate} onClick={onDailyBlogReportAction}>
+            {downloadPending && dailyBlogReportCompleted ? "다운로드 중..."
+              : reportPending && !dailyBlogReportCompleted ? "생성 요청 중..."
+                : dailyBlogReportCompleted ? "선택 날짜 블로그 글 다운로드" : "선택 날짜 블로그 글 생성"}
           </button>
         </div>
         <div className="report-date-list">

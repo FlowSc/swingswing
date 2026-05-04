@@ -169,6 +169,25 @@ async def send_daily_report(
 ) -> dict:
     await require_report_access(user.id, user.email)
     target_date = trade_date or datetime.now(ZoneInfo(get_settings().timezone)).date().isoformat()
+    report_type = "daily_blog" if report_style == "blog" else "daily"
+    existing = await SupabaseRest().select(
+        "ai_reports",
+        columns="id,trade_date,report_type,code,name,title,status,error,created_at,started_at,finished_at",
+        filters={"trade_date": f"eq.{target_date}", "report_type": f"eq.{report_type}", "code": "eq.ALL"},
+        order="created_at.desc",
+        limit=1,
+    )
+    if existing and existing[0].get("status") == "completed":
+        return {
+            "trade_date": target_date,
+            "signals": 0,
+            "queued": False,
+            "stage": "already_completed",
+            "error": None,
+            "report_id": existing[0].get("id"),
+            "title": existing[0].get("title"),
+            "message": "Report already completed. Download existing report.",
+        }
     rows = await SupabaseRest().select(
         "shared_signals",
         filters={"trade_date": f"eq.{target_date}"},
@@ -182,7 +201,7 @@ async def send_daily_report(
     result = await queue_ai_report(
         signals,
         datetime.fromisoformat(target_date).date(),
-        report_type="daily_blog" if report_style == "blog" else "daily",
+        report_type=report_type,
     )
     return {"trade_date": target_date, "signals": len(signals), **result}
 
