@@ -88,6 +88,9 @@ function Dashboard({ session }: { session: Session }) {
   const [dailyDashboard, setDailyDashboard] = useState<DailyDashboard | null>(null);
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
   const [aiReports, setAiReports] = useState<AiReportStatus[]>([]);
+  const [reportDates, setReportDates] = useState<string[]>([]);
+  const [selectedReportDate, setSelectedReportDate] = useState("");
+  const [reportStatuses, setReportStatuses] = useState<AiReportStatus[]>([]);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
   const [backtestJob, setBacktestJob] = useState<BacktestJob | null>(null);
   const [backtestRuns, setBacktestRuns] = useState<BacktestJob[]>([]);
@@ -192,6 +195,30 @@ function Dashboard({ session }: { session: Session }) {
     } finally {
       setPending(null);
     }
+  }
+
+  async function refreshReportsOnly(tradeDate = selectedReportDate) {
+    if (!tradeDate || !canUseReports) return;
+    setPending("reportsRefresh");
+    try {
+      const [dateResult, statusResult] = await Promise.all([
+        api.getAiReportDates(session).catch(() => reportDates),
+        api.getAiReportStatuses(session, tradeDate).catch(() => []),
+      ]);
+      setReportDates(dateResult);
+      setSelectedReportDate(tradeDate);
+      setReportStatuses(statusResult);
+      setStatus({ type: "info", message: `리포트 조회 완료: ${tradeDate} / ${statusResult.length}개` });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function changeReportDate(tradeDate: string) {
+    if (!tradeDate) return;
+    await refreshReportsOnly(tradeDate);
   }
 
   async function refreshPositionsOnly() {
@@ -530,11 +557,12 @@ function Dashboard({ session }: { session: Session }) {
       const entitlementResult = await api.getEntitlements(session);
       setEntitlements(entitlementResult);
 
-      const [brokerResult, accountResult, strategyResult, dateResult, positionResult, logResult, watcherRunResult, dashboardResult, backtestRunResult] = await Promise.all([
+      const [brokerResult, accountResult, strategyResult, dateResult, reportDateResult, positionResult, logResult, watcherRunResult, dashboardResult, backtestRunResult] = await Promise.all([
         api.getBrokerStatus(session),
         api.getBrokerAccounts(session),
         api.getStrategy(session),
         api.signalDates(session),
+        entitlementResult.can_use_reports ? api.getAiReportDates(session).catch(() => []) : Promise.resolve([]),
         api.positions(session),
         api.tradeLogs(session),
         api.watcherRuns(session).catch(() => []),
@@ -542,6 +570,7 @@ function Dashboard({ session }: { session: Session }) {
         entitlementResult.can_run_backtest ? api.historicalBacktestRuns(session).catch(() => []) : Promise.resolve([]),
       ]);
       const nextSignalDate = selectedSignalDate || dateResult[0] || "";
+      const nextReportDate = selectedReportDate || reportDateResult[0] || nextSignalDate;
       const [signalResult, decisionResult, reportResult] = nextSignalDate
         ? await Promise.all([
             api.signalsByDate(session, nextSignalDate),
@@ -549,11 +578,16 @@ function Dashboard({ session }: { session: Session }) {
             entitlementResult.can_use_reports ? api.getAiReportStatuses(session, nextSignalDate).catch(() => []) : Promise.resolve([]),
           ])
         : [[], [], []];
+      const reportStatusResult = nextReportDate && entitlementResult.can_use_reports
+        ? await api.getAiReportStatuses(session, nextReportDate).catch(() => [])
+        : [];
       setBrokerStatus(brokerResult);
       setBrokerAccounts(accountResult);
       setStrategy(strategyResult);
       setSignalDates(dateResult);
       setSelectedSignalDate(nextSignalDate);
+      setReportDates(reportDateResult);
+      setSelectedReportDate(nextReportDate);
       setDailyDashboard(dashboardResult);
       if (brokerResult.configured) {
         setBroker((current) => ({
@@ -569,6 +603,7 @@ function Dashboard({ session }: { session: Session }) {
       }
       setSignals(signalResult);
       setAiReports(reportResult);
+      setReportStatuses(reportStatusResult);
       setPositions(positionResult);
       setLogs(logResult);
       setWatcherRuns(watcherRunResult);
@@ -969,21 +1004,18 @@ function Dashboard({ session }: { session: Session }) {
           </div>
           <div className="grid two">
             {canUseReports && (
-              <DataPanel
-                title={selectedSignalDate ? `${selectedSignalDate} AI 리포트 상태` : "AI 리포트 상태"}
-                rows={aiReports.map(normalizeAiReportStatusRow)}
-                columns={["report_kind_ko", "name", "code", "status_ko", "created_at", "started_at", "finished_at", "error"]}
-                maxRows={20}
+              <ReportCalendarPanel
+                selectedDate={selectedReportDate}
+                dates={reportDates}
+                rows={reportStatuses}
+                refreshing={pending === "reportsRefresh"}
+                onDateChange={changeReportDate}
+                onRefresh={() => refreshReportsOnly()}
                 onRowClick={(row) => setDetail({
                   title: `${formatCell(row.report_kind_ko)} ${formatCell(row.name || row.code)}`,
                   kind: "report",
                   row,
                 })}
-                headerAction={(
-                  <button className="ghost small" type="button" disabled={pending === "signalsRefresh" || !selectedSignalDate} onClick={refreshSignalsOnly}>
-                    {pending === "signalsRefresh" ? "갱신 중" : "새로고침"}
-                  </button>
-                )}
               />
             )}
             {isScanAdmin && (
@@ -1669,6 +1701,84 @@ function MiniTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function ReportCalendarPanel({
+  selectedDate,
+  dates,
+  rows,
+  refreshing,
+  onDateChange,
+  onRefresh,
+  onRowClick,
+}: {
+  selectedDate: string;
+  dates: string[];
+  rows: AiReportStatus[];
+  refreshing: boolean;
+  onDateChange: (tradeDate: string) => void;
+  onRefresh: () => void;
+  onRowClick: (row: Record<string, unknown>) => void;
+}) {
+  const normalizedRows = rows.map(normalizeAiReportStatusRow);
+  const dailyReports = normalizedRows.filter((row) => row.report_type === "daily" || row.report_type === "daily_blog");
+  const signalReports = normalizedRows.filter((row) => row.report_type === "signal" || row.report_type === "signal_blog");
+  const recentDates = dates.slice(0, 12);
+
+  return (
+    <section className="panel data-panel report-calendar-panel">
+      <div className="data-panel-head">
+        <div>
+          <h2>리포트 캘린더</h2>
+          <p className="panel-subtitle">날짜를 선택하면 해당일의 종합/개별 리포트와 블로그 글을 확인합니다.</p>
+        </div>
+        <button className="ghost small" type="button" disabled={refreshing || !selectedDate} onClick={onRefresh}>
+          {refreshing ? "갱신 중" : "새로고침"}
+        </button>
+      </div>
+      <div className="report-calendar-controls">
+        <input
+          type="date"
+          value={selectedDate}
+          onChange={(event) => onDateChange(event.target.value)}
+        />
+        <div className="report-date-list">
+          {recentDates.length === 0 ? (
+            <span className="empty">생성된 리포트 날짜 없음</span>
+          ) : recentDates.map((tradeDate) => (
+            <button
+              className={tradeDate === selectedDate ? "active" : ""}
+              type="button"
+              key={tradeDate}
+              onClick={() => onDateChange(tradeDate)}
+            >
+              {tradeDate}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="report-status-groups">
+        <section>
+          <h3>{selectedDate || "날짜 미선택"} 종합 리포트/블로그 글</h3>
+          <MiniTable
+            rows={dailyReports}
+            columns={["report_kind_ko", "name", "code", "status_ko", "created_at", "started_at", "finished_at", "error"]}
+            onRowClick={onRowClick}
+            emptyLabel="해당 날짜의 종합 리포트 없음"
+          />
+        </section>
+        <section>
+          <h3>개별 기업 리포트/블로그 글</h3>
+          <MiniTable
+            rows={signalReports}
+            columns={["report_kind_ko", "name", "code", "status_ko", "created_at", "started_at", "finished_at", "error"]}
+            onRowClick={onRowClick}
+            emptyLabel="해당 날짜의 개별 리포트 없음"
+          />
+        </section>
+      </div>
+    </section>
   );
 }
 

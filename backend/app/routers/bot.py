@@ -242,6 +242,26 @@ async def get_report(
     return rows[0]
 
 
+@router.get("/reports/dates")
+async def list_report_dates(user: CurrentUser = Depends(get_current_user)) -> list[str]:
+    await require_report_access(user.id, user.email)
+    rows = await SupabaseRest().select(
+        "ai_reports",
+        columns="trade_date",
+        order="trade_date.desc",
+        limit=300,
+    )
+    dates: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        trade_date = row.get("trade_date")
+        if not trade_date or trade_date in seen:
+            continue
+        seen.add(trade_date)
+        dates.append(trade_date)
+    return dates
+
+
 @router.get("/reports/status")
 async def list_report_statuses(
     trade_date: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$"),

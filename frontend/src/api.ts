@@ -388,6 +388,7 @@ export const api = {
   },
   getAiReportStatuses: (session: Session, tradeDate: string) =>
     request<AiReportStatus[]>(`/bot/reports/status?trade_date=${encodeURIComponent(tradeDate)}`, session),
+  getAiReportDates: (session: Session) => request<string[]>("/bot/reports/dates", session),
   watchTick: (session: Session, payload: { test_mode: boolean; dry_run: boolean }) =>
     request("/bot/watch-tick", session, { method: "POST", body: JSON.stringify(payload) }),
   forceLiquidatePosition: (session: Session, code: string, dryRun = false) =>

@@ -726,6 +726,63 @@ a {
   font-size: 13px;
 }
 
+.report-calendar-panel {
+  min-height: 420px;
+}
+
+.panel-subtitle {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.report-calendar-controls {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.report-calendar-controls input[type="date"] {
+  max-width: 220px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.report-date-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.report-date-list button {
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.report-date-list button.active {
+  border-color: var(--green);
+  background: var(--lime);
+}
+
+.report-status-groups {
+  display: grid;
+  gap: 18px;
+}
+
+.report-status-groups h3 {
+  margin: 0 0 10px;
+  color: var(--green);
+  font-size: 14px;
+}
+
 .account-summary {
   display: flex;
   flex-wrap: wrap;
@@ -1035,15 +1092,19 @@ th {
   }
 
   .panel-actions,
-  .backtest-controls {
+  .backtest-controls,
+  .report-date-list {
     width: 100%;
     justify-content: stretch;
   }
 
   .panel-actions > *,
   .backtest-controls > *,
+  .report-date-list > *,
+  .report-calendar-controls input[type="date"],
   .compact-select {
     width: 100%;
+    max-width: none;
   }
 
   .table-wrap {
