@@ -80,6 +80,47 @@ create table if not exists scan_runs (
   finished_at timestamptz
 );
 
+create table if not exists backtest_runs (
+  id bigint generated always as identity primary key,
+  requested_by uuid not null,
+  status text not null default 'running',
+  source text not null default 'historical_rescan',
+  strategy_key text not null default 'swing_default',
+  strategy_version text not null default '2026-05-04',
+  days integer not null default 120,
+  max_signals integer not null default 200,
+  start_date date,
+  end_date date,
+  universe_scope text not null default 'limited',
+  processed_count integer not null default 0,
+  total_count integer not null default 0,
+  candidates_count integer not null default 0,
+  tested_count integer not null default 0,
+  result jsonb not null default '{}'::jsonb,
+  summary jsonb not null default '{}'::jsonb,
+  error text,
+  created_at timestamptz not null default now(),
+  started_at timestamptz,
+  finished_at timestamptz
+);
+
+create table if not exists backtest_trades (
+  id bigint generated always as identity primary key,
+  backtest_run_id bigint not null references backtest_runs(id) on delete cascade,
+  trade_date date not null,
+  entry_date date not null,
+  code text not null,
+  name text,
+  score numeric,
+  entry numeric,
+  exit_price numeric,
+  return_pct numeric,
+  hold_days integer,
+  exit_reason text,
+  raw jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists strategy_settings (
   user_id uuid primary key,
   preset text not null default 'balanced',
@@ -240,6 +281,10 @@ create unique index if not exists uq_ai_reports_daily_type_code
 create index if not exists idx_signals_trade_date_user on signals (trade_date, user_id);
 create index if not exists idx_shared_signals_trade_date on shared_signals (trade_date, score desc);
 create index if not exists idx_scan_runs_created_at on scan_runs (created_at desc);
+create index if not exists idx_backtest_runs_user_created_at on backtest_runs (requested_by, created_at desc);
+create index if not exists idx_backtest_runs_status_created_at on backtest_runs (status, created_at desc);
+create index if not exists idx_backtest_runs_strategy_date on backtest_runs (strategy_key, strategy_version, start_date, end_date);
+create index if not exists idx_backtest_trades_run_return on backtest_trades (backtest_run_id, return_pct desc);
 create index if not exists idx_positions_user_status on positions (user_id, status);
 create index if not exists idx_trade_logs_user_created_at on trade_logs (user_id, created_at desc);
 create index if not exists idx_trade_decision_logs_user_date on trade_decision_logs (user_id, decision_date, created_at desc);

@@ -144,6 +144,16 @@ class SupabaseRest:
             self._raise_for_status(response)
             return response.json()
 
+    async def delete(self, table: str, *, filters: dict[str, str]) -> list[dict[str, Any]]:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.delete(
+                f"{self.base_url}/rest/v1/{table}",
+                headers=self._headers(),
+                params=filters,
+            )
+            self._raise_for_status(response)
+            return response.json()
+
     async def rpc(self, function_name: str, payload: dict[str, Any]) -> Any:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(

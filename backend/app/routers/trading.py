@@ -1,21 +1,20 @@
-from fastapi import APIRouter, Depends, Query
-import asyncio
-from datetime import datetime
+from datetime import date, datetime
 import logging
-from uuid import uuid4
 from zoneinfo import ZoneInfo
+
+import pandas as pd
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
 from app.services.broker_credentials import get_broker_credentials
-from app.services.backtest import run_historical_rescan_backtest_sync, run_shared_signal_backtest
+from app.services.backtest import finalize_backtest_state, prepare_backtest_state, process_backtest_chunk, run_shared_signal_backtest
 from app.services.memberships import require_admin_access
 from app.services.supabase_rest import SupabaseRest
 
 
 router = APIRouter(tags=["trading"])
 logger = logging.getLogger(__name__)
-BACKTEST_JOBS: dict[str, dict] = {}
 
 
 @router.get("/signals/today")
@@ -214,21 +213,101 @@ async def start_historical_backtest(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     await require_admin_access(user.id, user.email)
-    job_id = str(uuid4())
-    BACKTEST_JOBS[job_id] = {
-        "job_id": job_id,
-        "user_id": user.id,
-        "status": "running",
-        "days": days,
-        "max_signals": max_signals,
-        "progress": {"processed": 0, "total": 0, "signals": 0, "skipped": 0},
-        "result": None,
-        "error": None,
-        "created_at": datetime.now(ZoneInfo(get_settings().timezone)).isoformat(),
-        "completed_at": None,
-    }
-    asyncio.create_task(_run_historical_backtest_job(job_id, days, max_signals))
-    return BACKTEST_JOBS[job_id]
+    state = clean_json(await prepare_backtest_state(days, max_signals))
+    rows = await SupabaseRest().insert(
+        "backtest_runs",
+        {
+            "requested_by": user.id,
+            "status": "running",
+            "source": state["source"],
+            "strategy_key": state["strategy_key"],
+            "strategy_version": state["strategy_version"],
+            "days": days,
+            "max_signals": max_signals,
+            "start_date": state["start_date"],
+            "end_date": state["end_date"],
+            "universe_scope": state["universe_scope"],
+            "processed_count": state["offset"],
+            "total_count": state["total"],
+            "candidates_count": len(state.get("candidates") or []),
+            "result": state,
+            "started_at": now_iso(),
+        },
+    )
+    return backtest_run_to_job(rows[0])
+
+
+@router.post("/backtest/historical/runs/{run_id}/step")
+async def step_historical_backtest(
+    run_id: int,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    await require_admin_access(user.id, user.email)
+    rows = await SupabaseRest().select("backtest_runs", filters={"id": f"eq.{run_id}", "requested_by": f"eq.{user.id}"}, limit=1)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Backtest run not found")
+    run = rows[0]
+    if run["status"] == "completed":
+        return backtest_run_to_job(run)
+
+    try:
+        state = await process_backtest_chunk(run.get("result") or {})
+    except Exception as exc:
+        patched = await SupabaseRest().patch(
+            "backtest_runs",
+            filters={"id": f"eq.{run_id}"},
+            payload={"status": "failed", "error": str(exc), "result": run.get("result") or {}},
+        )
+        return backtest_run_to_job(patched[0])
+
+    if state["done"]:
+        try:
+            summary = clean_json(await finalize_backtest_state(state))
+            await replace_backtest_trades(run_id, summary.get("trades") or [])
+            patched = await SupabaseRest().patch(
+                "backtest_runs",
+                filters={"id": f"eq.{run_id}"},
+                payload={
+                    "status": "completed",
+                    "processed_count": state["offset"],
+                    "total_count": state["total"],
+                    "candidates_count": len(state.get("candidates") or []),
+                    "tested_count": summary.get("signals_tested") or 0,
+                    "result": clean_json(state),
+                    "summary": summary,
+                    "error": None,
+                    "finished_at": now_iso(),
+                },
+            )
+            return backtest_run_to_job(patched[0])
+        except Exception as exc:
+            patched = await SupabaseRest().patch(
+                "backtest_runs",
+                filters={"id": f"eq.{run_id}"},
+                payload={
+                    "status": "failed",
+                    "processed_count": state["offset"],
+                    "total_count": state["total"],
+                    "candidates_count": len(state.get("candidates") or []),
+                    "result": clean_json(state),
+                    "error": str(exc),
+                },
+            )
+            return backtest_run_to_job(patched[0])
+
+    patched = await SupabaseRest().patch(
+        "backtest_runs",
+        filters={"id": f"eq.{run_id}"},
+        payload={
+            "status": "running",
+            "processed_count": state["offset"],
+            "total_count": state["total"],
+            "candidates_count": len(state.get("candidates") or []),
+            "result": clean_json(state),
+            "error": None,
+        },
+    )
+    return backtest_run_to_job(patched[0])
 
 
 @router.get("/backtest/historical/jobs/{job_id}")
@@ -237,28 +316,88 @@ async def get_historical_backtest_job(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     await require_admin_access(user.id, user.email)
-    job = BACKTEST_JOBS.get(job_id)
-    if not job or job.get("user_id") != user.id:
-        return {"job_id": job_id, "status": "not_found", "progress": {}, "result": None, "error": "Backtest job not found."}
-    return job
+    rows = await SupabaseRest().select("backtest_runs", filters={"id": f"eq.{job_id}", "requested_by": f"eq.{user.id}"}, limit=1)
+    if not rows:
+        return {"job_id": job_id, "status": "not_found", "progress": {}, "result": None, "error": "Backtest run not found."}
+    return backtest_run_to_job(rows[0])
 
 
-async def _run_historical_backtest_job(job_id: str, days: int, max_signals: int) -> None:
-    job = BACKTEST_JOBS[job_id]
+@router.get("/backtest/historical/runs")
+async def list_historical_backtest_runs(user: CurrentUser = Depends(get_current_user)) -> list[dict]:
+    await require_admin_access(user.id, user.email)
+    rows = await SupabaseRest().select(
+        "backtest_runs",
+        columns="id,requested_by,status,source,strategy_key,strategy_version,days,max_signals,start_date,end_date,universe_scope,processed_count,total_count,candidates_count,tested_count,summary,error,created_at,started_at,finished_at",
+        filters={"requested_by": f"eq.{user.id}"},
+        order="created_at.desc",
+        limit=30,
+    )
+    return [backtest_run_to_job(row) for row in rows]
 
-    def update_progress(progress: dict) -> None:
-        job["progress"] = progress
 
+def now_iso() -> str:
+    return datetime.now(ZoneInfo(get_settings().timezone)).isoformat()
+
+
+def backtest_run_to_job(row: dict) -> dict:
+    summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+    return {
+        "job_id": str(row["id"]),
+        "run_id": row["id"],
+        "status": "running",
+        **{key: row.get(key) for key in ("days", "max_signals", "source", "strategy_key", "strategy_version", "start_date", "end_date", "universe_scope", "error", "created_at", "started_at", "finished_at")},
+        "status": row.get("status"),
+        "progress": {
+            "processed": row.get("processed_count") or 0,
+            "total": row.get("total_count") or 0,
+            "signals": row.get("candidates_count") or 0,
+            "skipped": (row.get("result") or {}).get("skipped", 0) if isinstance(row.get("result"), dict) else 0,
+            "tested": row.get("tested_count") or summary.get("signals_tested") or 0,
+        },
+        "result": summary if row.get("status") == "completed" else None,
+    }
+
+
+async def replace_backtest_trades(run_id: int, trades: list[dict]) -> None:
+    await SupabaseRest().delete("backtest_trades", filters={"backtest_run_id": f"eq.{run_id}"})
+    for trade in trades:
+        await SupabaseRest().insert(
+            "backtest_trades",
+            {
+                "backtest_run_id": run_id,
+                "trade_date": trade.get("trade_date"),
+                "entry_date": trade.get("entry_date"),
+                "code": trade.get("code"),
+                "name": trade.get("name"),
+                "score": trade.get("score"),
+                "entry": trade.get("entry"),
+                "exit_price": trade.get("exit_price"),
+                "return_pct": trade.get("return_pct"),
+                "hold_days": trade.get("hold_days"),
+                "exit_reason": trade.get("exit_reason"),
+                "raw": clean_json(trade),
+            },
+        )
+
+
+def clean_json(value):
+    if isinstance(value, dict):
+        return {key: clean_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [clean_json(item) for item in value]
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if hasattr(value, "item"):
+        try:
+            return clean_json(value.item())
+        except Exception:
+            pass
     try:
-        result = await asyncio.to_thread(run_historical_rescan_backtest_sync, days, max_signals, update_progress)
-        job["result"] = result
-        job["status"] = "completed"
-    except Exception as exc:
-        logger.exception("Historical backtest job failed: job_id=%s", job_id)
-        job["error"] = str(exc)
-        job["status"] = "failed"
-    finally:
-        job["completed_at"] = datetime.now(ZoneInfo(get_settings().timezone)).isoformat()
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    return value
 
 
 def summarize_reasons(rows: list[dict]) -> list[dict]:

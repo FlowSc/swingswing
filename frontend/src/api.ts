@@ -263,9 +263,16 @@ export type BacktestResult = {
 
 export type BacktestJob = {
   job_id: string;
+  run_id?: number;
   status: "running" | "completed" | "failed" | "not_found";
   days?: number;
   max_signals?: number;
+  source?: string;
+  strategy_key?: string;
+  strategy_version?: string;
+  start_date?: string;
+  end_date?: string;
+  universe_scope?: string;
   progress?: {
     processed?: number;
     total?: number;
@@ -394,6 +401,9 @@ export const api = {
     request<BacktestResult>(`/backtest/shared-signals?days=${days}&max_signals=${maxSignals}`, session),
   startHistoricalBacktest: (session: Session, days = 120, maxSignals = 200) =>
     request<BacktestJob>(`/backtest/historical/start?days=${days}&max_signals=${maxSignals}`, session, { method: "POST" }),
+  stepHistoricalBacktest: (session: Session, runId: number | string) =>
+    request<BacktestJob>(`/backtest/historical/runs/${encodeURIComponent(String(runId))}/step`, session, { method: "POST" }),
   getHistoricalBacktestJob: (session: Session, jobId: string) =>
     request<BacktestJob>(`/backtest/historical/jobs/${encodeURIComponent(jobId)}`, session),
+  historicalBacktestRuns: (session: Session) => request<BacktestJob[]>("/backtest/historical/runs", session),
 };

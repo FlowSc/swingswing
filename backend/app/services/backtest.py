@@ -30,6 +30,124 @@ async def run_shared_signal_backtest(days: int = 120, max_signals: int = 200) ->
     return await asyncio.to_thread(run_historical_rescan_backtest_sync, days, max_signals)
 
 
+async def prepare_backtest_state(days: int = 120, max_signals: int = 200) -> dict:
+    return await asyncio.to_thread(prepare_backtest_state_sync, days, max_signals)
+
+
+def prepare_backtest_state_sync(days: int = 120, max_signals: int = 200) -> dict:
+    end = datetime.now(ZoneInfo(get_settings().timezone)).date()
+    start = end - timedelta(days=days)
+    fetch_start = start - timedelta(days=LOOKBACK_DAYS)
+    fetch_end = end + timedelta(days=FORWARD_DAYS)
+    universe = load_scan_universe(SCAN_UNIVERSE_LIMITED)
+    market_frame = load_market_frame(fetch_start, end)
+    if market_frame.empty:
+        raise RuntimeError("Market data is empty.")
+
+    trading_dates = [
+        item.date().isoformat()
+        for item in market_frame.loc[str(start):str(end)].index
+        if item.date() < end
+    ]
+    return {
+        "source": "historical_rescan",
+        "strategy_key": "swing_default",
+        "strategy_version": "2026-05-04",
+        "days": days,
+        "max_signals": max_signals,
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+        "fetch_start": fetch_start.isoformat(),
+        "fetch_end": fetch_end.isoformat(),
+        "universe_scope": SCAN_UNIVERSE_LIMITED,
+        "offset": 0,
+        "total": len(universe),
+        "chunk_size": 50,
+        "trading_dates": trading_dates,
+        "market_filter_by_date": {key.isoformat(): value for key, value in build_market_filter_map(market_frame).items()},
+        "market_return_by_date": {key.isoformat(): value for key, value in build_market_return_map(market_frame).items()},
+        "universe": universe.to_dict("records"),
+        "candidates": [],
+        "skipped": 0,
+        "done": False,
+    }
+
+
+async def process_backtest_chunk(state: dict) -> dict:
+    return await asyncio.to_thread(process_backtest_chunk_sync, state)
+
+
+def process_backtest_chunk_sync(state: dict) -> dict:
+    offset = int(state.get("offset") or 0)
+    chunk_size = int(state.get("chunk_size") or 50)
+    universe = state.get("universe") or []
+    total = len(universe)
+    fetch_start = str(state["fetch_start"])
+    fetch_end = str(state["fetch_end"])
+    trading_dates = [date.fromisoformat(value) for value in state.get("trading_dates") or []]
+    market_filter_by_date = state.get("market_filter_by_date") or {}
+    market_return_by_date = state.get("market_return_by_date") or {}
+    candidates = list(state.get("candidates") or [])
+    skipped = int(state.get("skipped") or 0)
+
+    logger.warning("Historical backtest chunk started: %s-%s/%s candidates=%s", offset + 1, min(offset + chunk_size, total), total, len(candidates))
+    for row in universe[offset : offset + chunk_size]:
+        try:
+            frame = fdr.DataReader(row["Code"], start=fetch_start, end=fetch_end)
+            if frame is None or frame.empty:
+                skipped += 1
+                continue
+            for trade_date in trading_dates:
+                history = frame.loc[:trade_date.isoformat()]
+                if len(history) < 260:
+                    continue
+                signal = score_swing_setup(
+                    history,
+                    row["Code"],
+                    row["Name"],
+                    market_filter_ok=bool(market_filter_by_date.get(trade_date.isoformat(), False)),
+                    universe=row["Universe"],
+                    market_ret_20d=float(market_return_by_date.get(trade_date.isoformat(), 0.0)),
+                    company_profile=row.get("CompanyProfile") or {},
+                    core_universe=truthy(row.get("CoreUniverse")),
+                    core_universe_type=str(row.get("CoreUniverseType") or ""),
+                )
+                if signal:
+                    candidates.append(shared_signal_to_record(trade_date, signal))
+        except Exception as exc:
+            skipped += 1
+            logger.debug("Historical backtest chunk skipped code=%s error=%s", row.get("Code"), exc, exc_info=True)
+
+    next_offset = min(offset + chunk_size, total)
+    state = {
+        **state,
+        "offset": next_offset,
+        "total": total,
+        "candidates": candidates,
+        "skipped": skipped,
+        "done": next_offset >= total,
+    }
+    logger.warning("Historical backtest chunk completed: offset=%s/%s candidates=%s done=%s", next_offset, total, len(candidates), state["done"])
+    return state
+
+
+async def finalize_backtest_state(state: dict) -> dict:
+    return await asyncio.to_thread(finalize_backtest_state_sync, state)
+
+
+def finalize_backtest_state_sync(state: dict) -> dict:
+    ranked = rank_daily_signal_records(state.get("candidates") or [])
+    ranked_for_test = sorted(ranked, key=lambda item: item["trade_date"], reverse=True)[: int(state.get("max_signals") or 200)]
+    trades = [trade for row in ranked_for_test if (trade := simulate_signal_safe(row))]
+    return summarize_trades(
+        int(state.get("days") or 120),
+        trades,
+        source="historical_rescan",
+        generated_signals=len(ranked),
+        skipped_symbols=int(state.get("skipped") or 0),
+    )
+
+
 def run_historical_rescan_backtest_sync(
     days: int = 120,
     max_signals: int = 200,
@@ -154,6 +272,34 @@ def rank_daily_signals(items: list[dict]) -> list[dict]:
         top_codes = {signal["Code"] for signal in top_signals}
         ranked.extend(item for item in by_date[trade_date] if item["signal"]["Code"] in top_codes)
     return ranked
+
+
+def rank_daily_signal_records(items: list[dict]) -> list[dict]:
+    by_date: dict[str, list[dict]] = {}
+    for item in items:
+        by_date.setdefault(str(item["trade_date"]), []).append(item)
+
+    ranked: list[dict] = []
+    for trade_date in sorted(by_date):
+        day_signals = sorted(by_date[trade_date], key=lambda item: float(item.get("score") or 0), reverse=True)
+        ranked.extend(day_signals[:MAX_DAILY_SIGNALS])
+    return ranked
+
+
+def simulate_signal_safe(row: dict) -> dict | None:
+    try:
+        return simulate_signal(row)
+    except Exception as exc:
+        logger.warning("Backtest skipped signal: code=%s trade_date=%s error=%s", row.get("code"), row.get("trade_date"), exc)
+        return None
+
+
+def simulate_signal(row: dict) -> dict | None:
+    entry_date = date.fromisoformat(str(row["trade_date"]))
+    start = entry_date.strftime("%Y-%m-%d")
+    end = (entry_date + timedelta(days=FORWARD_DAYS)).strftime("%Y-%m-%d")
+    frame = fdr.DataReader(str(row["code"]).zfill(6), start=start, end=end)
+    return simulate_signal_with_frame(row, frame)
 
 
 def simulate_generated_signal_safe(item: dict) -> dict | None:
