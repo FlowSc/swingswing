@@ -302,6 +302,17 @@ frontend/package-lock.json
 supabase/schema.sql
 ```
 
+## Supabase 추가 SQL
+
+기존 DB에 `backtest_trades` 테이블이 이미 있다면 아래 컬럼을 한 번 추가해야 합니다.
+
+```sql
+alter table backtest_trades
+  add column if not exists tp1_done boolean not null default false,
+  add column if not exists tp2_done boolean not null default false,
+  add column if not exists remaining_qty_ratio numeric;
+```
+
 ## 현재 상태
 
 - Git 저장소 초기화 완료

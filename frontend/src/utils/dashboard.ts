@@ -209,11 +209,14 @@ export function translateReason(reason: unknown) {
   const map: Record<string, string> = {
     IntradayEntry: "장중 진입 조건 충족",
     StopLoss: "손절가 도달",
+    StopLossAfterTakeProfit: "익절 후 잔량 손절",
     StopLossRepriced: "손절 미체결 재주문",
     StopLossMarketExit: "손절 최종 시장가 탈출",
     TrailingStop: "추적 손절가 도달",
     TimeExit: "최대 보유기간 도달",
     MaxHold: "최대 보유 후 청산",
+    MaxHoldAfterTakeProfit: "익절 후 최대 보유 청산",
+    DataEnd: "백테스트 데이터 종료 청산",
     TakeProfit1: "1차 익절가 도달",
     TakeProfit2: "2차 익절가 도달",
     AlreadyHeld: "이미 보유 중인 종목",
@@ -372,12 +375,27 @@ export function exportBacktestTradesCsv(rows: Array<Record<string, unknown>>, fi
     ["hold_days", "보유일"],
     ["exit_reason_ko", "청산사유"],
     ["exit_reason", "청산사유코드"],
+    ["tp1_done_ko", "1차익절"],
+    ["tp2_done_ko", "2차익절"],
+    ["remaining_qty_ratio", "잔량비율"],
+    ["events_ko", "청산이벤트"],
   ];
   const csvRows = [
     columns.map(([, label]) => label),
     ...rows.map((row) => {
       const raw = asRecord(row.raw);
-      const source: Record<string, unknown> = { ...raw, ...row, exit_reason_ko: translateReason(row.exit_reason) };
+      const events = Array.isArray(raw.events) ? raw.events : [];
+      const source: Record<string, unknown> = {
+        ...raw,
+        ...row,
+        exit_reason_ko: translateReason(row.exit_reason),
+        tp1_done_ko: row.tp1_done || raw.tp1_done ? "Y" : "N",
+        tp2_done_ko: row.tp2_done || raw.tp2_done ? "Y" : "N",
+        events_ko: events.map((event) => {
+          const item = asRecord(event);
+          return `${formatCell(item.day)}일차 ${translateReason(item.event)} @ ${formatCell(item.price)}`;
+        }).join(" / "),
+      };
       return columns.map(([key]) => source[key]);
     }),
   ];

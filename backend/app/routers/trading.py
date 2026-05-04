@@ -346,7 +346,7 @@ async def list_historical_backtest_trades(
         raise HTTPException(status_code=404, detail="Backtest run not found")
     return await SupabaseRest().select(
         "backtest_trades",
-        columns="trade_date,entry_date,code,name,score,entry,exit_price,return_pct,hold_days,exit_reason,raw",
+        columns="trade_date,entry_date,code,name,score,entry,exit_price,return_pct,hold_days,exit_reason,tp1_done,tp2_done,remaining_qty_ratio,raw",
         filters={"backtest_run_id": f"eq.{run_id}"},
         order="return_pct.desc",
         limit=5000,
@@ -393,6 +393,9 @@ async def replace_backtest_trades(run_id: int, trades: list[dict]) -> None:
                 "return_pct": trade.get("return_pct"),
                 "hold_days": trade.get("hold_days"),
                 "exit_reason": trade.get("exit_reason"),
+                "tp1_done": trade.get("tp1_done"),
+                "tp2_done": trade.get("tp2_done"),
+                "remaining_qty_ratio": trade.get("remaining_qty_ratio"),
                 "raw": clean_json(trade),
             },
         )

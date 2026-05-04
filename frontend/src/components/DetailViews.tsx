@@ -548,8 +548,10 @@ export function BacktestRunDetail({
     return_pct: trade.return_pct === undefined ? "-" : `${formatCell(trade.return_pct)}%`,
     hold_days: trade.hold_days,
     reason: translateReason(trade.exit_reason),
+    tp: `${trade.tp1_done ? "1차Y" : "1차N"} / ${trade.tp2_done ? "2차Y" : "2차N"}`,
+    remain: trade.remaining_qty_ratio,
   }));
-  const tradeColumns = ["date", "code", "name", "score", "entry", "exit", "return_pct", "hold_days", "reason"];
+  const tradeColumns = ["date", "code", "name", "score", "entry", "exit", "return_pct", "hold_days", "reason", "tp", "remain"];
   return (
     <div className="detail-grid">
       <button className="primary detail-action" type="button" disabled={pending || row.status !== "completed"} onClick={onDownloadTrades}>

@@ -117,6 +117,9 @@ create table if not exists backtest_trades (
   return_pct numeric,
   hold_days integer,
   exit_reason text,
+  tp1_done boolean not null default false,
+  tp2_done boolean not null default false,
+  remaining_qty_ratio numeric,
   raw jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );

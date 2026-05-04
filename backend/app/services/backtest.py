@@ -333,9 +333,11 @@ def simulate_signal_with_frame(row: dict, frame: pd.DataFrame) -> dict | None:
     realized = 0.0
     tp1_done = False
     tp2_done = False
+    close_reason = "DataEnd"
     last_close = entry
-    exit_reason = "MaxHold"
     hold_days = 0
+    event_log: list[dict] = []
+    target_exit_price = entry
 
     for index, (_, candle) in enumerate(frame.iterrows()):
         if index == 0:
@@ -347,24 +349,36 @@ def simulate_signal_with_frame(row: dict, frame: pd.DataFrame) -> dict | None:
 
         if low <= stop_loss:
             realized += remaining * ((stop_loss / entry - 1) * 100)
+            target_exit_price = stop_loss
             remaining = 0
-            exit_reason = "StopLoss"
+            close_reason = "StopLossAfterTakeProfit" if tp1_done or tp2_done else "StopLoss"
+            event_log.append({"day": hold_days, "event": close_reason, "price": round(stop_loss, 2), "remaining": 0})
             break
         if not tp1_done and high >= take_profit_1:
             realized += 0.3 * ((take_profit_1 / entry - 1) * 100)
             remaining -= 0.3
             tp1_done = True
+            event_log.append({"day": hold_days, "event": "TakeProfit1", "price": round(take_profit_1, 2), "sold": 0.3, "remaining": round(remaining, 2)})
         if not tp2_done and high >= take_profit_2:
             sell_part = min(0.3, remaining)
             realized += sell_part * ((take_profit_2 / entry - 1) * 100)
             remaining -= sell_part
             tp2_done = True
+            event_log.append({"day": hold_days, "event": "TakeProfit2", "price": round(take_profit_2, 2), "sold": round(sell_part, 2), "remaining": round(remaining, 2)})
+            if remaining <= 0:
+                target_exit_price = take_profit_2
+                close_reason = "TakeProfit2"
+                break
         if hold_days >= hold_max_days:
-            exit_reason = "MaxHold"
+            close_reason = "MaxHoldAfterTakeProfit" if tp1_done or tp2_done else "MaxHold"
+            event_log.append({"day": hold_days, "event": close_reason, "price": round(last_close, 2), "remaining": round(remaining, 2)})
             break
 
     if remaining > 0:
         realized += remaining * ((last_close / entry - 1) * 100)
+        target_exit_price = last_close
+        if close_reason == "DataEnd":
+            event_log.append({"day": hold_days, "event": "DataEnd", "price": round(last_close, 2), "remaining": round(remaining, 2)})
 
     return {
         "trade_date": row["trade_date"],
@@ -373,10 +387,14 @@ def simulate_signal_with_frame(row: dict, frame: pd.DataFrame) -> dict | None:
         "name": row.get("name"),
         "score": row.get("score"),
         "entry": round(entry, 2),
-        "exit_price": round(last_close, 2),
+        "exit_price": round(target_exit_price, 2),
         "return_pct": round(realized, 2),
         "hold_days": hold_days,
-        "exit_reason": exit_reason,
+        "exit_reason": close_reason,
+        "tp1_done": tp1_done,
+        "tp2_done": tp2_done,
+        "remaining_qty_ratio": round(remaining, 2),
+        "events": event_log,
     }
 
 
