@@ -11,7 +11,6 @@ export function AuthCard() {
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [inviteCode, setInviteCode] = useState("");
   const [status, setStatus] = useState<Status>({ type: "idle", message: "" });
   const [pending, setPending] = useState(false);
 
@@ -22,7 +21,7 @@ export function AuthCard() {
 
     try {
       if (mode === "signup") {
-        await api.signup({ email, password, invite_code: inviteCode });
+        await api.signup({ email, password });
         const signIn = await supabase.auth.signInWithPassword({ email, password });
         if (signIn.error) {
           setStatus({ type: "info", message: "가입 완료. 이메일 인증 설정이 켜져 있으면 메일 확인 후 로그인하세요." });
@@ -61,13 +60,6 @@ export function AuthCard() {
           비밀번호
           <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" minLength={6} required />
         </label>
-        {mode === "signup" && (
-          <label>
-            가입 코드
-            <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} type="password" required />
-          </label>
-        )}
-
         <button className="primary" disabled={pending}>{pending ? "처리 중..." : mode === "login" ? "로그인" : "회원가입"}</button>
         <StatusLine status={status} />
       </form>

@@ -76,7 +76,6 @@ export type TelegramSettingsPayload = {
 export type SignupPayload = {
   email: string;
   password: string;
-  invite_code: string;
 };
 
 export type MembershipRole = "admin" | "free" | "paid";

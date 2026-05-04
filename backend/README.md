@@ -21,7 +21,6 @@ SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY
 BROKER_ENCRYPTION_KEY
 TELEGRAM_BOT_TOKEN
-SIGNUP_INVITE_CODE
 OPENAI_API_KEY
 ADMIN_REPORT_EMAIL
 SMTP_HOST
@@ -65,7 +64,6 @@ SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
 BROKER_ENCRYPTION_KEY=...
 TELEGRAM_BOT_TOKEN=...
-SIGNUP_INVITE_CODE=your-private-signup-code
 OPENAI_API_KEY=...
 AI_REPORT_MODEL=gpt-5
 AI_REPORT_TOP_N=3
@@ -80,9 +78,8 @@ TZ=Asia/Seoul
 TIMEZONE=Asia/Seoul
 ```
 
-The backend uses the service role key for encrypted credential storage, invite-code signup, and bot jobs. Do not expose `SUPABASE_SERVICE_ROLE_KEY` to React.
-`SIGNUP_INVITE_CODE` is checked by `POST /auth/signup`; users cannot sign up through the app without this code.
-For stronger protection, turn off public signups in Supabase Auth and only use the backend signup endpoint.
+The backend uses the service role key for encrypted credential storage, backend signup, and bot jobs. Do not expose `SUPABASE_SERVICE_ROLE_KEY` to React.
+New users created through `POST /auth/signup` start as free members.
 If `OPENAI_API_KEY` is configured, the daily scan queues HTML AI reports and stores completed output in `ai_reports.html`.
 It queues one daily summary plus individual reports for the top `AI_REPORT_TOP_N` signals.
 SMTP settings are optional legacy fallback values and are not required for DB-stored reports.
