@@ -47,7 +47,7 @@ def build_entitlements(user_id: str, email: str | None, row: dict | None) -> dic
     if role == "paid" and not _paid_active(row):
         role = "free"
 
-    can_use_reports = role == "admin" or bool(row and row.get("report_enabled") and role == "paid")
+    can_use_reports = role in {"admin", "paid"}
     return {
         "user_id": user_id,
         "email": email,
