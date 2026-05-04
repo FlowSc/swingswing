@@ -105,7 +105,6 @@ function Dashboard({ session }: { session: Session }) {
   const isScanAdmin = Boolean(entitlements?.can_run_admin_scan);
   const canUseLiveTrading = Boolean(entitlements?.can_use_live_trading);
   const canUseReports = Boolean(entitlements?.can_use_reports);
-  const dailyReportCompleted = hasCompletedReport(aiReports, "daily");
   const hasRunningScan = dailyDashboard?.latest_scan?.status === "running";
 
   useEffect(() => {
@@ -199,16 +198,18 @@ function Dashboard({ session }: { session: Session }) {
 
   async function refreshReportsOnly(tradeDate = selectedReportDate) {
     if (!tradeDate || !canUseReports) return;
+    setSelectedReportDate(tradeDate);
+    setReportStatuses([]);
     setPending("reportsRefresh");
     try {
       const [dateResult, statusResult] = await Promise.all([
         api.getAiReportDates(session).catch(() => reportDates),
         api.getAiReportStatuses(session, tradeDate).catch(() => []),
       ]);
+      const filteredStatusResult = statusResult.filter((report) => report.trade_date === tradeDate);
       setReportDates(dateResult);
-      setSelectedReportDate(tradeDate);
-      setReportStatuses(statusResult);
-      setStatus({ type: "info", message: `리포트 조회 완료: ${tradeDate} / ${statusResult.length}개` });
+      setReportStatuses(filteredStatusResult);
+      setStatus({ type: "info", message: `리포트 조회 완료: ${tradeDate} / ${filteredStatusResult.length}개` });
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -401,18 +402,26 @@ function Dashboard({ session }: { session: Session }) {
     setBacktestRuns(await api.historicalBacktestRuns(session).catch(() => []));
   }
 
-  async function sendReport() {
+  async function sendReport(tradeDate = selectedSignalDate) {
+    if (!tradeDate) {
+      setStatus({ type: "error", message: "리포트를 생성할 날짜가 없습니다." });
+      return;
+    }
     await run(
       "report",
-      () => api.sendDailyReport(session, selectedSignalDate || undefined, "report"),
+      () => api.sendDailyReport(session, tradeDate, "report"),
       "AI 리포트 생성 큐 등록 완료:",
     );
   }
 
-  async function sendBlogReport() {
+  async function sendBlogReport(tradeDate = selectedSignalDate) {
+    if (!tradeDate) {
+      setStatus({ type: "error", message: "블로그 글을 생성할 날짜가 없습니다." });
+      return;
+    }
     await run(
       "report",
-      () => api.sendDailyReport(session, selectedSignalDate || undefined, "blog"),
+      () => api.sendDailyReport(session, tradeDate, "blog"),
       "블로그 글 생성 큐 등록 완료:",
     );
   }
@@ -441,28 +450,6 @@ function Dashboard({ session }: { session: Session }) {
       () => api.sendSignalReport(session, { trade_date: selectedSignalDate, code, report_style: "blog" }),
       "개별 기업 블로그 글 생성 큐 등록 완료:",
     );
-  }
-
-  async function downloadDailyReport() {
-    if (!selectedSignalDate) {
-      setStatus({ type: "error", message: "다운로드할 리포트 날짜가 없습니다." });
-      return;
-    }
-    await downloadReport({
-      key: "reportDownload",
-      payload: { trade_date: selectedSignalDate, report_type: "daily" as const },
-    });
-  }
-
-  async function downloadDailyBlogReport() {
-    if (!selectedSignalDate) {
-      setStatus({ type: "error", message: "다운로드할 블로그 글 날짜가 없습니다." });
-      return;
-    }
-    await downloadReport({
-      key: "reportDownload",
-      payload: { trade_date: selectedSignalDate, report_type: "daily_blog" as const },
-    });
   }
 
   async function downloadSingleSignalReport(row: Record<string, unknown>) {
@@ -980,22 +967,6 @@ function Dashboard({ session }: { session: Session }) {
                     {pending === "scan" ? "스캔 중..." : "진행 중 스캔 이어하기"}
                   </button>
                 )}
-                <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendReport}>
-                  {pending === "report" ? "리포트 생성 요청 중..." : "AI 리포트 생성 요청"}
-                </button>
-                <button disabled={pending !== null || !selectedSignalDate || signals.length === 0} onClick={sendBlogReport}>
-                  {pending === "report" ? "블로그 글 생성 요청 중..." : "블로그 글 생성 요청"}
-                </button>
-                {canUseReports && dailyReportCompleted && (
-                  <button disabled={pending !== null || !selectedSignalDate} onClick={downloadDailyReport}>
-                    {pending === "reportDownload" ? "종합 리포트 확인 중..." : "종합 리포트 다운로드"}
-                  </button>
-                )}
-                {canUseReports && hasCompletedReport(aiReports, "daily_blog") && (
-                  <button disabled={pending !== null || !selectedSignalDate} onClick={downloadDailyBlogReport}>
-                    {pending === "reportDownload" ? "블로그 글 확인 중..." : "종합 블로그 글 다운로드"}
-                  </button>
-                )}
               </>
             ) : (
               <p className="command-copy">관리자 권한이 없습니다.</p>
@@ -1009,8 +980,11 @@ function Dashboard({ session }: { session: Session }) {
                 dates={reportDates}
                 rows={reportStatuses}
                 refreshing={pending === "reportsRefresh"}
+                reportPending={pending === "report"}
                 onDateChange={changeReportDate}
                 onRefresh={() => refreshReportsOnly()}
+                onGenerateReport={() => sendReport(selectedReportDate)}
+                onGenerateBlogReport={() => sendBlogReport(selectedReportDate)}
                 onRowClick={(row) => setDetail({
                   title: `${formatCell(row.report_kind_ko)} ${formatCell(row.name || row.code)}`,
                   kind: "report",
@@ -1709,19 +1683,27 @@ function ReportCalendarPanel({
   dates,
   rows,
   refreshing,
+  reportPending,
   onDateChange,
   onRefresh,
+  onGenerateReport,
+  onGenerateBlogReport,
   onRowClick,
 }: {
   selectedDate: string;
   dates: string[];
   rows: AiReportStatus[];
   refreshing: boolean;
+  reportPending: boolean;
   onDateChange: (tradeDate: string) => void;
   onRefresh: () => void;
+  onGenerateReport: () => void;
+  onGenerateBlogReport: () => void;
   onRowClick: (row: Record<string, unknown>) => void;
 }) {
-  const normalizedRows = rows.map(normalizeAiReportStatusRow);
+  const normalizedRows = rows
+    .filter((row) => !selectedDate || row.trade_date === selectedDate)
+    .map(normalizeAiReportStatusRow);
   const dailyReports = normalizedRows.filter((row) => row.report_type === "daily" || row.report_type === "daily_blog");
   const signalReports = normalizedRows.filter((row) => row.report_type === "signal" || row.report_type === "signal_blog");
   const recentDates = dates.slice(0, 12);
@@ -1743,6 +1725,14 @@ function ReportCalendarPanel({
           value={selectedDate}
           onChange={(event) => onDateChange(event.target.value)}
         />
+        <div className="report-generate-actions">
+          <button className="primary small" type="button" disabled={reportPending || !selectedDate} onClick={onGenerateReport}>
+            {reportPending ? "생성 요청 중..." : "선택 날짜 종합 리포트 생성"}
+          </button>
+          <button className="small" type="button" disabled={reportPending || !selectedDate} onClick={onGenerateBlogReport}>
+            {reportPending ? "생성 요청 중..." : "선택 날짜 블로그 글 생성"}
+          </button>
+        </div>
         <div className="report-date-list">
           {recentDates.length === 0 ? (
             <span className="empty">생성된 리포트 날짜 없음</span>
@@ -2422,8 +2412,23 @@ function BacktestRunDetail({ row }: { row: Record<string, unknown> }) {
   const progress = asRecord(row.progress);
   const result = asRecord(row.result);
   const trades = Array.isArray(result.trades) ? result.trades.map((item) => asRecord(item)) : [];
+  const tradesByReturn = [...trades].sort((left, right) => Number(right.return_pct || 0) - Number(left.return_pct || 0));
+  const topProfitTrades = tradesByReturn.slice(0, 5);
+  const topLossTrades = [...tradesByReturn].reverse().slice(0, 5);
   const tested = result.signals_tested ?? progress.tested;
   const generated = result.generated_signals ?? progress.signals;
+  const tradeRows = (items: Record<string, unknown>[]) => items.map((trade) => ({
+    date: trade.trade_date,
+    code: trade.code,
+    name: trade.name,
+    score: trade.score,
+    entry: trade.entry,
+    exit: trade.exit_price,
+    return_pct: trade.return_pct === undefined ? "-" : `${formatCell(trade.return_pct)}%`,
+    hold_days: trade.hold_days,
+    reason: translateReason(trade.exit_reason),
+  }));
+  const tradeColumns = ["date", "code", "name", "score", "entry", "exit", "return_pct", "hold_days", "reason"];
   return (
     <div className="detail-grid">
       <DetailSection title="실행 정보" items={[
@@ -2455,20 +2460,26 @@ function BacktestRunDetail({ row }: { row: Record<string, unknown> }) {
         ["승/패", `${formatCell(result.win_count)} / ${formatCell(result.loss_count)}`],
       ]} />
       <section className="detail-section">
+        <h3>수익률 TOP 5</h3>
+        <MiniTable
+          rows={tradeRows(topProfitTrades)}
+          columns={tradeColumns}
+          emptyLabel="수익 거래 없음"
+        />
+      </section>
+      <section className="detail-section">
+        <h3>최악 수익률 TOP 5</h3>
+        <MiniTable
+          rows={tradeRows(topLossTrades)}
+          columns={tradeColumns}
+          emptyLabel="손실 거래 없음"
+        />
+      </section>
+      <section className="detail-section">
         <h3>거래 샘플</h3>
         <MiniTable
-          rows={trades.slice(0, 20).map((trade) => ({
-            date: trade.trade_date,
-            code: trade.code,
-            name: trade.name,
-            score: trade.score,
-            entry: trade.entry,
-            exit: trade.exit_price,
-            return_pct: trade.return_pct === undefined ? "-" : `${formatCell(trade.return_pct)}%`,
-            hold_days: trade.hold_days,
-            reason: translateReason(trade.exit_reason),
-          }))}
-          columns={["date", "code", "name", "score", "entry", "exit", "return_pct", "hold_days", "reason"]}
+          rows={tradeRows(trades.slice(0, 20))}
+          columns={tradeColumns}
           emptyLabel="완료된 거래 샘플 없음"
         />
       </section>

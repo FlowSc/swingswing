@@ -742,6 +742,12 @@ a {
   margin-bottom: 18px;
 }
 
+.report-generate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .report-calendar-controls input[type="date"] {
   max-width: 220px;
   padding: 10px 12px;
@@ -1093,6 +1099,7 @@ th {
 
   .panel-actions,
   .backtest-controls,
+  .report-generate-actions,
   .report-date-list {
     width: 100%;
     justify-content: stretch;
@@ -1100,6 +1107,7 @@ th {
 
   .panel-actions > *,
   .backtest-controls > *,
+  .report-generate-actions > *,
   .report-date-list > *,
   .report-calendar-controls input[type="date"],
   .compact-select {

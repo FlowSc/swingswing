@@ -268,13 +268,14 @@ async def list_report_statuses(
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
     await require_report_access(user.id, user.email)
-    return await SupabaseRest().select(
+    rows = await SupabaseRest().select(
         "ai_reports",
         columns="id,trade_date,report_type,code,name,title,status,error,created_at,started_at,finished_at",
         filters={"trade_date": f"eq.{trade_date}"},
         order="created_at.desc",
         limit=100,
     )
+    return [row for row in rows if row.get("trade_date") == trade_date]
 
 
 @router.post("/watch-tick")
