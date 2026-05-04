@@ -42,6 +42,7 @@ STRATEGY_SELL_COOLDOWN_MINUTES = 30
 STOP_LOSS_AGGRESSIVE_TICKS = 3
 STOP_LOSS_REORDER_EXTRA_TICKS = 2
 STOP_LOSS_REORDER_MAX_ATTEMPTS = 3
+BUY_ORDER_CASH_BUFFER = 0.995
 REASON_LABELS = {
     "IntradayEntry": "장중 진입 조건 충족",
     "StopLoss": "손절가 도달",
@@ -74,6 +75,7 @@ REASON_LABELS = {
     "QuoteFailed": "현재가 조회 실패",
     "InvalidQuote": "현재가 값 비정상",
     "SizingRejected": "수량/리스크/최소주문금액 조건 미충족",
+    "OrderableCashExceeded": "주문가능금액 초과",
     "StrategySellCooldown": "매수 직후 전략 매도 쿨다운",
     "DailyLossLimit": "하루 손실 한도 도달",
     "UnrealizedLossLimit": "미실현손실 한도 도달",
@@ -1205,8 +1207,38 @@ async def enter_positions(
         if qty <= 0:
             await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "SizingRejected", price=current_price, raw={"quote": quote, "sizing": sizing, "strategy": strategy})
             continue
+        max_orderable_qty = int((cash * BUY_ORDER_CASH_BUFFER) // max(order_price, 1))
+        if max_orderable_qty <= 0 or max_orderable_qty * order_price < int(strategy["min_order_amount"]):
+            await insert_decision_log(
+                user_id,
+                broker_account_id,
+                "SKIP",
+                signal,
+                "OrderableCashExceeded",
+                price=current_price,
+                raw={"quote": quote, "sizing": sizing, "strategy": strategy, "cash": cash, "order_price": order_price, "max_orderable_qty": max_orderable_qty},
+            )
+            continue
+        if qty > max_orderable_qty:
+            sizing = {**sizing, "original_qty": qty, "cash_buffer": BUY_ORDER_CASH_BUFFER, "max_orderable_qty": max_orderable_qty}
+            qty = max_orderable_qty
 
-        response = await place_buy(client, signal, qty, order_price, dry_run=dry_run)
+        try:
+            response = await place_buy(client, signal, qty, order_price, dry_run=dry_run)
+        except RuntimeError as exc:
+            if "APBK0952" in str(exc) or "주문가능금액" in str(exc):
+                await insert_decision_log(
+                    user_id,
+                    broker_account_id,
+                    "SKIP",
+                    signal,
+                    "OrderableCashExceeded",
+                    price=current_price,
+                    raw={"quote": quote, "sizing": sizing, "strategy": strategy, "cash": cash, "order_price": order_price, "qty": qty, "error": str(exc)},
+                )
+                cash = max(0, cash - int(qty * order_price))
+                continue
+            raise
         position_payload = {
             "user_id": user_id,
             "broker_account_id": broker_account_id,

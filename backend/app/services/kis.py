@@ -496,7 +496,7 @@ def extract_cash(balance: dict[str, Any]) -> int:
     output2 = balance.get("output2", [])
     if not output2:
         return 10_000_000
-    raw_value = output2[0].get("dnca_tot_amt") or output2[0].get("ord_psbl_cash") or "0"
+    raw_value = output2[0].get("ord_psbl_cash") or output2[0].get("dnca_tot_amt") or "0"
     try:
         return int(float(str(raw_value).replace(",", "")))
     except ValueError:
