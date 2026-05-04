@@ -16,10 +16,11 @@ import {
   type StrategySettings,
   type TelegramSettingsPayload,
   type TradeDecisionLog,
+  type WatchJobOverview,
   type WatcherRun,
 } from "./api";
 import { AuthCard } from "./components/AuthCard";
-import { BacktestPanel, ReportCalendarPanel } from "./components/AdminPanels";
+import { BacktestPanel, ReportCalendarPanel, WatchJobPanel } from "./components/AdminPanels";
 import {
   AccountPanel,
   AutoTradingRules,
@@ -110,6 +111,7 @@ function Dashboard({ session }: { session: Session }) {
   const [logs, setLogs] = useState<Array<Record<string, unknown>>>([]);
   const [decisions, setDecisions] = useState<TradeDecisionLog[]>([]);
   const [watcherRuns, setWatcherRuns] = useState<WatcherRun[]>([]);
+  const [watchJobOverview, setWatchJobOverview] = useState<WatchJobOverview | null>(null);
   const [dailyDashboard, setDailyDashboard] = useState<DailyDashboard | null>(null);
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
   const [aiReports, setAiReports] = useState<AiReportStatus[]>([]);
@@ -241,6 +243,30 @@ function Dashboard({ session }: { session: Session }) {
     } finally {
       setPending(null);
     }
+  }
+
+  async function refreshWatchJobsOnly() {
+    if (!isScanAdmin) return;
+    setPending("watchJobsRefresh");
+    try {
+      const result = await api.watchJobOverview(session);
+      setWatchJobOverview(result);
+      setStatus({ type: "info", message: "와쳐 작업 큐 새로고침 완료" });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? cleanErrorMessage(error.message) : String(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function retryFailedWatchJobs() {
+    if (!isScanAdmin) return;
+    await run(
+      "watchJobsRetry",
+      () => api.retryFailedWatchJobs(session),
+      "실패 와쳐 작업 재시도 완료:",
+    );
+    await refreshWatchJobsOnly();
   }
 
   async function changeReportDate(tradeDate: string) {
@@ -627,7 +653,7 @@ function Dashboard({ session }: { session: Session }) {
       const entitlementResult = await api.getEntitlements(session);
       setEntitlements(entitlementResult);
 
-      const [brokerResult, accountResult, strategyResult, dateResult, reportDateResult, positionResult, logResult, watcherRunResult, dashboardResult, backtestRunResult] = await Promise.all([
+      const [brokerResult, accountResult, strategyResult, dateResult, reportDateResult, positionResult, logResult, watcherRunResult, dashboardResult, backtestRunResult, watchJobResult] = await Promise.all([
         api.getBrokerStatus(session),
         api.getBrokerAccounts(session),
         api.getStrategy(session),
@@ -638,6 +664,7 @@ function Dashboard({ session }: { session: Session }) {
         api.watcherRuns(session).catch(() => []),
         api.dailyDashboard(session).catch(() => null),
         entitlementResult.can_run_backtest ? api.historicalBacktestRuns(session).catch(() => []) : Promise.resolve([]),
+        entitlementResult.can_run_admin_scan ? api.watchJobOverview(session).catch(() => null) : Promise.resolve(null),
       ]);
       const nextSignalDate = selectedSignalDate || dateResult[0] || "";
       const nextReportDate = selectedReportDate || reportDateResult[0] || nextSignalDate;
@@ -677,6 +704,7 @@ function Dashboard({ session }: { session: Session }) {
       setPositions(positionResult);
       setLogs(logResult);
       setWatcherRuns(watcherRunResult);
+      setWatchJobOverview(watchJobResult);
       setDecisions(decisionResult);
       setBacktestRuns(backtestRunResult);
     } catch {
@@ -1100,6 +1128,14 @@ function Dashboard({ session }: { session: Session }) {
                   kind: "backtest",
                   row: run as unknown as Record<string, unknown>,
                 })}
+              />
+            )}
+            {isScanAdmin && (
+              <WatchJobPanel
+                overview={watchJobOverview}
+                pending={pending === "watchJobsRefresh" || pending === "watchJobsRetry"}
+                onRefresh={refreshWatchJobsOnly}
+                onRetryFailed={retryFailedWatchJobs}
               />
             )}
           </div>

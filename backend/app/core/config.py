@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     scan_admin_email: str = "zelatool@gmail.com"
     watch_worker_batch_size: int = 100
     realtime_watch_worker_batch_size: int = 50
+    watch_job_max_attempts: int = 3
     kis_realtime_filter_timeout_seconds: float = 3.0
     kis_position_realtime_watch_seconds: float = 50.0
 

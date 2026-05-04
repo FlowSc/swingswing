@@ -216,6 +216,33 @@ export type WatcherRun = {
   created_at: string;
 };
 
+export type WatchJob = {
+  id: number;
+  job_type: "intraday" | "realtime_position" | string;
+  user_id: string;
+  broker_account_id: string;
+  status: "pending" | "running" | "completed" | "failed" | "skipped" | string;
+  scheduled_for: string;
+  run_after: string;
+  attempts: number;
+  locked_by?: string | null;
+  locked_until?: string | null;
+  error?: string | null;
+  result?: Record<string, unknown>;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+};
+
+export type WatchJobOverview = {
+  status_counts: Record<string, number>;
+  type_counts: Record<string, number>;
+  oldest_pending_seconds?: number | null;
+  running_overdue: number;
+  failures: Array<{ reason: string; count: number }>;
+  jobs: WatchJob[];
+};
+
 export type DailyDashboard = {
   date: string;
   signals_count: number;
@@ -372,6 +399,12 @@ export const api = {
   latestScanRun: (session: Session) => request<ScanRun | null>("/bot/scan-runs/latest", session),
   sendSharedTelegramNotice: (session: Session, message: string) =>
     request<{ sent: boolean; message: string }>("/bot/telegram/shared-notice", session, { method: "POST", body: JSON.stringify({ message }) }),
+  watchJobOverview: (session: Session) => request<WatchJobOverview>("/bot/watch-jobs", session),
+  retryFailedWatchJobs: (session: Session, jobType?: "intraday" | "realtime_position") =>
+    request<{ retried: number; job_type: string }>("/bot/watch-jobs/retry-failed", session, {
+      method: "POST",
+      body: JSON.stringify({ job_type: jobType || null }),
+    }),
   sendDailyReport: (session: Session, tradeDate?: string, reportStyle: "report" | "blog" = "report") => {
     const params = new URLSearchParams({ report_style: reportStyle });
     if (tradeDate) params.set("trade_date", tradeDate);

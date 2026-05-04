@@ -1,4 +1,4 @@
-import type { AiReportStatus, BacktestJob, BacktestResult } from "../api";
+import type { AiReportStatus, BacktestJob, BacktestResult, WatchJobOverview } from "../api";
 import { formatCell, normalizeAiReportStatusRow, translateBacktestStatus, translateReason } from "../utils/dashboard";
 import { MiniTable } from "./DashboardParts";
 
@@ -231,4 +231,95 @@ export function ReportCalendarPanel({
       </div>
     </section>
   );
+}
+
+export function WatchJobPanel({
+  overview,
+  pending,
+  onRefresh,
+  onRetryFailed,
+}: {
+  overview: WatchJobOverview | null;
+  pending: boolean;
+  onRefresh: () => void;
+  onRetryFailed: () => void;
+}) {
+  const statusCounts = overview?.status_counts || {};
+  const typeCounts = overview?.type_counts || {};
+  const rows = (overview?.jobs || []).slice(0, 20).map((job) => ({
+    id: job.id,
+    type: translateJobType(job.job_type),
+    status: translateJobStatus(job.status),
+    attempts: job.attempts,
+    scheduled_for: job.scheduled_for,
+    run_after: job.run_after,
+    locked_by: job.locked_by || "-",
+    error: job.error || "-",
+  }));
+
+  return (
+    <section className="panel data-panel watch-job-panel">
+      <div className="data-panel-head">
+        <div>
+          <h2>와쳐 작업 큐</h2>
+          <p className="panel-subtitle">계좌별 자동매매 작업 상태와 적체/실패 여부를 확인합니다.</p>
+        </div>
+        <div className="backtest-controls">
+          <button className="ghost small" type="button" disabled={pending} onClick={onRefresh}>
+            {pending ? "갱신 중" : "새로고침"}
+          </button>
+          <button className="small" type="button" disabled={pending || !statusCounts.failed} onClick={onRetryFailed}>
+            실패 작업 재시도
+          </button>
+        </div>
+      </div>
+      <div className="metric-grid compact">
+        <div className="metric-card"><span>대기</span><strong>{statusCounts.pending || 0}</strong></div>
+        <div className="metric-card"><span>실행</span><strong>{statusCounts.running || 0}</strong></div>
+        <div className="metric-card"><span>실패</span><strong>{statusCounts.failed || 0}</strong></div>
+        <div className="metric-card"><span>스킵</span><strong>{statusCounts.skipped || 0}</strong></div>
+        <div className="metric-card"><span>5분 와쳐</span><strong>{typeCounts.intraday || 0}</strong></div>
+        <div className="metric-card"><span>1분 감시</span><strong>{typeCounts.realtime_position || 0}</strong></div>
+        <div className="metric-card"><span>최대 대기</span><strong>{formatAge(overview?.oldest_pending_seconds)}</strong></div>
+        <div className="metric-card"><span>락 초과</span><strong>{overview?.running_overdue || 0}</strong></div>
+      </div>
+      {(overview?.failures || []).length > 0 && (
+        <div className="watch-failure-list">
+          <h3>실패/스킵 사유 TOP</h3>
+          {(overview?.failures || []).map((item) => (
+            <span key={item.reason}>{item.reason} · {item.count}</span>
+          ))}
+        </div>
+      )}
+      <MiniTable
+        rows={rows}
+        columns={["id", "type", "status", "attempts", "scheduled_for", "run_after", "locked_by", "error"]}
+        emptyLabel="최근 와쳐 작업 없음"
+      />
+    </section>
+  );
+}
+
+function translateJobType(value: string) {
+  if (value === "intraday") return "5분 와쳐";
+  if (value === "realtime_position") return "1분 포지션 감시";
+  return value;
+}
+
+function translateJobStatus(value: string) {
+  const labels: Record<string, string> = {
+    pending: "대기",
+    running: "실행 중",
+    completed: "완료",
+    failed: "실패",
+    skipped: "스킵",
+  };
+  return labels[value] || value;
+}
+
+function formatAge(seconds?: number | null) {
+  if (seconds === null || seconds === undefined) return "-";
+  if (seconds < 60) return `${seconds}초`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}분`;
+  return `${Math.round(seconds / 3600)}시간`;
 }

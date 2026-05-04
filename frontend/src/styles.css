@@ -807,6 +807,30 @@ a {
   font-weight: 700;
 }
 
+.watch-failure-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.watch-failure-list h3 {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--green);
+  font-size: 14px;
+}
+
+.watch-failure-list span {
+  padding: 8px 10px;
+  border: 1px solid rgba(154, 54, 42, 0.18);
+  border-radius: 999px;
+  background: rgba(154, 54, 42, 0.08);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .account-summary {
   display: flex;
   flex-wrap: wrap;

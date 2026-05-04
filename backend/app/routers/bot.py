@@ -19,6 +19,7 @@ from app.services.scanner import finalize_chunked_scan, get_scan_market_status, 
 from app.services.strategy_settings import get_strategy_settings, save_strategy_settings
 from app.services.supabase_rest import SupabaseRest
 from app.services.telegram import send_telegram_message
+from app.services.watch_jobs import get_watch_job_overview, retry_failed_watch_jobs
 from app.services.watcher import force_liquidate_position_for_user, run_watch_tick_for_user
 
 
@@ -36,6 +37,10 @@ class ForceLiquidateIn(BaseModel):
 
 class SharedTelegramNoticeIn(BaseModel):
     message: str = Field(min_length=1, max_length=3000)
+
+
+class RetryWatchJobsIn(BaseModel):
+    job_type: str | None = Field(default=None, pattern=r"^(intraday|realtime_position)$")
 
 
 def now_iso() -> str:
@@ -183,6 +188,24 @@ async def send_shared_telegram_notice(
         "sent": sent,
         "message": "Shared telegram notice sent." if sent else "Shared telegram settings are missing or Telegram delivery failed.",
     }
+
+
+@router.get("/watch-jobs")
+async def watch_job_overview(
+    limit: int = Query(200, ge=1, le=1000),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    await require_admin_access(user.id, user.email)
+    return await get_watch_job_overview(limit=limit)
+
+
+@router.post("/watch-jobs/retry-failed")
+async def retry_watch_jobs(
+    payload: RetryWatchJobsIn | None = None,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    await require_admin_access(user.id, user.email)
+    return await retry_failed_watch_jobs((payload or RetryWatchJobsIn()).job_type)
 
 
 @router.post("/reports/daily")

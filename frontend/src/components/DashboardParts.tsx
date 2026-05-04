@@ -452,6 +452,8 @@ export function labelForPending(key: string) {
     reportDownload: "종합 리포트 다운로드",
     signalReportDownload: "개별 리포트 다운로드",
     watcherRunsRefresh: "와쳐 상태 확인",
+    watchJobsRefresh: "와쳐 작업 큐 확인",
+    watchJobsRetry: "실패 와쳐 작업 재시도",
     forceLiquidate: "종목 강제 청산",
   };
   return labels[key] || "요청";
