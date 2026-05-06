@@ -11,7 +11,7 @@ from app.services.broker_credentials import (
     save_telegram_settings,
     set_active_broker_account,
 )
-from app.services.kis import client_from_credentials, extract_cash, extract_orderable_cash, extract_total_equity
+from app.services.kis import client_from_credentials, extract_cash, extract_orderable_cash, extract_psbl_order_cash, extract_total_equity
 from app.services.memberships import require_live_trading_access
 
 
@@ -149,6 +149,10 @@ async def get_kis_account(user: CurrentUser = Depends(get_current_user)) -> KisA
 
     try:
         balance = await client.get_balance()
+        try:
+            orderable_cash = extract_psbl_order_cash(await client.inquire_psbl_order())
+        except Exception:
+            orderable_cash = extract_orderable_cash(balance)
         holdings = [parse_holding(item) for item in balance.get("output1", [])]
         holdings = [item for item in holdings if item.qty > 0]
         return KisAccountOut(
@@ -156,7 +160,7 @@ async def get_kis_account(user: CurrentUser = Depends(get_current_user)) -> KisA
             account=account,
             mode=mode,
             cash=extract_cash(balance),
-            orderable_cash=extract_orderable_cash(balance),
+            orderable_cash=orderable_cash,
             total_equity=extract_total_equity(balance),
             holdings_count=len(holdings),
             holdings=holdings,

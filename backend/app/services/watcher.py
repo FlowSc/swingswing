@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.services.kis import (
     client_from_credentials,
     extract_orderable_cash,
+    extract_psbl_order_cash,
     extract_total_equity,
     extract_unrealized_pnl,
     kis_holding_codes,
@@ -304,6 +305,16 @@ def action_plan_summary(source: dict) -> str:
         f"1차 {format_pct(plan.get('take_profit_1_pct'))} / "
         f"2차 {format_pct(plan.get('take_profit_2_pct'))}"
     )
+
+
+async def fetch_orderable_cash(client, balance: dict, *, code: str = "005930", price: int = 0) -> int:
+    try:
+        orderable_cash = extract_psbl_order_cash(await client.inquire_psbl_order(code=code, price=price))
+        if orderable_cash > 0:
+            return orderable_cash
+    except Exception as exc:
+        logger.warning("KIS orderable cash inquiry failed. Falling back to balance field: %s", exc)
+    return extract_orderable_cash(balance)
 
 
 async def get_price_safe(client, code: str) -> int | None:
@@ -1318,7 +1329,7 @@ async def enter_positions(
         logger.warning("Watcher enter skipped: no shared signals user_id=%s account_id=%s", user_id, broker_account_id)
         return []
 
-    orderable_cash = extract_orderable_cash(balance)
+    orderable_cash = int((diagnostics or {}).get("orderable_cash") or await fetch_orderable_cash(client, balance))
     total_equity = extract_total_equity(balance)
     strategy = await get_strategy_settings(user_id)
     if await daily_loss_limit_reached(user_id, broker_account_id, total_equity, strategy, diagnostics):
@@ -1602,8 +1613,9 @@ async def run_watch_tick_for_user(credentials: dict, *, test_mode: bool = False,
     try:
         diagnostics["stage"] = "initial_balance"
         balance = await client.get_balance()
-        diagnostics["cash"] = extract_orderable_cash(balance)
-        diagnostics["orderable_cash"] = extract_orderable_cash(balance)
+        orderable_cash = await fetch_orderable_cash(client, balance)
+        diagnostics["cash"] = orderable_cash
+        diagnostics["orderable_cash"] = orderable_cash
         diagnostics["total_equity"] = extract_total_equity(balance)
         diagnostics["kis_holdings_count"] = len(kis_holding_codes(balance))
 
@@ -1622,8 +1634,9 @@ async def run_watch_tick_for_user(credentials: dict, *, test_mode: bool = False,
 
         diagnostics["stage"] = "post_manage_balance"
         balance = await client.get_balance()
-        diagnostics["cash"] = extract_orderable_cash(balance)
-        diagnostics["orderable_cash"] = extract_orderable_cash(balance)
+        orderable_cash = await fetch_orderable_cash(client, balance)
+        diagnostics["cash"] = orderable_cash
+        diagnostics["orderable_cash"] = orderable_cash
         diagnostics["total_equity"] = extract_total_equity(balance)
         diagnostics["kis_holdings_count"] = len(kis_holding_codes(balance))
 

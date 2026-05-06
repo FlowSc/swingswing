@@ -27,6 +27,7 @@ TR_ID = {
         "cancel": "VTTC0803U",
         "balance": "VTTC8434R",
         "order_inquiry": "VTTC8001R",
+        "psbl_order": "VTTC8908R",
     },
     "live": {
         "buy": "TTTC0802U",
@@ -34,6 +35,7 @@ TR_ID = {
         "cancel": "TTTC0803U",
         "balance": "TTTC8434R",
         "order_inquiry": "TTTC8001R",
+        "psbl_order": "TTTC8908R",
     },
 }
 
@@ -215,6 +217,23 @@ class KisClient:
             "GET",
             "/uapi/domestic-stock/v1/trading/inquire-balance",
             headers=await self.auth_headers(TR_ID[self.config.mode]["balance"]),
+            params=params,
+        )
+
+    async def inquire_psbl_order(self, *, code: str = "005930", price: int = 0, order_type: str = "01") -> dict[str, Any]:
+        params = {
+            "CANO": self.config.account_no,
+            "ACNT_PRDT_CD": self.config.account_product_code,
+            "PDNO": str(code).zfill(6),
+            "ORD_UNPR": str(price or 0),
+            "ORD_DVSN": order_type,
+            "CMA_EVLU_AMT_ICLD_YN": "Y",
+            "OVRS_ICLD_YN": "Y",
+        }
+        return await self._request(
+            "GET",
+            "/uapi/domestic-stock/v1/trading/inquire-psbl-order",
+            headers=await self.auth_headers(TR_ID[self.config.mode]["psbl_order"]),
             params=params,
         )
 
@@ -540,7 +559,7 @@ def extract_cash(balance: dict[str, Any]) -> int:
 def extract_orderable_cash(balance: dict[str, Any]) -> int:
     output2 = balance.get("output2", [])
     if not output2:
-        return 10_000_000
+        return 0
     row = output2[0] if isinstance(output2, list) else output2
     raw_value = (
         row.get("ord_psbl_cash")
@@ -552,7 +571,22 @@ def extract_orderable_cash(balance: dict[str, Any]) -> int:
     try:
         return int(float(str(raw_value).replace(",", "")))
     except ValueError:
-        return 10_000_000
+        return 0
+
+
+def extract_psbl_order_cash(payload: dict[str, Any]) -> int:
+    output = payload.get("output") or {}
+    raw_value = (
+        output.get("ord_psbl_cash")
+        or output.get("ORD_PSBL_CASH")
+        or output.get("nrcvb_buy_amt")
+        or output.get("NRCVB_BUY_AMT")
+        or "0"
+    )
+    try:
+        return int(float(str(raw_value).replace(",", "")))
+    except ValueError:
+        return 0
 
 
 def extract_total_equity(balance: dict[str, Any]) -> int:
