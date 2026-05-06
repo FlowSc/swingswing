@@ -526,10 +526,23 @@ def find_order_execution(
 
 
 def extract_cash(balance: dict[str, Any]) -> int:
+    return extract_orderable_cash(balance)
+
+
+def extract_orderable_cash(balance: dict[str, Any]) -> int:
     output2 = balance.get("output2", [])
     if not output2:
         return 10_000_000
-    raw_value = output2[0].get("ord_psbl_cash") or output2[0].get("dnca_tot_amt") or "0"
+    row = output2[0] if isinstance(output2, list) else output2
+    raw_value = (
+        row.get("ord_psbl_cash")
+        or row.get("ORD_PSBL_CASH")
+        or row.get("ord_psbl_cash_amt")
+        or row.get("ORD_PSBL_CASH_AMT")
+        or row.get("dnca_tot_amt")
+        or row.get("DNCA_TOT_AMT")
+        or "0"
+    )
     try:
         return int(float(str(raw_value).replace(",", "")))
     except ValueError:
@@ -540,7 +553,8 @@ def extract_total_equity(balance: dict[str, Any]) -> int:
     output2 = balance.get("output2", [])
     if not output2:
         return 10_000_000
-    raw_value = output2[0].get("tot_evlu_amt") or output2[0].get("dnca_tot_amt") or "0"
+    row = output2[0] if isinstance(output2, list) else output2
+    raw_value = row.get("tot_evlu_amt") or row.get("TOT_EVLU_AMT") or row.get("dnca_tot_amt") or row.get("DNCA_TOT_AMT") or "0"
     try:
         return max(int(float(str(raw_value).replace(",", ""))), 1)
     except ValueError:

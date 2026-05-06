@@ -10,7 +10,7 @@ import FinanceDataReader as fdr
 from app.core.config import get_settings
 from app.services.kis import (
     client_from_credentials,
-    extract_cash,
+    extract_orderable_cash,
     extract_total_equity,
     extract_unrealized_pnl,
     kis_holding_codes,
@@ -170,7 +170,7 @@ def sizing_reject_detail(sizing: dict) -> str:
     if reason == "cash_or_position_capital_too_small":
         cash = int(float(sizing.get("cash") or 0))
         max_position = int(float(sizing.get("max_position_capital") or 0))
-        return f"주문 기준가 {price:,}원 대비 봇이 확인한 주문가능현금 {cash:,}원, 종목당 배정한도 {max_position:,}원, 실제 사용 가능 배정금액 {usable:,}원이라 1주도 살 수 없습니다. 프론트 예수금과 다르면 KIS 주문가능현금 또는 미체결 주문을 확인해야 합니다."
+        return f"주문 기준가 {price:,}원 대비 봇이 확인한 주문가능금액 {cash:,}원, 종목당 배정한도 {max_position:,}원, 실제 사용 가능 배정금액 {usable:,}원이라 1주도 살 수 없습니다. 프론트 주문가능금액과 다르면 KIS 미체결 주문을 확인해야 합니다."
     if reason == "below_min_order_amount":
         return f"리스크/현금 기준 계산 수량이 리스크 {qty_by_risk}주, 자금 {qty_by_capital}주라 주문금액 {candidate_amount:,}원에 그칩니다. 최소 주문금액 {min_order:,}원보다 작습니다."
     if reason == "invalid_price_or_stop":
@@ -1318,7 +1318,7 @@ async def enter_positions(
         logger.warning("Watcher enter skipped: no shared signals user_id=%s account_id=%s", user_id, broker_account_id)
         return []
 
-    cash = extract_cash(balance)
+    orderable_cash = extract_orderable_cash(balance)
     total_equity = extract_total_equity(balance)
     strategy = await get_strategy_settings(user_id)
     if await daily_loss_limit_reached(user_id, broker_account_id, total_equity, strategy, diagnostics):
@@ -1348,13 +1348,14 @@ async def enter_positions(
     blocked_codes = open_codes | kis_codes | pending_codes
     held_or_pending_codes = open_codes | kis_codes | pending_codes
     available_slots = max(0, int(strategy["max_open_positions"]) - len(held_or_pending_codes))
-    affordable_slots = int(cash // max(int(strategy["min_order_amount"]), 1))
+    affordable_slots = int(orderable_cash // max(int(strategy["min_order_amount"]), 1))
     remaining_daily_slots = max(0, int(strategy["max_new_positions_per_day"]) - len(today_used_codes))
     daily_slots = min(remaining_daily_slots, available_slots, affordable_slots)
     if diagnostics is not None:
         diagnostics.update(
             {
-                "cash": cash,
+                "cash": orderable_cash,
+                "orderable_cash": orderable_cash,
                 "total_equity": total_equity,
                 "open_positions_count": len(open_codes),
                 "kis_holdings_count": len(kis_codes),
@@ -1381,10 +1382,10 @@ async def enter_positions(
             }
         )
     logger.warning(
-        "Watcher enter summary: user_id=%s account_id=%s cash=%s equity=%s signals=%s open=%s kis=%s pending=%s today_entries=%s pending_buys=%s remaining_daily_slots=%s available_slots=%s affordable_slots=%s daily_slots=%s ordering=%s min_order=%s max_new=%s position_pct=%s risk_pct=%s",
+        "Watcher enter summary: user_id=%s account_id=%s orderable_cash=%s equity=%s signals=%s open=%s kis=%s pending=%s today_entries=%s pending_buys=%s remaining_daily_slots=%s available_slots=%s affordable_slots=%s daily_slots=%s ordering=%s min_order=%s max_new=%s position_pct=%s risk_pct=%s",
         user_id,
         broker_account_id,
-        cash,
+        orderable_cash,
         total_equity,
         len(signals),
         len(open_codes),
@@ -1464,7 +1465,7 @@ async def enter_positions(
         effective_total_equity = total_equity if total_equity > 0 else DEFAULT_CAPITAL
         qty, sizing = calculate_order_qty(
             sizing_signal,
-            cash=cash,
+            cash=orderable_cash,
             total_equity=effective_total_equity,
             available_slots=1,
             position_capital_pct=float(strategy["position_capital_pct"]),
@@ -1483,7 +1484,7 @@ async def enter_positions(
                 raw={"quote": quote, "sizing": sizing, "sizing_detail": sizing_reject_detail(sizing), "strategy": strategy},
             )
             continue
-        max_orderable_qty = int((cash * BUY_ORDER_CASH_BUFFER) // max(order_price, 1))
+        max_orderable_qty = int((orderable_cash * BUY_ORDER_CASH_BUFFER) // max(order_price, 1))
         if max_orderable_qty <= 0 or max_orderable_qty * order_price < int(strategy["min_order_amount"]):
             await insert_decision_log(
                 user_id,
@@ -1492,7 +1493,7 @@ async def enter_positions(
                 signal,
                 "OrderableCashExceeded",
                 price=current_price,
-                raw={"quote": quote, "sizing": sizing, "strategy": strategy, "cash": cash, "order_price": order_price, "max_orderable_qty": max_orderable_qty},
+                raw={"quote": quote, "sizing": sizing, "strategy": strategy, "cash": orderable_cash, "orderable_cash": orderable_cash, "order_price": order_price, "max_orderable_qty": max_orderable_qty},
             )
             continue
         if qty > max_orderable_qty:
@@ -1510,9 +1511,9 @@ async def enter_positions(
                     signal,
                     "OrderableCashExceeded",
                     price=current_price,
-                    raw={"quote": quote, "sizing": sizing, "strategy": strategy, "cash": cash, "order_price": order_price, "qty": qty, "error": str(exc)},
+                    raw={"quote": quote, "sizing": sizing, "strategy": strategy, "cash": orderable_cash, "orderable_cash": orderable_cash, "order_price": order_price, "qty": qty, "error": str(exc)},
                 )
-                cash = max(0, cash - int(qty * order_price))
+                orderable_cash = max(0, orderable_cash - int(qty * order_price))
                 continue
             raise
         position_payload = {
@@ -1570,7 +1571,7 @@ async def enter_positions(
             )
             actions.append({"action": "BUY_ORDER", "code": signal["code"], "name": display_name(signal), "qty": qty, "price": order_price, "reason": reason_label("OrderPending"), "plan": action_plan_summary(position_payload)})
         blocked_codes.add(signal["code"])
-        cash = max(0, cash - int(qty * order_price))
+        orderable_cash = max(0, orderable_cash - int(qty * order_price))
 
     if diagnostics is not None:
         diagnostics["skip_reason"] = "completed" if actions else diagnostics.get("skip_reason") or "no_buy_order_created"
@@ -1601,7 +1602,8 @@ async def run_watch_tick_for_user(credentials: dict, *, test_mode: bool = False,
     try:
         diagnostics["stage"] = "initial_balance"
         balance = await client.get_balance()
-        diagnostics["cash"] = extract_cash(balance)
+        diagnostics["cash"] = extract_orderable_cash(balance)
+        diagnostics["orderable_cash"] = extract_orderable_cash(balance)
         diagnostics["total_equity"] = extract_total_equity(balance)
         diagnostics["kis_holdings_count"] = len(kis_holding_codes(balance))
 
@@ -1620,7 +1622,8 @@ async def run_watch_tick_for_user(credentials: dict, *, test_mode: bool = False,
 
         diagnostics["stage"] = "post_manage_balance"
         balance = await client.get_balance()
-        diagnostics["cash"] = extract_cash(balance)
+        diagnostics["cash"] = extract_orderable_cash(balance)
+        diagnostics["orderable_cash"] = extract_orderable_cash(balance)
         diagnostics["total_equity"] = extract_total_equity(balance)
         diagnostics["kis_holdings_count"] = len(kis_holding_codes(balance))
 

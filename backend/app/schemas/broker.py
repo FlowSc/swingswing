@@ -66,6 +66,7 @@ class KisAccountOut(BaseModel):
     account: str
     mode: str
     cash: int | None = None
+    orderable_cash: int | None = None
     total_equity: int | None = None
     holdings_count: int = 0
     holdings: list[KisHoldingOut] = Field(default_factory=list)

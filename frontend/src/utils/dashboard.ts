@@ -314,6 +314,7 @@ export function normalizeDecisionRow(row: TradeDecisionLog): Record<string, unkn
 export function normalizeWatcherRunRow(row: WatcherRun): Record<string, unknown> {
   return {
     ...row,
+    orderable_cash: row.orderable_cash ?? row.cash,
     orders_allowed_ko: row.orders_allowed ? "허용" : "차단",
     skip_reason_ko: translateWatcherSkipReason(row.skip_reason),
     created_at: formatDateTime(row.created_at),

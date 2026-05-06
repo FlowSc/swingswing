@@ -184,7 +184,7 @@ function Dashboard({ session }: { session: Session }) {
       setAutoLoadedAccountKey(activeAccountKey);
       return {
         account: result.account,
-        cash: result.cash,
+        orderable_cash: result.orderable_cash ?? result.cash,
         total_equity: result.total_equity,
         holdings_count: result.holdings_count,
       };

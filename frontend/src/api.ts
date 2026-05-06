@@ -140,6 +140,7 @@ export type KisAccount = {
   account: string;
   mode: string;
   cash?: number;
+  orderable_cash?: number;
   total_equity?: number;
   holdings_count: number;
   holdings: KisHolding[];
@@ -202,6 +203,7 @@ export type WatcherRun = {
   kis_holdings_count: number;
   pending_orders_count: number;
   today_entry_count?: number;
+  orderable_cash?: number | null;
   today_pending_buy_count?: number;
   remaining_daily_slots?: number | null;
   available_slots?: number | null;

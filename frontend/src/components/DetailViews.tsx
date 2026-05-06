@@ -320,7 +320,7 @@ export function AccountDetail({ row }: { row: Record<string, unknown> }) {
       <div className="detail-grid">
         <DetailSection title="계좌 요약" items={[
           ["계좌", row.account],
-          ["예수금", `${formatCell(row.cash)}원`],
+          ["주문가능금액", `${formatCell(row.orderable_cash ?? row.cash)}원`],
           ["총평가", `${formatCell(row.total_equity)}원`],
           ["보유 종목 수", `${formatCell(row.holdings_count)}종목`],
         ]} />
@@ -505,7 +505,7 @@ export function WatcherRunDetail({ row }: { row: Record<string, unknown> }) {
         ["오류", raw.error],
       ]} />
       <DetailSection title="매수 가능 상태" items={[
-        ["예수금", row.cash],
+        ["주문가능금액", row.orderable_cash ?? row.cash],
         ["총평가금", row.total_equity],
         ["시그널 수", row.signals_count],
         ["DB 포지션", row.open_positions_count],
