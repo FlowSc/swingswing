@@ -441,6 +441,18 @@ export const api = {
   todaySignals: (session: Session) => request<Array<Record<string, unknown>>>("/signals/today", session),
   signalDates: (session: Session) => request<string[]>("/signals/dates", session),
   signalsByDate: (session: Session, tradeDate: string) => request<Array<Record<string, unknown>>>(`/signals?trade_date=${encodeURIComponent(tradeDate)}`, session),
+  blockSignalAutoBuy: (session: Session, payload: { trade_date: string; code: string; reason?: string }) =>
+    request<{ blocked: boolean; signal?: Record<string, unknown>; block?: Record<string, unknown> }>(
+      `/signals/${encodeURIComponent(payload.trade_date)}/${encodeURIComponent(payload.code)}/auto-buy-block`,
+      session,
+      { method: "POST", body: JSON.stringify({ reason: payload.reason || "관리자 매수 금지" }) },
+    ),
+  unblockSignalAutoBuy: (session: Session, payload: { trade_date: string; code: string }) =>
+    request<{ blocked: boolean; trade_date: string; code: string }>(
+      `/signals/${encodeURIComponent(payload.trade_date)}/${encodeURIComponent(payload.code)}/auto-buy-block`,
+      session,
+      { method: "DELETE" },
+    ),
   positions: (session: Session) => request<Array<Record<string, unknown>>>("/positions", session),
   tradeLogs: (session: Session) => request<Array<Record<string, unknown>>>("/trade-logs", session),
   tradeDecisions: (session: Session, tradeDate?: string) => {

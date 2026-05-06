@@ -67,6 +67,7 @@ REASON_LABELS = {
     "StoppedOutToday": "당일 손절 종목 재매수 금지",
     "VolatilityInterruption": "VI 발동 종목 매수 차단",
     "PendingOrderExists": "미체결 주문 대기 중",
+    "ManualBuyBlocked": "관리자 공용 매수 금지",
     "OrderPending": "주문 접수 후 체결 대기",
     "OrderFilled": "주문/계좌 기준 체결 확인",
     "OrderCanceled": "장마감 전 미체결 주문 취소",
@@ -223,6 +224,9 @@ def decision_reason_detail(reason: str, signal: dict, *, price: int | None = Non
         return "DB 포지션 또는 KIS 잔고에 이미 보유 중인 종목이라 중복 매수를 막았습니다."
     if reason == "PendingOrderExists":
         return "동일 종목의 미체결 주문이 남아 있어 추가 주문을 막았습니다."
+    if reason == "ManualBuyBlocked":
+        block_reason = raw.get("block_reason") or (signal.get("raw") or {}).get("AutoBuyBlockReason")
+        return f"관리자가 공용 시그널에서 자동매수를 금지했습니다. 사유: {block_reason or '관리자 매수 금지'}"
     if reason == "StoppedOutToday":
         return "오늘 손절로 매도된 종목이라 당일 재매수를 막았습니다."
     if reason == "KijunExitedToday":
@@ -638,6 +642,20 @@ async def today_signals() -> list[dict]:
         order="score.desc",
     )
     return sort_signals_for_autotrading(signals)
+
+
+async def public_signal_blocks_for_today() -> dict[str, dict]:
+    trade_date = now_kst().date().isoformat()
+    try:
+        rows = await SupabaseRest().select(
+            "public_signal_blocks",
+            filters={"trade_date": f"eq.{trade_date}"},
+            limit=500,
+        )
+    except RuntimeError as exc:
+        logger.warning("Public signal block table unavailable: trade_date=%s error=%s", trade_date, exc)
+        return {}
+    return {str(row.get("code") or "").zfill(6): row for row in rows if row.get("code")}
 
 
 def sort_signals_for_autotrading(signals: list[dict]) -> list[dict]:
@@ -1355,6 +1373,8 @@ async def enter_positions(
     today_codes = await today_entry_codes(user_id, broker_account_id)
     stopped_out_codes = await today_stopped_out_codes(user_id, broker_account_id) if strategy.get("use_stoploss_reentry_block", True) else set()
     kijun_exit_codes = await today_kijun_exit_codes(user_id, broker_account_id) if strategy.get("use_kijun_reentry_block", True) else set()
+    public_signal_blocks = await public_signal_blocks_for_today()
+    public_blocked_codes = set(public_signal_blocks)
     today_used_codes = today_codes | pending_buy_codes
     blocked_codes = open_codes | kis_codes | pending_codes
     held_or_pending_codes = open_codes | kis_codes | pending_codes
@@ -1375,6 +1395,7 @@ async def enter_positions(
                 "today_pending_buy_count": len(pending_buy_codes),
                 "today_stopped_out_count": len(stopped_out_codes),
                 "today_kijun_exit_count": len(kijun_exit_codes),
+                "public_signal_block_count": len(public_blocked_codes),
                 "remaining_daily_slots": remaining_daily_slots,
                 "available_slots": available_slots,
                 "affordable_slots": affordable_slots,
@@ -1427,6 +1448,17 @@ async def enter_positions(
             break
 
         score = float(signal.get("score") or 0)
+        if signal["code"] in public_blocked_codes:
+            block = public_signal_blocks.get(signal["code"]) or {}
+            await insert_decision_log(
+                user_id,
+                broker_account_id,
+                "SKIP",
+                signal,
+                "ManualBuyBlocked",
+                raw={"strategy": strategy, "block_reason": block.get("reason"), "block": block},
+            )
+            continue
         if signal["code"] in stopped_out_codes:
             await insert_decision_log(user_id, broker_account_id, "SKIP", signal, "StoppedOutToday", raw={"strategy": strategy})
             continue

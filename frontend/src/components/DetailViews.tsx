@@ -32,6 +32,7 @@ export function DetailOverlay({
   onSendSignalBlogReport,
   onDownloadSignalReport,
   onDownloadSignalBlogReport,
+  onToggleSignalAutoBuyBlock,
   onDownloadReportStatus,
   onDownloadBacktestTrades,
   onForceLiquidatePosition,
@@ -45,6 +46,7 @@ export function DetailOverlay({
   onSendSignalBlogReport: (row: Record<string, unknown>) => void;
   onDownloadSignalReport: (row: Record<string, unknown>) => void;
   onDownloadSignalBlogReport: (row: Record<string, unknown>) => void;
+  onToggleSignalAutoBuyBlock: (row: Record<string, unknown>) => void;
   onDownloadReportStatus: (row: Record<string, unknown>) => void;
   onDownloadBacktestTrades: (row: Record<string, unknown>) => void;
   onForceLiquidatePosition: (row: Record<string, unknown>) => void;
@@ -75,6 +77,7 @@ export function DetailOverlay({
             row={detail.row}
             isScanAdmin={isScanAdmin}
             pending={pending === "signalReport"}
+            blockPending={pending === "signalBlock"}
             downloadPending={pending === "signalReportDownload"}
             reportCompleted={hasCompletedReport(aiReports, "signal", String(detail.row.code || "").padStart(6, "0"))}
             blogReportCompleted={hasCompletedReport(aiReports, "signal_blog", String(detail.row.code || "").padStart(6, "0"))}
@@ -82,6 +85,7 @@ export function DetailOverlay({
             onSendBlogReport={() => onSendSignalBlogReport(detail.row)}
             onDownloadReport={() => onDownloadSignalReport(detail.row)}
             onDownloadBlogReport={() => onDownloadSignalBlogReport(detail.row)}
+            onToggleAutoBuyBlock={() => onToggleSignalAutoBuyBlock(detail.row)}
           />
         )}
         {detail.kind === "log" && <TradeLogDetail row={detail.row} />}
@@ -118,6 +122,7 @@ export function SignalDetail({
   row,
   isScanAdmin,
   pending,
+  blockPending,
   downloadPending,
   reportCompleted,
   blogReportCompleted,
@@ -125,10 +130,12 @@ export function SignalDetail({
   onSendBlogReport,
   onDownloadReport,
   onDownloadBlogReport,
+  onToggleAutoBuyBlock,
 }: {
   row: Record<string, unknown>;
   isScanAdmin: boolean;
   pending: boolean;
+  blockPending: boolean;
   downloadPending: boolean;
   reportCompleted: boolean;
   blogReportCompleted: boolean;
@@ -136,12 +143,14 @@ export function SignalDetail({
   onSendBlogReport: () => void;
   onDownloadReport: () => void;
   onDownloadBlogReport: () => void;
+  onToggleAutoBuyBlock: () => void;
 }) {
   const raw = asRecord(row.raw);
   const companyProfile = asRecord(raw.CompanyProfile);
   const code = String(row.code || "").padStart(6, "0");
   const naverUrl = `https://stock.naver.com/domestic/stock/${code}/price`;
   const analysis = buildSignalAnalysis(row);
+  const autoBuyBlocked = Boolean(row.auto_buy_blocked || raw.AutoBuyBlocked);
   return (
     <div className="detail-grid">
       <a className="naver-link" href={naverUrl} target="_blank" rel="noreferrer">
@@ -149,6 +158,9 @@ export function SignalDetail({
       </a>
       {isScanAdmin && (
         <>
+          <button className={autoBuyBlocked ? "detail-action" : "danger detail-action"} type="button" disabled={blockPending} onClick={onToggleAutoBuyBlock}>
+            {blockPending ? "매수금지 변경 중..." : autoBuyBlocked ? "자동매수 금지 해제" : "자동매수 금지"}
+          </button>
           <button className="primary detail-action" type="button" disabled={pending} onClick={onSendReport}>
             {pending ? "개별 리포트 생성 요청 중..." : "이 기업 AI 리포트 생성 요청"}
           </button>
@@ -198,6 +210,7 @@ export function SignalDetail({
         ["시가총액", formatMarketCap(companyProfile.market_cap)],
       ]} />
       <DetailSection title="매매 계획" items={[
+        ["자동매수 상태", autoBuyBlocked ? `매수금지${row.auto_buy_block_reason ? `: ${formatCell(row.auto_buy_block_reason)}` : ""}` : "매수가능"],
         ["매수가", row.entry],
         ["손절가", row.stop_loss],
         ["손절률", formatPercentFromEntry(row.stop_loss, row.entry)],

@@ -569,6 +569,35 @@ function Dashboard({ session }: { session: Session }) {
     });
   }
 
+  async function toggleSignalAutoBuyBlock(row: Record<string, unknown>) {
+    const code = String(row.code || "").padStart(6, "0");
+    const tradeDate = String(row.trade_date || selectedSignalDate || "");
+    if (!isScanAdmin || !tradeDate || !code) {
+      setStatus({ type: "error", message: "매수금지 처리할 시그널 날짜 또는 종목코드가 없습니다." });
+      return;
+    }
+    const nextBlocked = !Boolean(row.auto_buy_blocked);
+    setPending("signalBlock");
+    try {
+      if (nextBlocked) {
+        await api.blockSignalAutoBuy(session, { trade_date: tradeDate, code });
+      } else {
+        await api.unblockSignalAutoBuy(session, { trade_date: tradeDate, code });
+      }
+      const refreshed = await api.signalsByDate(session, tradeDate);
+      setSignals(refreshed);
+      const nextRow = refreshed.find((signal) => String(signal.code || "").padStart(6, "0") === code);
+      if (nextRow) {
+        setDetail({ title: `${formatCell(nextRow.name)} (${formatCell(nextRow.code)})`, kind: "signal", row: nextRow });
+      }
+      setStatus({ type: "info", message: nextBlocked ? `${formatCell(row.name)} 자동매수 금지 완료` : `${formatCell(row.name)} 자동매수 금지 해제 완료` });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : "자동매수 금지 변경 실패" });
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function downloadReportStatus(row: Record<string, unknown>) {
     const reportType = String(row.report_type || "") as AiReportType;
     const tradeDate = String(row.trade_date || selectedSignalDate || "");
@@ -968,7 +997,7 @@ function Dashboard({ session }: { session: Session }) {
           <DataPanel
             title={selectedSignalDate ? `${selectedSignalDate} 시그널` : "시그널"}
             rows={signals.map(enrichPlanPercentRow)}
-            columns={["자동매매적합도", "후보선정점수", "핵심군", "종목명", "진입가", "손절가", "손절률", "2차익절가", "2차익절률", "종목코드"]}
+            columns={["매수상태", "자동매매적합도", "후보선정점수", "핵심군", "종목명", "진입가", "손절가", "손절률", "2차익절가", "2차익절률", "종목코드"]}
             maxRows={30}
             headerAction={signalDates.length > 0 ? (
               <div className="panel-actions">
@@ -1163,6 +1192,7 @@ function Dashboard({ session }: { session: Session }) {
           onSendSignalBlogReport={sendSingleSignalBlogReport}
           onDownloadSignalReport={downloadSingleSignalReport}
           onDownloadSignalBlogReport={downloadSingleSignalBlogReport}
+          onToggleSignalAutoBuyBlock={toggleSignalAutoBuyBlock}
           onDownloadReportStatus={downloadReportStatus}
           onDownloadBacktestTrades={downloadBacktestTrades}
           onForceLiquidatePosition={forceLiquidatePosition}

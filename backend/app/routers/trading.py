@@ -3,7 +3,8 @@ import logging
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from pydantic import BaseModel, Field
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
@@ -16,6 +17,45 @@ from app.services.watcher import sort_signals_for_autotrading
 
 router = APIRouter(tags=["trading"])
 logger = logging.getLogger(__name__)
+
+
+class SignalBlockIn(BaseModel):
+    reason: str | None = Field(default=None, max_length=300)
+
+
+async def signal_blocks_by_date(trade_date: str) -> dict[str, dict]:
+    try:
+        rows = await SupabaseRest().select(
+            "public_signal_blocks",
+            filters={"trade_date": f"eq.{trade_date}"},
+            limit=500,
+        )
+    except RuntimeError:
+        logger.exception("Failed to load public signal blocks: trade_date=%s", trade_date)
+        return {}
+    return {str(row.get("code") or "").zfill(6): row for row in rows if row.get("code")}
+
+
+def attach_signal_blocks(rows: list[dict], blocks: dict[str, dict]) -> list[dict]:
+    enriched: list[dict] = []
+    for row in rows:
+        code = str(row.get("code") or "").zfill(6)
+        block = blocks.get(code)
+        raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
+        enriched.append(
+            {
+                **row,
+                "auto_buy_blocked": bool(block),
+                "auto_buy_block_reason": block.get("reason") if block else None,
+                "auto_buy_blocked_at": block.get("created_at") if block else None,
+                "raw": {
+                    **raw,
+                    "AutoBuyBlocked": bool(block),
+                    "AutoBuyBlockReason": block.get("reason") if block else None,
+                },
+            }
+        )
+    return enriched
 
 
 @router.get("/signals/today")
@@ -36,10 +76,58 @@ async def signals_by_date(
             order="score.desc",
             limit=300,
         )
-        return sort_signals_for_autotrading(rows)[:30]
+        blocks = await signal_blocks_by_date(trade_date)
+        return sort_signals_for_autotrading(attach_signal_blocks(rows, blocks))[:30]
     except Exception:
         logger.exception("Failed to load signals: trade_date=%s user_id=%s", trade_date, user.id)
         return []
+
+
+@router.post("/signals/{trade_date}/{code}/auto-buy-block")
+async def block_signal_auto_buy(
+    payload: SignalBlockIn,
+    trade_date: str = Path(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    code: str = Path(..., pattern=r"^\d{6}$"),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    await require_admin_access(user.id, user.email)
+    normalized_code = code.zfill(6)
+    signals = await SupabaseRest().select(
+        "shared_signals",
+        filters={"trade_date": f"eq.{trade_date}", "code": f"eq.{normalized_code}"},
+        limit=1,
+    )
+    if not signals:
+        raise HTTPException(status_code=404, detail="Signal not found.")
+    signal = signals[0]
+    rows = await SupabaseRest().upsert(
+        "public_signal_blocks",
+        {
+            "trade_date": trade_date,
+            "code": normalized_code,
+            "name": signal.get("name"),
+            "reason": payload.reason or "관리자 매수 금지",
+            "blocked_by": user.id,
+            "updated_at": datetime.now(ZoneInfo(get_settings().timezone)).isoformat(),
+        },
+        on_conflict="trade_date,code",
+    )
+    return {"blocked": True, "signal": signal, "block": rows[0] if rows else None}
+
+
+@router.delete("/signals/{trade_date}/{code}/auto-buy-block")
+async def unblock_signal_auto_buy(
+    trade_date: str = Path(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    code: str = Path(..., pattern=r"^\d{6}$"),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    await require_admin_access(user.id, user.email)
+    normalized_code = code.zfill(6)
+    await SupabaseRest().delete(
+        "public_signal_blocks",
+        filters={"trade_date": f"eq.{trade_date}", "code": f"eq.{normalized_code}"},
+    )
+    return {"blocked": False, "trade_date": trade_date, "code": normalized_code}
 
 
 @router.get("/signals/dates")

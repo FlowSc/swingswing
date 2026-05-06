@@ -285,6 +285,7 @@ export function enrichPlanPercentRow(row: Record<string, unknown>) {
   const autoTradingScore = raw.AutoTradingScore ?? row.auto_trading_score;
   return {
     ...row,
+    매수상태: row.auto_buy_blocked ? "매수금지" : "매수가능",
     핵심군: isCoreUniverseSignal(raw) ? translateCoreUniverse(raw.CoreUniverseType) : "전종목",
     자동매매적합도: autoTradingScore,
     후보선정점수: row.score,

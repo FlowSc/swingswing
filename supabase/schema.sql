@@ -46,6 +46,20 @@ create table if not exists shared_signals (
 create unique index if not exists uq_shared_signals_trade_date_code
   on shared_signals (trade_date, code);
 
+create table if not exists public_signal_blocks (
+  id bigint generated always as identity primary key,
+  trade_date date not null,
+  code text not null,
+  name text,
+  reason text,
+  blocked_by uuid,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists uq_public_signal_blocks_date_code
+  on public_signal_blocks (trade_date, code);
+
 create table if not exists scan_runs (
   id bigint generated always as identity primary key,
   requested_by uuid,
@@ -281,6 +295,7 @@ create unique index if not exists uq_ai_reports_daily_type_code
   on ai_reports (trade_date, report_type, code);
 
 create index if not exists idx_shared_signals_trade_date on shared_signals (trade_date, score desc);
+create index if not exists idx_public_signal_blocks_trade_date on public_signal_blocks (trade_date);
 create index if not exists idx_scan_runs_created_at on scan_runs (created_at desc);
 create index if not exists idx_backtest_runs_user_created_at on backtest_runs (requested_by, created_at desc);
 create index if not exists idx_backtest_runs_status_created_at on backtest_runs (status, created_at desc);
@@ -371,6 +386,7 @@ where trade_logs.broker_account_id is null
 alter table broker_accounts enable row level security;
 alter table user_memberships enable row level security;
 alter table shared_signals enable row level security;
+alter table public_signal_blocks enable row level security;
 alter table scan_runs enable row level security;
 alter table strategy_settings enable row level security;
 alter table positions enable row level security;
@@ -394,6 +410,11 @@ create policy "Users can read own membership"
 drop policy if exists "Users can read shared signals" on shared_signals;
 create policy "Users can read shared signals"
   on shared_signals for select
+  using (auth.uid() is not null);
+
+drop policy if exists "Users can read public signal blocks" on public_signal_blocks;
+create policy "Users can read public signal blocks"
+  on public_signal_blocks for select
   using (auth.uid() is not null);
 
 drop policy if exists "Users can read scan runs" on scan_runs;
