@@ -1112,7 +1112,7 @@ async def force_liquidate_position_for_user(credentials: dict, code: str, *, dry
 
     balance = await client.get_balance()
     holdings = parse_holdings(balance)
-    holding = next((item for item in holdings if str(item.get("code") or "").zfill(6) == normalized_code), None)
+    holding = holdings.get(normalized_code)
     sell_qty = int((holding or {}).get("qty") or position.get("remaining_qty") or 0)
     if sell_qty <= 0:
         raise ValueError("No sellable quantity found in KIS balance or DB position.")
