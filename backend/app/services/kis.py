@@ -526,7 +526,15 @@ def find_order_execution(
 
 
 def extract_cash(balance: dict[str, Any]) -> int:
-    return extract_orderable_cash(balance)
+    output2 = balance.get("output2", [])
+    if not output2:
+        return 10_000_000
+    row = output2[0] if isinstance(output2, list) else output2
+    raw_value = row.get("dnca_tot_amt") or row.get("DNCA_TOT_AMT") or "0"
+    try:
+        return int(float(str(raw_value).replace(",", "")))
+    except ValueError:
+        return 10_000_000
 
 
 def extract_orderable_cash(balance: dict[str, Any]) -> int:
@@ -539,8 +547,6 @@ def extract_orderable_cash(balance: dict[str, Any]) -> int:
         or row.get("ORD_PSBL_CASH")
         or row.get("ord_psbl_cash_amt")
         or row.get("ORD_PSBL_CASH_AMT")
-        or row.get("dnca_tot_amt")
-        or row.get("DNCA_TOT_AMT")
         or "0"
     )
     try:

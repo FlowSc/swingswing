@@ -185,6 +185,7 @@ function Dashboard({ session }: { session: Session }) {
       return {
         account: result.account,
         orderable_cash: result.orderable_cash ?? result.cash,
+        cash: result.cash,
         total_equity: result.total_equity,
         holdings_count: result.holdings_count,
       };

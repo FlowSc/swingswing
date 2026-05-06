@@ -493,6 +493,7 @@ export function AccountPanel({
     ? {
         row_type: "summary",
         account: account.account,
+        cash: account.cash,
         orderable_cash: account.orderable_cash ?? account.cash,
         total_equity: account.total_equity,
         holdings_count: account.holdings_count,
@@ -523,6 +524,7 @@ export function AccountPanel({
           >
             <span>계좌 {account.account}</span>
             <strong>주문가능 {formatCell(account.orderable_cash ?? account.cash)}원</strong>
+            <strong>예수금 {formatCell(account.cash)}원</strong>
             <strong>총평가 {formatCell(account.total_equity)}원</strong>
             <span>보유 {account.holdings_count}종목</span>
           </div>

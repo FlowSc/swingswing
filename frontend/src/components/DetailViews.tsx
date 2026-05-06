@@ -321,6 +321,7 @@ export function AccountDetail({ row }: { row: Record<string, unknown> }) {
         <DetailSection title="계좌 요약" items={[
           ["계좌", row.account],
           ["주문가능금액", `${formatCell(row.orderable_cash ?? row.cash)}원`],
+          ["예수금", `${formatCell(row.cash)}원`],
           ["총평가", `${formatCell(row.total_equity)}원`],
           ["보유 종목 수", `${formatCell(row.holdings_count)}종목`],
         ]} />
