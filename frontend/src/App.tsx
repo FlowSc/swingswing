@@ -912,6 +912,7 @@ function Dashboard({ session }: { session: Session }) {
 
       <AccountPanel
         account={kisAccount}
+        positions={positions}
         onRefresh={loadKisAccount}
         refreshing={pending === "account"}
         onDetail={(title, row) => setDetail({ title, kind: "account", row })}

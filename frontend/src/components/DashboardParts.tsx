@@ -468,18 +468,22 @@ export function membershipLabel(role?: string | null) {
 
 export function AccountPanel({
   account,
+  positions,
   onRefresh,
   refreshing,
   onDetail,
 }: {
   account: KisAccount | null;
+  positions: Array<Record<string, unknown>>;
   onRefresh: () => void;
   refreshing: boolean;
   onDetail: (title: string, row: Record<string, unknown>) => void;
 }) {
+  const positionByCode = new Map(positions.map((position) => [String(position.code || "").padStart(6, "0"), position]));
   const rows = account?.holdings.map((holding) => ({
     row_type: "holding",
     account: account.account,
+    position: positionByCode.get(String(holding.code || "").padStart(6, "0")),
     code: holding.code,
     name: holding.name,
     qty: holding.qty,

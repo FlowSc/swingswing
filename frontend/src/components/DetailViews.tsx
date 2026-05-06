@@ -15,6 +15,7 @@ import {
   hasCompletedReport,
   isCoreUniverseSignal,
   isPassed,
+  exitPlanFromSource,
   translateBacktestStatus,
   translateCloudType,
   translateCoreUniverse,
@@ -340,6 +341,9 @@ export function AccountDetail({ row }: { row: Record<string, unknown> }) {
   const qty = Number(row.qty || 0);
   const evaluationAmount = Number(row.evaluation_amount || currentPrice * qty || 0);
   const investedAmount = avgPrice * qty;
+  const position = asRecord(row.position);
+  const hasPositionPlan = Boolean(position.code);
+  const exitPlan = exitPlanFromSource(hasPositionPlan ? position : row);
   return (
     <div className="detail-grid">
       <DetailSection title="보유 종목" items={[
@@ -356,8 +360,21 @@ export function AccountDetail({ row }: { row: Record<string, unknown> }) {
         ["손익률", `${formatCell(row.profit_loss_rate)}%`],
         ["주당 손익", `${formatCell(currentPrice - avgPrice)}원`],
       ]} />
+      <DetailSection title="손절/익절 목표" items={[
+        ["자동매매 포지션", hasPositionPlan ? "연결됨" : "연결된 DB 포지션 없음"],
+        ["진입가", exitPlan.entry_price],
+        ["손절가", exitPlan.stop_loss],
+        ["손절률", formatPlanPct(exitPlan.stop_loss_pct) || formatPercentFromEntry(exitPlan.stop_loss, exitPlan.entry_price)],
+        ["1차 익절가", exitPlan.take_profit_1],
+        ["1차 익절률", formatPlanPct(exitPlan.take_profit_1_pct) || formatPercentFromEntry(exitPlan.take_profit_1, exitPlan.entry_price)],
+        ["2차 익절가", exitPlan.take_profit_2],
+        ["2차 익절률", formatPlanPct(exitPlan.take_profit_2_pct) || formatPercentFromEntry(exitPlan.take_profit_2, exitPlan.entry_price)],
+        ["추적 손절가", exitPlan.trailing_stop],
+        ["추적 손절률", formatPlanPct(exitPlan.trailing_stop_pct) || formatPercentFromEntry(exitPlan.trailing_stop, exitPlan.entry_price)],
+        ["최대 보유", `${formatCell(exitPlan.hold_max_days)}일`],
+      ]} />
       <DetailSection title="확인 포인트" items={[
-        ["자동매매 DB 포지션", "KIS 계좌 잔고 기준 정보입니다. 자동매매 포지션 상세는 포지션 메뉴에서 확인합니다."],
+        ["자동매매 DB 포지션", hasPositionPlan ? "동일 종목의 열린 자동매매 포지션 기준 목표가입니다." : "KIS 잔고에는 있으나 열린 자동매매 포지션과 연결되지 않았습니다."],
         ["가격 기준", "KIS 계좌 조회 시점의 현재가/평가금액 기준입니다."],
       ]} />
     </div>
