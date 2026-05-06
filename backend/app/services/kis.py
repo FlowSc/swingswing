@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable
@@ -15,6 +16,9 @@ LIVE_BASE_URL = "https://openapi.koreainvestment.com:9443"
 PAPER_WS_URL = "ws://ops.koreainvestment.com:31000"
 LIVE_WS_URL = "ws://ops.koreainvestment.com:21000"
 TOKEN_REFRESH_BUFFER = timedelta(minutes=5)
+RATE_LIMIT_MARKER = "EGW00201"
+_REST_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
+_REST_LAST_REQUEST_AT: dict[tuple[str, str], float] = {}
 
 TR_ID = {
     "paper": {
@@ -75,23 +79,52 @@ class KisClient:
         headers: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.request(
-                method,
-                f"{self.config.base_url}{path}",
-                headers=headers,
-                **kwargs,
-            )
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            body = response.text[:1000]
-            raise RuntimeError(f"KIS HTTP error {response.status_code}: {body}") from exc
+        settings = get_settings()
+        last_error: Exception | None = None
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            await self._throttle_rest_request(float(settings.kis_rest_min_interval_seconds))
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.request(
+                    method,
+                    f"{self.config.base_url}{path}",
+                    headers=headers,
+                    **kwargs,
+                )
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                body = response.text[:1000]
+                if RATE_LIMIT_MARKER in body and attempt < max_attempts - 1:
+                    last_error = RuntimeError(f"KIS HTTP error {response.status_code}: {body}")
+                    await asyncio.sleep(float(settings.kis_rate_limit_retry_seconds) * (attempt + 1))
+                    continue
+                raise RuntimeError(f"KIS HTTP error {response.status_code}: {body}") from exc
 
-        payload = response.json()
-        if payload.get("rt_cd") not in {None, "0"}:
-            raise RuntimeError(f"KIS API error: {payload.get('msg_cd')} {payload.get('msg1')}")
-        return payload
+            payload = response.json()
+            if payload.get("rt_cd") not in {None, "0"}:
+                message = f"KIS API error: {payload.get('msg_cd')} {payload.get('msg1')}"
+                if payload.get("msg_cd") == RATE_LIMIT_MARKER and attempt < max_attempts - 1:
+                    last_error = RuntimeError(message)
+                    await asyncio.sleep(float(settings.kis_rate_limit_retry_seconds) * (attempt + 1))
+                    continue
+                raise RuntimeError(message)
+            return payload
+        if last_error:
+            raise last_error
+        raise RuntimeError("KIS request failed without response.")
+
+    async def _throttle_rest_request(self, min_interval_seconds: float) -> None:
+        key = (self.config.mode, self.config.app_key)
+        lock = _REST_LOCKS.setdefault(key, asyncio.Lock())
+        async with lock:
+            loop = asyncio.get_running_loop()
+            now = loop.time()
+            last_at = _REST_LAST_REQUEST_AT.get(key, 0.0)
+            wait_seconds = max(0.0, last_at + max(0.0, min_interval_seconds) - now)
+            if wait_seconds > 0:
+                await asyncio.sleep(wait_seconds)
+            _REST_LAST_REQUEST_AT[key] = loop.time()
 
     async def issue_access_token(self) -> str:
         payload = {

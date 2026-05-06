@@ -11,7 +11,7 @@ from app.services.ai_report import process_queued_ai_reports
 from app.services.scanner import get_scan_market_status, scan_and_store_for_user
 from app.services.supabase_rest import SupabaseRest
 from app.services.telegram import send_telegram_message_with_bot
-from app.services.watch_jobs import enqueue_watch_jobs, process_watch_jobs
+from app.services.watch_jobs import enqueue_watch_jobs, is_retryable_error, process_watch_jobs
 from app.services.watcher import run_realtime_position_watch_for_user, run_watch_tick_for_user
 
 
@@ -79,7 +79,8 @@ async def run_intraday_watch_credentials(credentials: dict) -> dict:
     try:
         return await run_watch_tick_for_user(credentials, test_mode=False, dry_run=False)
     except Exception as exc:
-        await notify_watcher_failure(credentials, "5분 와쳐", exc)
+        if not is_retryable_error(str(exc)):
+            await notify_watcher_failure(credentials, "5분 와쳐", exc)
         raise
 
 
@@ -87,7 +88,8 @@ async def run_realtime_position_watch_credentials(credentials: dict) -> dict:
     try:
         return await run_realtime_position_watch_for_user(credentials, dry_run=False)
     except Exception as exc:
-        await notify_watcher_failure(credentials, "1분 포지션 감시", exc)
+        if not is_retryable_error(str(exc)):
+            await notify_watcher_failure(credentials, "1분 포지션 감시", exc)
         raise
 
 
