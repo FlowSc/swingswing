@@ -221,6 +221,14 @@ export type WatchJob = {
   job_type: "intraday" | "realtime_position" | string;
   user_id: string;
   broker_account_id: string;
+  account_label?: string | null;
+  account_mode?: "paper" | "live" | string;
+  account_no?: string | null;
+  account_product_code?: string | null;
+  account_display?: string | null;
+  account_enabled?: boolean;
+  account_is_active?: boolean;
+  account_live_order_enabled?: boolean;
   status: "pending" | "running" | "completed" | "failed" | "skipped" | string;
   scheduled_for: string;
   run_after: string;

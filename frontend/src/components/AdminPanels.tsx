@@ -249,6 +249,7 @@ export function WatchJobPanel({
   const rows = (overview?.jobs || []).slice(0, 20).map((job) => ({
     id: job.id,
     type: translateJobType(job.job_type),
+    account: formatWatchJobAccount(job),
     status: translateJobStatus(job.status),
     attempts: job.attempts,
     scheduled_for: job.scheduled_for,
@@ -293,11 +294,23 @@ export function WatchJobPanel({
       )}
       <MiniTable
         rows={rows}
-        columns={["id", "type", "status", "attempts", "scheduled_for", "run_after", "locked_by", "error"]}
+        columns={["id", "type", "account", "status", "attempts", "scheduled_for", "run_after", "locked_by", "error"]}
         emptyLabel="최근 와쳐 작업 없음"
       />
     </section>
   );
+}
+
+function formatWatchJobAccount(job: WatchJobOverview["jobs"][number]) {
+  const mode = job.account_mode === "live" ? "실전" : job.account_mode === "paper" ? "모의" : job.account_mode || "-";
+  const account = job.account_display || [job.account_no, job.account_product_code].filter(Boolean).join("-");
+  const label = job.account_label ? `${job.account_label} ` : "";
+  const flags = [
+    job.account_enabled === false ? "OFF" : "",
+    job.account_is_active ? "선택됨" : "",
+    job.account_mode === "live" && job.account_live_order_enabled ? "실전주문" : "",
+  ].filter(Boolean);
+  return `${label}${mode} ${account || job.broker_account_id}${flags.length ? ` (${flags.join(", ")})` : ""}`;
 }
 
 function translateJobType(value: string) {

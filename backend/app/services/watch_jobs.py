@@ -283,6 +283,7 @@ async def get_watch_job_overview(limit: int = 200) -> dict:
         order="created_at.desc",
         limit=max(1, min(limit, 1000)),
     )
+    rows = await attach_account_info(rows)
     status_counts: dict[str, int] = {}
     type_counts: dict[str, int] = {}
     failure_counts: dict[str, dict] = {}
@@ -312,6 +313,42 @@ async def get_watch_job_overview(limit: int = 200) -> dict:
         "failures": sorted(failure_counts.values(), key=lambda item: item["count"], reverse=True)[:8],
         "jobs": rows,
     }
+
+
+async def attach_account_info(rows: list[dict]) -> list[dict]:
+    account_ids = sorted({str(row.get("broker_account_id")) for row in rows if row.get("broker_account_id")})
+    if not account_ids:
+        return rows
+    accounts = await SupabaseRest().select(
+        "broker_accounts",
+        columns="id,user_id,label,kis_account_no,kis_account_product_code,mode,enabled,is_active,live_order_enabled",
+        filters={"id": f"in.({','.join(account_ids)})"},
+        limit=len(account_ids),
+    )
+    by_id = {str(account.get("id")): account for account in accounts}
+    enriched: list[dict] = []
+    for row in rows:
+        account = by_id.get(str(row.get("broker_account_id")))
+        if not account:
+            enriched.append(row)
+            continue
+        mode = account.get("mode") or "paper"
+        product_code = account.get("kis_account_product_code") or "01"
+        account_no = account.get("kis_account_no") or ""
+        enriched.append(
+            {
+                **row,
+                "account_label": account.get("label"),
+                "account_mode": mode,
+                "account_no": account_no,
+                "account_product_code": product_code,
+                "account_display": f"{mode} {account_no}-{product_code}",
+                "account_enabled": bool(account.get("enabled")),
+                "account_is_active": bool(account.get("is_active")),
+                "account_live_order_enabled": bool(account.get("live_order_enabled")),
+            }
+        )
+    return enriched
 
 
 async def retry_failed_watch_jobs(job_type: str | None = None) -> dict:
