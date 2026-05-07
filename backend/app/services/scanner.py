@@ -39,6 +39,9 @@ MIN_VOLUME_SPIKE_RATIO = 1.2
 STRONG_VOLUME_SPIKE_RATIO = 1.5
 MIN_TRADING_VALUE_SPIKE_RATIO = 1.2
 GAP_UP_PENALTY_PCT = 5.0
+MAX_PREV_DAY_RETURN_PCT = 12.0
+MAX_INTRADAY_DROP_PCT = -5.0
+MAX_PULLBACK_FROM_DAY_HIGH_PCT = 7.0
 UPPER_SHADOW_PENALTY_RATIO = 0.5
 MIN_ATR_PCT_BONUS = 2.0
 MAX_ATR_PCT_BONUS = 12.0
@@ -103,6 +106,15 @@ def get_scan_market_status(today: date | None = None) -> dict:
 
 def is_excluded_name(name: str) -> bool:
     return any(keyword in name for keyword in EXCLUDED_NAME_KEYWORDS)
+
+
+def latest_frame_date(frame: pd.DataFrame) -> date | None:
+    if frame.empty:
+        return None
+    try:
+        return pd.Timestamp(frame.index[-1]).date()
+    except Exception:
+        return None
 
 
 def calc_rsi(close: pd.Series, period: int = 14) -> pd.Series:
@@ -177,6 +189,7 @@ def score_swing_setup(
     company_profile: dict | None = None,
     core_universe: bool = False,
     core_universe_type: str = "",
+    trade_date: date | None = None,
 ) -> dict | None:
     if frame is None or len(frame) < 260:
         return None
@@ -185,6 +198,8 @@ def score_swing_setup(
 
     frame = prepare_frame(frame).dropna()
     if frame.empty:
+        return None
+    if trade_date and latest_frame_date(frame) != trade_date:
         return None
 
     last = frame.iloc[-1]
@@ -223,13 +238,26 @@ def score_swing_setup(
     body_ratio = float(last["BodyRatioPct"])
     upper_shadow_ratio = float(last["UpperShadowRatio"])
     gap_pct = float(last["GapPct"])
+    prev_day_return_pct = (prev_close / float(frame.iloc[-3]["Close"]) - 1) * 100 if len(frame) >= 3 and float(frame.iloc[-3]["Close"]) > 0 else 0
+    intraday_return_pct = (close / open_ - 1) * 100 if open_ > 0 else 0
+    pullback_from_day_high_pct = (close / high - 1) * 100 if high > 0 else 0
 
     if ma20 <= 0 or ma60 <= 0 or vol20 <= 0 or vol_prev5 <= 0 or kijun <= 0 or low_52w <= 0:
+        return None
+    if open_ <= 0 or close <= 0 or high <= 0 or low <= 0:
+        return None
+    if float(last["Volume"]) <= 0 or trading_value <= 0:
         return None
     if close < MIN_PRICE:
         return None
     trading_value_20d = close * vol20
     if trading_value_20d < MIN_TRADING_VALUE_20D:
+        return None
+    if prev_day_return_pct >= MAX_PREV_DAY_RETURN_PCT:
+        return None
+    if intraday_return_pct <= MAX_INTRADAY_DROP_PCT:
+        return None
+    if pullback_from_day_high_pct <= -MAX_PULLBACK_FROM_DAY_HIGH_PCT:
         return None
 
     atr_pct = atr14 / close * 100
@@ -378,6 +406,9 @@ def score_swing_setup(
         "BodyRatio(%)": round(body_ratio, 2),
         "UpperShadowRatio": round(upper_shadow_ratio, 2),
         "Gap(%)": round(gap_pct, 2),
+        "PrevDayReturn(%)": round(prev_day_return_pct, 2),
+        "IntradayReturn(%)": round(intraday_return_pct, 2),
+        "PullbackFromDayHigh(%)": round(pullback_from_day_high_pct, 2),
         "Low52W": round(low_52w, 2),
         "DistanceFrom52WLow(%)": round((close / low_52w - 1) * 100, 2),
         "MarketFilter": "KOSPI close > MA5",
@@ -573,6 +604,7 @@ def process_scan_chunk_sync(state: dict, chunk_size: int = SCAN_CHUNK_SIZE) -> d
                 company_profile=row.get("CompanyProfile") or {},
                 core_universe=_truthy(row.get("CoreUniverse")),
                 core_universe_type=str(row.get("CoreUniverseType") or ""),
+                trade_date=date.fromisoformat(state["trade_date"]),
             )
             if result:
                 results.append(result)
@@ -632,6 +664,7 @@ def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
                 company_profile=row.get("CompanyProfile") or {},
                 core_universe=_truthy(row.get("CoreUniverse")),
                 core_universe_type=str(row.get("CoreUniverseType") or ""),
+                trade_date=date.fromisoformat(state["trade_date"]),
             )
             if result:
                 results.append(result)

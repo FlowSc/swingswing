@@ -111,6 +111,7 @@ def process_backtest_chunk_sync(state: dict) -> dict:
                     company_profile=row.get("CompanyProfile") or {},
                     core_universe=truthy(row.get("CoreUniverse")),
                     core_universe_type=str(row.get("CoreUniverseType") or ""),
+                    trade_date=trade_date,
                 )
                 if signal:
                     candidates.append(shared_signal_to_record(trade_date, signal))
@@ -194,6 +195,7 @@ def run_historical_rescan_backtest_sync(
                     company_profile=row.get("CompanyProfile") or {},
                     core_universe=truthy(row.get("CoreUniverse")),
                     core_universe_type=str(row.get("CoreUniverseType") or ""),
+                    trade_date=trade_date,
                 )
                 if not signal:
                     continue
