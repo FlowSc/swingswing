@@ -42,7 +42,7 @@ MIN_TRADING_VALUE_SPIKE_RATIO = 1.2
 GAP_UP_PENALTY_PCT = 5.0
 MAX_PREV_DAY_RETURN_PCT = 12.0
 MAX_INTRADAY_DROP_PCT = -5.0
-MAX_PULLBACK_FROM_DAY_HIGH_PCT = 7.0
+MAX_PULLBACK_FROM_DAY_HIGH_PCT = 10.0
 UPPER_SHADOW_PENALTY_RATIO = 0.5
 MIN_ATR_PCT_BONUS = 2.0
 MAX_ATR_PCT_BONUS = 12.0
@@ -254,8 +254,6 @@ def score_swing_setup(
     trading_value_20d = close * vol20
     if trading_value_20d < MIN_TRADING_VALUE_20D:
         return None
-    if prev_day_return_pct >= MAX_PREV_DAY_RETURN_PCT:
-        return None
     if intraday_return_pct <= MAX_INTRADAY_DROP_PCT:
         return None
     if pullback_from_day_high_pct <= -MAX_PULLBACK_FROM_DAY_HIGH_PCT:
@@ -323,6 +321,9 @@ def score_swing_setup(
     if gap_pct >= GAP_UP_PENALTY_PCT:
         penalty += 2
         penalty_reasons.append("Gap up penalty")
+    if prev_day_return_pct >= MAX_PREV_DAY_RETURN_PCT:
+        penalty += 2
+        penalty_reasons.append("Previous day surge penalty")
     if upper_shadow_ratio >= UPPER_SHADOW_PENALTY_RATIO:
         penalty += 2
         penalty_reasons.append("Upper shadow penalty")
