@@ -37,6 +37,7 @@ RSI_MAX_EXCLUSIVE = 56
 MIN_RET_5D = 0
 MIN_RET_20D = 3
 MAX_RET_20D = 25
+DEFAULT_STOP_PCT = 4.0
 MAX_STOP_PCT = 10.0
 MIN_BB_WIDTH_EXPANSION_PCT = 5.0
 MIN_BB_WIDTH_EXPANSION_HARD_PCT = 0.0
@@ -240,7 +241,9 @@ def score_swing_setup(
         return None
 
     swing_low = float(frame["Low"].tail(10).min())
-    stop_loss = min(swing_low, ma60) * 0.99
+    technical_stop_loss = min(swing_low, ma60) * 0.99
+    default_stop_loss = close * (1 - DEFAULT_STOP_PCT / 100)
+    stop_loss = min(technical_stop_loss, default_stop_loss)
     risk = max(close - stop_loss, 0.01)
     stop_pct = risk / close * 100
     if stop_pct > MAX_STOP_PCT:
@@ -473,7 +476,7 @@ def main() -> None:
                     {"Item": "Exit rule", "Detail": f"Sell 30% at +1R, 30% at +2R, trail the rest, or exit after {HOLD_MAX_DAYS} trading days"},
                     {"Item": "Stop rule", "Detail": "Exit immediately if the close breaks the stop-loss"},
                     {"Item": "Trailing stop", "Detail": "Use the tighter of the MA20-based trail and the ATR-based trail"},
-                    {"Item": "Risk rule", "Detail": f"Skip setups with stop-loss wider than {MAX_STOP_PCT:.1f}%"},
+                    {"Item": "Risk rule", "Detail": f"Use at least {DEFAULT_STOP_PCT:.1f}% stop width and skip setups wider than {MAX_STOP_PCT:.1f}%"},
                     {"Item": "Ichimoku rule", "Detail": f"Tenkan must be above Kijun and the bullish cross must be within {MAX_DAYS_AFTER_ICHIMOKU_CROSS} trading days"},
                     {"Item": "Bollinger rule", "Detail": f"Bollinger Band width must not be contracting; expansion above {MIN_BB_WIDTH_EXPANSION_PCT:.1f}% gets score"},
                     {"Item": "RSI rule", "Detail": "RSI(14) must be at least 30 and below 56"},

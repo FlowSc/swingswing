@@ -57,7 +57,7 @@ export function formatPercentFromEntry(target: unknown, entry: unknown): string 
 export function buildStopLossExplanation(row: Record<string, unknown>, raw: Record<string, unknown>) {
   const stopPct = formatPercentFromEntry(row.stop_loss, row.entry);
   const atrPct = raw["ATR(%)"] === undefined ? "-" : `${formatCell(raw["ATR(%)"])}%`;
-  return `최근 10거래일 저점과 60일선 중 더 낮은 지지선에서 1% 아래로 설정. 현재 손절폭 ${stopPct}, ATR 변동성 ${atrPct}.`;
+  return `최근 10거래일 저점과 60일선 중 더 낮은 지지선에서 1% 아래로 설정하되, 기본 손절폭은 최소 -4%로 제한. 현재 손절폭 ${stopPct}, ATR 변동성 ${atrPct}.`;
 }
 
 export function buildTakeProfitExplanation(row: Record<string, unknown>) {

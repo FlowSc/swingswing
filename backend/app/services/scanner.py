@@ -31,6 +31,7 @@ CLOUD_RSI_MIN = 35
 CLOUD_RSI_MAX_EXCLUSIVE = 72
 MIN_RET_20D = 3
 MAX_RET_20D = 25
+DEFAULT_STOP_PCT = 4.0
 MAX_STOP_PCT = 10.0
 MIN_BB_WIDTH_EXPANSION_PCT = 5.0
 MIN_BB_WIDTH_EXPANSION_HARD_PCT = 0.0
@@ -348,7 +349,9 @@ def score_swing_setup(
         return None
 
     swing_low = float(frame["Low"].tail(10).min())
-    stop_loss = min(swing_low, ma60) * 0.99
+    technical_stop_loss = min(swing_low, ma60) * 0.99
+    default_stop_loss = close * (1 - DEFAULT_STOP_PCT / 100)
+    stop_loss = min(technical_stop_loss, default_stop_loss)
     risk = max(close - stop_loss, 0.01)
     stop_pct = risk / close * 100
     if stop_pct > MAX_STOP_PCT:
