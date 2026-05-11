@@ -28,6 +28,9 @@ export function DiagnosticsPanel({
     ret7: formatPctValue(row.avg_return_7d_pct),
     win7: formatPctValue(row.win_rate_7d_pct),
     dd7: formatPctValue(row.avg_drawdown_7d_pct),
+    ret15: formatPctValue(row.avg_return_15d_pct),
+    win15: formatPctValue(row.win_rate_15d_pct),
+    dd15: formatPctValue(row.avg_drawdown_15d_pct),
   }));
   const forwardRows = (diagnostics?.forward_returns || []).slice(0, 30).map((row) => ({
     code: row.code,
@@ -40,6 +43,7 @@ export function DiagnosticsPanel({
     dd3: formatPctValue(row.max_drawdown_3d_pct),
     r5: formatPctValue(row.return_5d_pct),
     r7: formatPctValue(row.return_7d_pct),
+    r15: formatPctValue(row.return_15d_pct),
   }));
 
   return (
@@ -81,7 +85,7 @@ export function DiagnosticsPanel({
         <h3>점수 구간별 사후성과</h3>
         <MiniTable
           rows={bucketRows}
-          columns={["bucket", "count", "ret3", "win3", "ret5", "win5", "ret7", "win7", "dd7"]}
+          columns={["bucket", "count", "ret3", "win3", "ret5", "win5", "ret7", "win7", "dd7", "ret15", "win15", "dd15"]}
           emptyLabel="사후성과 데이터 없음"
         />
       </section>
@@ -89,7 +93,7 @@ export function DiagnosticsPanel({
         <h3>후보별 사후성과</h3>
         <MiniTable
           rows={forwardRows}
-          columns={["code", "name", "score", "bucket", "entry", "r3", "ru3", "dd3", "r5", "r7"]}
+          columns={["code", "name", "score", "bucket", "entry", "r3", "ru3", "dd3", "r5", "r7", "r15"]}
           emptyLabel="후보별 사후성과 없음"
         />
       </section>

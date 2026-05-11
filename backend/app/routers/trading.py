@@ -83,7 +83,7 @@ def summarize_forward_buckets(rows: list[dict]) -> list[dict]:
         if not items:
             continue
         summary = {"bucket": bucket, "count": len(items)}
-        for horizon in (3, 5, 7):
+        for horizon in (3, 5, 7, 15):
             returns = [float(item[f"return_{horizon}d_pct"]) for item in items if item.get(f"return_{horizon}d_pct") is not None]
             runups = [float(item[f"max_runup_{horizon}d_pct"]) for item in items if item.get(f"max_runup_{horizon}d_pct") is not None]
             drawdowns = [float(item[f"max_drawdown_{horizon}d_pct"]) for item in items if item.get(f"max_drawdown_{horizon}d_pct") is not None]

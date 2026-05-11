@@ -64,6 +64,10 @@ create table if not exists signal_forward_returns (
   return_7d_pct numeric,
   max_runup_7d_pct numeric,
   max_drawdown_7d_pct numeric,
+  close_15d numeric,
+  return_15d_pct numeric,
+  max_runup_15d_pct numeric,
+  max_drawdown_15d_pct numeric,
   evaluated_at timestamptz not null default now(),
   raw jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
@@ -371,6 +375,10 @@ alter table strategy_settings add column if not exists min_bid_ask_ratio numeric
 alter table strategy_settings add column if not exists max_realtime_spread_pct numeric not null default 0.012;
 alter table strategy_settings add column if not exists use_stoploss_reentry_block boolean not null default true;
 alter table strategy_settings add column if not exists use_vi_filter boolean not null default true;
+alter table signal_forward_returns add column if not exists close_15d numeric;
+alter table signal_forward_returns add column if not exists return_15d_pct numeric;
+alter table signal_forward_returns add column if not exists max_runup_15d_pct numeric;
+alter table signal_forward_returns add column if not exists max_drawdown_15d_pct numeric;
 
 update strategy_settings
 set
