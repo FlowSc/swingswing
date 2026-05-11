@@ -53,6 +53,8 @@ CLOUD_BREAKOUT_DISTANCE_PCT = 3.0
 HOLD_MIN_DAYS = 3
 HOLD_PREFERRED_DAYS = 7
 HOLD_MAX_DAYS = 15
+FORWARD_RETURN_HORIZONS = (3, 5, 7)
+FORWARD_RETURN_UPDATE_LIMIT = 300
 EXCLUDED_NAME_KEYWORDS = ("스팩", "리츠", "우")
 
 
@@ -107,6 +109,11 @@ def get_scan_market_status(today: date | None = None) -> dict:
 
 def is_excluded_name(name: str) -> bool:
     return any(keyword in name for keyword in EXCLUDED_NAME_KEYWORDS)
+
+
+def record_reject(reject_counts: dict[str, int] | None, reason: str) -> None:
+    if reject_counts is not None:
+        reject_counts[reason] = int(reject_counts.get(reason) or 0) + 1
 
 
 def latest_frame_date(frame: pd.DataFrame) -> date | None:
@@ -191,16 +198,21 @@ def score_swing_setup(
     core_universe: bool = False,
     core_universe_type: str = "",
     trade_date: date | None = None,
+    reject_counts: dict[str, int] | None = None,
 ) -> dict | None:
     if frame is None or len(frame) < 260:
+        record_reject(reject_counts, "data_short")
         return None
     if is_excluded_name(name):
+        record_reject(reject_counts, "excluded_name")
         return None
 
     frame = prepare_frame(frame).dropna()
     if frame.empty:
+        record_reject(reject_counts, "indicator_na")
         return None
     if trade_date and latest_frame_date(frame) != trade_date:
+        record_reject(reject_counts, "stale_market_data")
         return None
 
     last = frame.iloc[-1]
@@ -244,19 +256,26 @@ def score_swing_setup(
     pullback_from_day_high_pct = (close / high - 1) * 100 if high > 0 else 0
 
     if ma20 <= 0 or ma60 <= 0 or vol20 <= 0 or vol_prev5 <= 0 or kijun <= 0 or low_52w <= 0:
+        record_reject(reject_counts, "invalid_indicator")
         return None
     if open_ <= 0 or close <= 0 or high <= 0 or low <= 0:
+        record_reject(reject_counts, "invalid_ohlc")
         return None
     if float(last["Volume"]) <= 0 or trading_value <= 0:
+        record_reject(reject_counts, "invalid_volume_or_value")
         return None
     if close < MIN_PRICE:
+        record_reject(reject_counts, "price_too_low")
         return None
     trading_value_20d = close * vol20
     if trading_value_20d < MIN_TRADING_VALUE_20D:
+        record_reject(reject_counts, "trading_value_too_low")
         return None
     if intraday_return_pct <= MAX_INTRADAY_DROP_PCT:
+        record_reject(reject_counts, "intraday_drop")
         return None
     if pullback_from_day_high_pct <= -MAX_PULLBACK_FROM_DAY_HIGH_PCT:
+        record_reject(reject_counts, "pullback_from_day_high")
         return None
 
     atr_pct = atr14 / close * 100
@@ -339,14 +358,19 @@ def score_swing_setup(
     cloud_rsi_ok = CLOUD_RSI_MIN <= rsi < CLOUD_RSI_MAX_EXCLUSIVE
 
     if tenkan <= kijun and not bearish_cloud_breakout_pressure:
+        record_reject(reject_counts, "ichimoku_filter")
         return None
     if bb_expansion < MIN_BB_WIDTH_EXPANSION_HARD_PCT:
+        record_reject(reject_counts, "bb_expansion_filter")
         return None
     if not (rsi_ok or (is_cloud_pattern and cloud_rsi_ok)):
+        record_reject(reject_counts, "rsi_filter")
         return None
     if vol20 < MIN_VOLUME_20D:
+        record_reject(reject_counts, "volume_20d_too_low")
         return None
     if float(last["Volume"]) < vol_prev5 * MIN_VOLUME_RATIO_HARD:
+        record_reject(reject_counts, "volume_ratio_too_low")
         return None
 
     swing_low = float(frame["Low"].tail(10).min())
@@ -356,6 +380,7 @@ def score_swing_setup(
     risk = max(close - stop_loss, 0.01)
     stop_pct = risk / close * 100
     if stop_pct > MAX_STOP_PCT:
+        record_reject(reject_counts, "stop_pct_too_wide")
         return None
 
     take_profit_1 = close + risk
@@ -577,6 +602,8 @@ def prepare_chunked_scan_state_sync(today: date | None = None, universe_scope: s
         "offset": 0,
         "total": len(universe),
         "candidates": [],
+        "reject_counts": {},
+        "data_error_count": 0,
         "done": False,
     }
 
@@ -591,6 +618,8 @@ def process_scan_chunk_sync(state: dict, chunk_size: int = SCAN_CHUNK_SIZE) -> d
     total = len(universe)
     end = min(offset + chunk_size, total)
     results: list[dict] = list(state.get("candidates") or [])
+    reject_counts: dict[str, int] = dict(state.get("reject_counts") or {})
+    data_error_count = int(state.get("data_error_count") or 0)
 
     logger.warning("Signal scan chunk started: %s-%s/%s candidates=%s", offset + 1, end, total, len(results))
     for index, row in enumerate(universe[offset:end], start=offset + 1):
@@ -609,10 +638,13 @@ def process_scan_chunk_sync(state: dict, chunk_size: int = SCAN_CHUNK_SIZE) -> d
                 core_universe=_truthy(row.get("CoreUniverse")),
                 core_universe_type=str(row.get("CoreUniverseType") or ""),
                 trade_date=date.fromisoformat(state["trade_date"]),
+                reject_counts=reject_counts,
             )
             if result:
                 results.append(result)
         except Exception:
+            data_error_count += 1
+            record_reject(reject_counts, "data_error")
             logger.debug("Signal scan skipped code=%s", row.get("Code"), exc_info=True)
             continue
 
@@ -622,6 +654,8 @@ def process_scan_chunk_sync(state: dict, chunk_size: int = SCAN_CHUNK_SIZE) -> d
         "offset": end,
         "total": total,
         "candidates": results,
+        "reject_counts": reject_counts,
+        "data_error_count": data_error_count,
         "done": done,
     }
     logger.warning("Signal scan chunk completed: offset=%s/%s candidates=%s done=%s", end, total, len(results), done)
@@ -636,6 +670,7 @@ async def finalize_chunked_scan(user_id: str, state: dict, telegram_chat_id: str
     trade_date = date.fromisoformat(state["trade_date"])
     signals = sort_top_signals(list(state.get("candidates") or []))
     shared_saved = await save_shared_signals(signals, trade_date)
+    forward_returns_updated = await update_signal_forward_returns(trade_date)
     telegram_sent = await send_shared_signal_message(format_top_signals_message(signals, trade_date), telegram_chat_id)
     report_queued = await send_daily_signal_report(signals, trade_date)
     return {
@@ -643,6 +678,7 @@ async def finalize_chunked_scan(user_id: str, state: dict, telegram_chat_id: str
         "signals": len(signals),
         "saved": 0,
         "shared_saved": shared_saved,
+        "forward_returns_updated": forward_returns_updated,
         "telegram_sent": telegram_sent,
         "ai_report_queued": report_queued,
     }
@@ -651,6 +687,7 @@ async def finalize_chunked_scan(user_id: str, state: dict, telegram_chat_id: str
 def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
     state = prepare_chunked_scan_state_sync(today)
     results: list[dict] = []
+    reject_counts: dict[str, int] = {}
 
     total = len(state["universe"])
     for index, row in enumerate(state["universe"], start=1):
@@ -669,14 +706,16 @@ def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
                 core_universe=_truthy(row.get("CoreUniverse")),
                 core_universe_type=str(row.get("CoreUniverseType") or ""),
                 trade_date=date.fromisoformat(state["trade_date"]),
+                reject_counts=reject_counts,
             )
             if result:
                 results.append(result)
         except Exception:
+            record_reject(reject_counts, "data_error")
             logger.debug("Signal scan skipped code=%s", row.get("Code"), exc_info=True)
             continue
 
-    logger.warning("Signal scan scoring completed: scanned=%s candidates=%s", total, len(results))
+    logger.warning("Signal scan scoring completed: scanned=%s candidates=%s rejects=%s", total, len(results), reject_counts)
     return sort_top_signals(results)
 
 
@@ -707,6 +746,84 @@ async def save_shared_signals(signals: list[dict], trade_date: date | None = Non
         await rest.upsert("shared_signals", shared_signal_to_record(today, signal), on_conflict="trade_date,code")
         count += 1
     return count
+
+
+def calculate_forward_return_record(signal: dict, as_of: date) -> dict | None:
+    trade_date = date.fromisoformat(str(signal["trade_date"]))
+    entry = float(signal.get("entry") or 0)
+    if entry <= 0:
+        return None
+
+    end_date = min(as_of, trade_date + timedelta(days=14))
+    frame = fdr.DataReader(str(signal["code"]).zfill(6), start=trade_date.strftime("%Y-%m-%d"), end=end_date.strftime("%Y-%m-%d"))
+    if frame is None or frame.empty:
+        return None
+    frame = frame.dropna()
+    if len(frame) <= 1:
+        return None
+
+    evaluated_at = datetime.now(ZoneInfo(get_settings().timezone)).isoformat()
+    raw: dict = {
+        "evaluated_at": evaluated_at,
+        "available_trading_days": len(frame) - 1,
+    }
+    payload: dict = {
+        "trade_date": trade_date.isoformat(),
+        "code": str(signal["code"]).zfill(6),
+        "name": signal.get("name"),
+        "entry": entry,
+        "evaluated_at": evaluated_at,
+    }
+    for horizon in FORWARD_RETURN_HORIZONS:
+        if len(frame) <= horizon:
+            continue
+        window = frame.iloc[1 : horizon + 1]
+        close_price = float(frame.iloc[horizon]["Close"])
+        high_price = float(window["High"].max())
+        low_price = float(window["Low"].min())
+        payload[f"close_{horizon}d"] = round(close_price, 2)
+        payload[f"return_{horizon}d_pct"] = round((close_price / entry - 1) * 100, 2)
+        payload[f"max_runup_{horizon}d_pct"] = round((high_price / entry - 1) * 100, 2)
+        payload[f"max_drawdown_{horizon}d_pct"] = round((low_price / entry - 1) * 100, 2)
+        raw[f"{horizon}d"] = {
+            "close": round(close_price, 2),
+            "high": round(high_price, 2),
+            "low": round(low_price, 2),
+        }
+    if not any(f"return_{horizon}d_pct" in payload for horizon in FORWARD_RETURN_HORIZONS):
+        return None
+    payload["raw"] = raw
+    return payload
+
+
+async def update_signal_forward_returns(as_of: date | None = None, limit: int = FORWARD_RETURN_UPDATE_LIMIT) -> int:
+    today = as_of or datetime.now(ZoneInfo(get_settings().timezone)).date()
+    cutoff = today - timedelta(days=min(FORWARD_RETURN_HORIZONS))
+    rest = SupabaseRest()
+    try:
+        rows = await rest.select(
+            "shared_signals",
+            filters={"trade_date": f"lte.{cutoff.isoformat()}"},
+            order="trade_date.desc",
+            limit=limit,
+        )
+    except RuntimeError as exc:
+        logger.warning("Forward return update skipped: failed to load shared signals: %s", exc)
+        return 0
+
+    updated = 0
+    for signal in rows:
+        try:
+            record = await asyncio.to_thread(calculate_forward_return_record, signal, today)
+            if not record:
+                continue
+            await rest.upsert("signal_forward_returns", record, on_conflict="trade_date,code")
+            updated += 1
+        except RuntimeError as exc:
+            logger.warning("Forward return update skipped for code=%s date=%s error=%s", signal.get("code"), signal.get("trade_date"), exc)
+        except Exception:
+            logger.debug("Forward return update failed for code=%s date=%s", signal.get("code"), signal.get("trade_date"), exc_info=True)
+    return updated
 
 
 async def send_shared_signal_message(text: str, fallback_chat_id: str | None = None) -> int:
@@ -761,6 +878,7 @@ async def scan_and_store_for_user(user_id: str, telegram_chat_id: str | None = N
         }
     signals = await scan_kospi_signals(trade_date)
     shared_saved = await save_shared_signals(signals, trade_date)
+    forward_returns_updated = await update_signal_forward_returns(trade_date)
     telegram_sent = await send_shared_signal_message(format_top_signals_message(signals, trade_date), telegram_chat_id)
     report_queued = await send_daily_signal_report(signals, trade_date)
     return {
@@ -768,6 +886,7 @@ async def scan_and_store_for_user(user_id: str, telegram_chat_id: str | None = N
         "signals": len(signals),
         "saved": 0,
         "shared_saved": shared_saved,
+        "forward_returns_updated": forward_returns_updated,
         "telegram_sent": telegram_sent,
         "ai_report_queued": report_queued,
     }
