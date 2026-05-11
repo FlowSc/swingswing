@@ -24,7 +24,7 @@ FORCE_STOP_TIME = time(15, 20)
 DEFAULT_INTERVAL_SECONDS = 300
 QUOTE_REQUEST_DELAY_SECONDS = 1.0
 QUOTE_ERROR_BACKOFF_SECONDS = 3.0
-MAX_ENTRY_PREMIUM = 1.02
+MAX_ENTRY_PREMIUM = 1.0
 MIN_ENTRY_DISCOUNT = 0.995
 MAX_PULLBACK_FROM_DAY_HIGH = 0.03
 TEST_MODE = False
@@ -256,18 +256,19 @@ def enter_new_positions(client: KisClient, positions: dict) -> list[dict]:
         )
         if qty <= 0:
             continue
+        order_price = min(current_price, int(signal["Entry"]))
         if TEST_MODE and not ALLOW_TEST_ORDERS:
-            response = {"test_mode": True, "side": "buy", "code": signal["Code"], "qty": qty, "price": current_price}
+            response = {"test_mode": True, "side": "buy", "code": signal["Code"], "qty": qty, "price": order_price}
         else:
-            response = client.buy_limit(signal["Code"], qty, current_price)
-        position = paper_trader.make_position(signal, qty, qty * current_price)
-        position["Entry"] = current_price
+            response = client.buy_limit(signal["Code"], qty, order_price)
+        position = paper_trader.make_position(signal, qty, qty * order_price)
+        position["Entry"] = order_price
         position["Source"] = "kis_intraday_watcher"
         position["KisOrderResponse"] = response
         position["IntradayQuote"] = quote
         position["Sizing"] = sizing
         new_positions.append(position)
-        logs.append(log_order("KIS_PAPER_BUY", position, current_price, qty, reason))
+        logs.append(log_order("KIS_PAPER_BUY", position, order_price, qty, reason))
 
     positions["positions"].extend(new_positions)
     return logs

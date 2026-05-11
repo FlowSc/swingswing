@@ -60,7 +60,7 @@ REASON_LABELS = {
     "AlreadyHeld": "이미 보유 중인 종목",
     "ScoreBelowMinimum": "전략 최소 점수 미달",
     "BelowEntryBand": "현재가가 진입 허용 하단보다 낮음",
-    "AboveEntryBand": "현재가가 진입 허용 상단보다 높음",
+    "AboveEntryBand": "주문가가 진입 허용 상단보다 높음",
     "BelowKijun": "현재가가 일목 기준선 아래",
     "AboveBBUpper": "현재가가 볼린저 상단 위",
     "PulledBackFromDayHigh": "당일 고점 대비 과도하게 밀림",
@@ -187,6 +187,7 @@ def decision_reason_detail(reason: str, signal: dict, *, price: int | None = Non
     sizing = raw.get("sizing") if isinstance(raw.get("sizing"), dict) else {}
     realtime = raw.get("realtime") if isinstance(raw.get("realtime"), dict) else {}
     current_price = int(price or quote.get("current_price") or 0)
+    order_price = int(raw.get("order_price") or quote.get("ask_price") or current_price or 0)
     entry = int(float(signal.get("entry") or 0))
 
     if raw.get("sizing_detail"):
@@ -197,8 +198,8 @@ def decision_reason_detail(reason: str, signal: dict, *, price: int | None = Non
         threshold = int(entry * float(strategy.get("min_entry_discount") or 0))
         return f"현재가 {current_price:,}원이 진입가 {entry:,}원 × 하단 허용배율 {float(strategy.get('min_entry_discount') or 0):.3f} = {threshold:,}원보다 낮아서 제외했습니다."
     if reason == "AboveEntryBand":
-        threshold = int(entry * float(strategy.get("max_entry_premium") or 0))
-        return f"현재가 {current_price:,}원이 진입가 {entry:,}원 × 상단 허용배율 {float(strategy.get('max_entry_premium') or 0):.3f} = {threshold:,}원보다 높아서 제외했습니다."
+        threshold = min(entry, int(entry * float(strategy.get("max_entry_premium") or 0)))
+        return f"주문가 {order_price:,}원이 진입가 상한 {threshold:,}원보다 높아서 제외했습니다."
     if reason == "BelowKijun":
         kijun = int(float((signal.get("raw") or {}).get("Kijun") or 0))
         return f"현재가 {current_price:,}원이 일목 기준선 {kijun:,}원보다 낮아서 제외했습니다."
@@ -518,9 +519,10 @@ async def get_quote_safe(client, code: str) -> dict[str, int] | None:
         return None
 
 
-def passes_intraday_entry_filter(signal: dict, quote: dict[str, int], strategy: dict) -> tuple[bool, str]:
+def passes_intraday_entry_filter(signal: dict, quote: dict[str, int], strategy: dict, *, order_price: int | None = None) -> tuple[bool, str]:
     raw = signal.get("raw") or {}
     current_price = quote["current_price"]
+    effective_order_price = order_price or current_price
     day_high = quote.get("day_high") or current_price
     entry = float(signal["entry"])
     kijun = float(raw.get("Kijun") or 0)
@@ -528,7 +530,9 @@ def passes_intraday_entry_filter(signal: dict, quote: dict[str, int], strategy: 
 
     if current_price < entry * float(strategy["min_entry_discount"]):
         return False, "BelowEntryBand"
-    if current_price > entry * float(strategy["max_entry_premium"]):
+    if effective_order_price > entry * float(strategy["max_entry_premium"]):
+        return False, "AboveEntryBand"
+    if effective_order_price > entry:
         return False, "AboveEntryBand"
     if strategy.get("use_kijun_filter", True) and kijun > 0 and current_price < kijun:
         return False, "BelowKijun"
@@ -1483,9 +1487,9 @@ async def enter_positions(
         current_price = quote["current_price"]
         order_price = buy_order_price(quote)
         raw = signal.get("raw") or {}
-        passed, reason = passes_intraday_entry_filter(signal, quote, strategy)
+        passed, reason = passes_intraday_entry_filter(signal, quote, strategy, order_price=order_price)
         if not passed:
-            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, reason, price=current_price, raw={"quote": quote, "strategy": strategy})
+            await insert_decision_log(user_id, broker_account_id, "SKIP", signal, reason, price=current_price, raw={"quote": quote, "strategy": strategy, "order_price": order_price})
             continue
 
         realtime_result = await check_realtime_entry_risk(client, signal["code"], strategy)

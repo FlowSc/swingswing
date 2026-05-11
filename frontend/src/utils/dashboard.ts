@@ -410,7 +410,7 @@ export function translateReason(reason: unknown) {
     AlreadyHeld: "이미 보유 중인 종목",
     ScoreBelowMinimum: "전략 최소 점수 미달",
     BelowEntryBand: "현재가가 진입 허용 하단보다 낮음",
-    AboveEntryBand: "현재가가 진입 허용 상단보다 높음",
+    AboveEntryBand: "주문가가 진입 허용 상단보다 높음",
     BelowKijun: "현재가가 일목 기준선 아래",
     KijunExit: "일목 기준선 이탈",
     KijunExitedToday: "당일 기준선 이탈 매도 종목 재진입 금지",

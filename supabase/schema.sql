@@ -129,7 +129,7 @@ create table if not exists strategy_settings (
   risk_per_trade_pct numeric not null default 0.01,
   min_order_amount integer not null default 100000,
   min_entry_discount numeric not null default 0.995,
-  max_entry_premium numeric not null default 1.02,
+  max_entry_premium numeric not null default 1.0,
   max_pullback_from_day_high numeric not null default 0.03,
   use_kijun_filter boolean not null default true,
   use_bb_upper_filter boolean not null default true,
@@ -346,6 +346,7 @@ alter table strategy_settings add column if not exists use_vi_filter boolean not
 
 update strategy_settings
 set
+  max_entry_premium = least(max_entry_premium, 1.0),
   use_daily_loss_limit = true,
   use_unrealized_loss_limit = true,
   use_market_crash_filter = true,

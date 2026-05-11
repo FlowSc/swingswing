@@ -391,10 +391,10 @@ export function AutoTradingRules({
           <li>당일 기준선 이탈 매도 종목 재매수 금지 {strategy.use_kijun_reentry_block ? "사용" : "미사용"}</li>
           <li>VI 발동 종목 매수 차단 {strategy.use_vi_filter ? "사용" : "미사용"}</li>
           <li>점수 높은 순서로 확인하되 장중 가격 필터 통과 필요</li>
-          <li>현재가가 진입가 {formatPct(strategy.min_entry_discount - 1)}~+{formatPct(strategy.max_entry_premium - 1)} 범위 안</li>
+          <li>현재가가 진입가 {formatPct(strategy.min_entry_discount - 1)} 이상이고 주문가가 진입가 이하</li>
           <li>일목 기준선 필터 {strategy.use_kijun_filter ? "사용" : "미사용"}, 볼린저 상단 필터 {strategy.use_bb_upper_filter ? "사용" : "미사용"}</li>
           <li>당일 캔들 위치 필터 {strategy.use_day_candle_filter ? `사용: 고점 대비 ${formatPct(strategy.max_pullback_from_day_high)} 이상 밀리면 제외` : "미사용"}</li>
-          <li>매수 주문가는 최우선 매도호가 기준, 호가가 없으면 현재가보다 1틱 위로 주문</li>
+          <li>매수 주문가는 최우선 매도호가 기준이지만 시그널 진입가를 초과하면 주문하지 않음</li>
         </ul>
       </div>
       <div>
