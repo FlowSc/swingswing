@@ -10,6 +10,7 @@ import {
   type BrokerPayload,
   type BrokerStatus,
   type DailyDashboard,
+  type DailyDiagnostics,
   type Entitlements,
   type KisAccount,
   type StrategyPreset,
@@ -20,7 +21,7 @@ import {
   type WatcherRun,
 } from "./api";
 import { AuthCard } from "./components/AuthCard";
-import { BacktestPanel, ReportCalendarPanel, WatchJobPanel } from "./components/AdminPanels";
+import { BacktestPanel, DiagnosticsPanel, ReportCalendarPanel, WatchJobPanel } from "./components/AdminPanels";
 import {
   AccountPanel,
   AutoTradingRules,
@@ -113,6 +114,7 @@ function Dashboard({ session }: { session: Session }) {
   const [watcherRuns, setWatcherRuns] = useState<WatcherRun[]>([]);
   const [watchJobOverview, setWatchJobOverview] = useState<WatchJobOverview | null>(null);
   const [dailyDashboard, setDailyDashboard] = useState<DailyDashboard | null>(null);
+  const [dailyDiagnostics, setDailyDiagnostics] = useState<DailyDiagnostics | null>(null);
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
   const [aiReports, setAiReports] = useState<AiReportStatus[]>([]);
   const [reportDates, setReportDates] = useState<string[]>([]);
@@ -200,6 +202,41 @@ function Dashboard({ session }: { session: Session }) {
       setStatus({ type: "info", message: "대시보드 새로고침 완료" });
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function refreshDiagnosticsOnly(date = selectedSignalDate) {
+    if (!date) return;
+    setPending("diagnosticsRefresh");
+    try {
+      const result = await api.dailyDiagnostics(session, date).catch(() => null);
+      setDailyDiagnostics(result);
+      setStatus({ type: "info", message: "스캔 진단 새로고침 완료" });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? cleanErrorMessage(error.message) : String(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function changeDiagnosticsDate(date: string) {
+    setSelectedSignalDate(date);
+    if (!date) return;
+    setPending("diagnosticsRefresh");
+    try {
+      const [signalResult, decisionResult, diagnosticsResult] = await Promise.all([
+        api.signalsByDate(session, date).catch(() => []),
+        api.tradeDecisions(session, date).catch(() => []),
+        api.dailyDiagnostics(session, date).catch(() => null),
+      ]);
+      setSignals(signalResult);
+      setDecisions(decisionResult);
+      setDailyDiagnostics(diagnosticsResult);
+      setStatus({ type: "info", message: `스캔 진단 조회 완료: ${date}` });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? cleanErrorMessage(error.message) : String(error) });
     } finally {
       setPending(null);
     }
@@ -708,6 +745,9 @@ function Dashboard({ session }: { session: Session }) {
       const reportStatusResult = nextReportDate && entitlementResult.can_use_reports
         ? await api.getAiReportStatuses(session, nextReportDate).catch(() => [])
         : [];
+      const diagnosticsResult = nextSignalDate && entitlementResult.can_run_admin_scan
+        ? await api.dailyDiagnostics(session, nextSignalDate).catch(() => null)
+        : null;
       setBrokerStatus(brokerResult);
       setBrokerAccounts(accountResult);
       setStrategy(strategyResult);
@@ -737,6 +777,7 @@ function Dashboard({ session }: { session: Session }) {
       setWatchJobOverview(watchJobResult);
       setDecisions(decisionResult);
       setBacktestRuns(backtestRunResult);
+      setDailyDiagnostics(diagnosticsResult);
     } catch {
       // First-time users may not have credentials yet. Keep the form usable.
     }
@@ -1136,6 +1177,16 @@ function Dashboard({ session }: { session: Session }) {
           )}
           <StatusLine status={status} />
           <div className="grid two">
+            {isScanAdmin && (
+              <DiagnosticsPanel
+                diagnostics={dailyDiagnostics}
+                selectedDate={selectedSignalDate}
+                dates={signalDates}
+                pending={pending === "diagnosticsRefresh"}
+                onDateChange={changeDiagnosticsDate}
+                onRefresh={() => refreshDiagnosticsOnly()}
+              />
+            )}
             {canUseReports && (
               <ReportCalendarPanel
                 selectedDate={selectedReportDate}

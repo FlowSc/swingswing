@@ -58,6 +58,78 @@ def attach_signal_blocks(rows: list[dict], blocks: dict[str, dict]) -> list[dict
     return enriched
 
 
+def _score_bucket(score: float | None) -> str:
+    value = float(score or 0)
+    if value >= 18:
+        return "18+"
+    if value >= 15:
+        return "15-17.99"
+    if value >= 12:
+        return "12-14.99"
+    return "<12"
+
+
+def _avg(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 2) if values else None
+
+
+def summarize_forward_buckets(rows: list[dict]) -> list[dict]:
+    buckets: dict[str, list[dict]] = {}
+    for row in rows:
+        buckets.setdefault(str(row.get("score_bucket") or "<12"), []).append(row)
+    result: list[dict] = []
+    for bucket in ["18+", "15-17.99", "12-14.99", "<12"]:
+        items = buckets.get(bucket) or []
+        if not items:
+            continue
+        summary = {"bucket": bucket, "count": len(items)}
+        for horizon in (3, 5, 7):
+            returns = [float(item[f"return_{horizon}d_pct"]) for item in items if item.get(f"return_{horizon}d_pct") is not None]
+            runups = [float(item[f"max_runup_{horizon}d_pct"]) for item in items if item.get(f"max_runup_{horizon}d_pct") is not None]
+            drawdowns = [float(item[f"max_drawdown_{horizon}d_pct"]) for item in items if item.get(f"max_drawdown_{horizon}d_pct") is not None]
+            summary[f"avg_return_{horizon}d_pct"] = _avg(returns)
+            summary[f"win_rate_{horizon}d_pct"] = round(len([value for value in returns if value > 0]) / len(returns) * 100, 2) if returns else None
+            summary[f"avg_runup_{horizon}d_pct"] = _avg(runups)
+            summary[f"avg_drawdown_{horizon}d_pct"] = _avg(drawdowns)
+        result.append(summary)
+    return result
+
+
+def reject_count_rows(scan: dict | None) -> list[dict]:
+    result = scan.get("result") if isinstance(scan, dict) else {}
+    counts = result.get("reject_counts") if isinstance(result, dict) else {}
+    if not isinstance(counts, dict):
+        return []
+    return [
+        {"reason_code": reason, "reason": translate_scan_reject_reason(reason), "count": count}
+        for reason, count in sorted(counts.items(), key=lambda item: int(item[1] or 0), reverse=True)
+    ]
+
+
+def translate_scan_reject_reason(reason: str) -> str:
+    labels = {
+        "data_short": "데이터 260거래일 미만",
+        "excluded_name": "스팩/리츠/우선주성 이름 제외",
+        "indicator_na": "지표 계산값 부족",
+        "stale_market_data": "최신 캔들 날짜 불일치",
+        "invalid_indicator": "주요 지표 비정상",
+        "invalid_ohlc": "시가/고가/저가/종가 비정상",
+        "invalid_volume_or_value": "거래량/거래대금 비정상",
+        "price_too_low": "1,000원 미만",
+        "trading_value_too_low": "20일 평균 거래대금 부족",
+        "intraday_drop": "당일 -5% 이하 급락",
+        "pullback_from_day_high": "당일 고점 대비 과도한 밀림",
+        "ichimoku_filter": "일목 전환선/기준선 조건 미통과",
+        "bb_expansion_filter": "볼린저 밴드폭 확장 부족",
+        "rsi_filter": "RSI 조건 미통과",
+        "volume_20d_too_low": "20일 평균 거래량 부족",
+        "volume_ratio_too_low": "오늘 거래량이 5일 평균보다 낮음",
+        "stop_pct_too_wide": "손절폭 10% 초과",
+        "data_error": "데이터 조회/처리 오류",
+    }
+    return labels.get(reason, reason)
+
+
 @router.get("/signals/today")
 async def today_signals(user: CurrentUser = Depends(get_current_user)) -> list[dict]:
     today = datetime.now(ZoneInfo(get_settings().timezone)).date().isoformat()
@@ -283,6 +355,66 @@ async def daily_dashboard(user: CurrentUser = Depends(get_current_user)) -> dict
         "skip_count": len([row for row in decisions if row.get("decision") == "SKIP"]),
         "latest_scan": scans[0] if scans else None,
         "top_skip_reasons": summarize_reasons(decisions),
+    }
+
+
+@router.get("/diagnostics/daily")
+async def daily_diagnostics(
+    trade_date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    await require_admin_access(user.id, user.email)
+    rest = SupabaseRest()
+    scans = await rest.select(
+        "scan_runs",
+        filters={"trade_date": f"eq.{trade_date}"},
+        order="created_at.desc",
+        limit=1,
+    )
+    scan = scans[0] if scans else None
+    signals = await rest.select(
+        "shared_signals",
+        filters={"trade_date": f"eq.{trade_date}"},
+        order="score.desc",
+        limit=300,
+    )
+    try:
+        forward_rows = await rest.select(
+            "signal_forward_returns",
+            filters={"trade_date": f"eq.{trade_date}"},
+            order="code.asc",
+            limit=300,
+        )
+    except RuntimeError:
+        logger.warning("Daily diagnostics forward returns unavailable; table may not be migrated.", exc_info=True)
+        forward_rows = []
+    signal_by_code = {str(row.get("code") or "").zfill(6): row for row in signals}
+    enriched_forward: list[dict] = []
+    for row in forward_rows:
+        code = str(row.get("code") or "").zfill(6)
+        signal = signal_by_code.get(code) or {}
+        score = signal.get("score")
+        raw = signal.get("raw") if isinstance(signal.get("raw"), dict) else {}
+        enriched_forward.append(
+            {
+                **row,
+                "code": code,
+                "score": score,
+                "score_bucket": _score_bucket(float(score or 0)),
+                "stop_pct": raw.get("StopPct"),
+                "rsi": raw.get("RSI14"),
+                "volume_spike_ratio": raw.get("VolumeSpikeRatio"),
+                "bb_expansion": raw.get("BBExpansion(%)"),
+            }
+        )
+    return {
+        "trade_date": trade_date,
+        "scan": scan,
+        "signals_count": len(signals),
+        "forward_count": len(enriched_forward),
+        "reject_counts": reject_count_rows(scan),
+        "score_buckets": summarize_forward_buckets(enriched_forward),
+        "forward_returns": enriched_forward,
     }
 
 

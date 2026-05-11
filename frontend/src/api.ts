@@ -268,6 +268,20 @@ export type DailyDashboard = {
   }>;
 };
 
+export type DailyDiagnostics = {
+  trade_date: string;
+  signals_count: number;
+  forward_count: number;
+  scan?: ScanRun | null;
+  reject_counts: Array<{
+    reason_code: string;
+    reason: string;
+    count: number;
+  }>;
+  score_buckets: Array<Record<string, unknown>>;
+  forward_returns: Array<Record<string, unknown>>;
+};
+
 export type BacktestTrade = {
   trade_date: string;
   entry_date: string;
@@ -461,6 +475,8 @@ export const api = {
   },
   watcherRuns: (session: Session) => request<WatcherRun[]>("/watcher-runs", session),
   dailyDashboard: (session: Session) => request<DailyDashboard>("/dashboard/daily", session),
+  dailyDiagnostics: (session: Session, tradeDate: string) =>
+    request<DailyDiagnostics>(`/diagnostics/daily?trade_date=${encodeURIComponent(tradeDate)}`, session),
   backtestSharedSignals: (session: Session, days = 120, maxSignals = 200) =>
     request<BacktestResult>(`/backtest/shared-signals?days=${days}&max_signals=${maxSignals}`, session),
   startHistoricalBacktest: (session: Session, days = 120, maxSignals = 200) =>

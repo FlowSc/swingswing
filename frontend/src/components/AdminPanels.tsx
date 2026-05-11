@@ -1,6 +1,101 @@
-import type { AiReportStatus, BacktestJob, BacktestResult, WatchJobOverview } from "../api";
+import type { AiReportStatus, BacktestJob, BacktestResult, DailyDiagnostics, WatchJobOverview } from "../api";
 import { formatCell, normalizeAiReportStatusRow, translateBacktestStatus, translateReason } from "../utils/dashboard";
 import { MiniTable } from "./DashboardParts";
+
+export function DiagnosticsPanel({
+  diagnostics,
+  selectedDate,
+  dates,
+  pending,
+  onDateChange,
+  onRefresh,
+}: {
+  diagnostics: DailyDiagnostics | null;
+  selectedDate: string;
+  dates: string[];
+  pending: boolean;
+  onDateChange: (date: string) => void;
+  onRefresh: () => void;
+}) {
+  const recentDates = dates.slice(0, 12);
+  const bucketRows = (diagnostics?.score_buckets || []).map((row) => ({
+    bucket: row.bucket,
+    count: row.count,
+    ret3: formatPctValue(row.avg_return_3d_pct),
+    win3: formatPctValue(row.win_rate_3d_pct),
+    ret5: formatPctValue(row.avg_return_5d_pct),
+    win5: formatPctValue(row.win_rate_5d_pct),
+    ret7: formatPctValue(row.avg_return_7d_pct),
+    win7: formatPctValue(row.win_rate_7d_pct),
+    dd7: formatPctValue(row.avg_drawdown_7d_pct),
+  }));
+  const forwardRows = (diagnostics?.forward_returns || []).slice(0, 30).map((row) => ({
+    code: row.code,
+    name: row.name,
+    score: row.score,
+    bucket: row.score_bucket,
+    entry: row.entry,
+    r3: formatPctValue(row.return_3d_pct),
+    ru3: formatPctValue(row.max_runup_3d_pct),
+    dd3: formatPctValue(row.max_drawdown_3d_pct),
+    r5: formatPctValue(row.return_5d_pct),
+    r7: formatPctValue(row.return_7d_pct),
+  }));
+
+  return (
+    <section className="panel data-panel diagnostics-panel">
+      <div className="data-panel-head">
+        <div>
+          <h2>스캔 진단</h2>
+          <p className="panel-subtitle">일별 후보 탈락 사유와 3/5/7거래일 사후성과를 확인합니다.</p>
+        </div>
+        <button className="ghost small" type="button" disabled={pending || !selectedDate} onClick={onRefresh}>
+          {pending ? "갱신 중" : "새로고침"}
+        </button>
+      </div>
+      <div className="report-calendar-controls">
+        <input type="date" value={selectedDate} onChange={(event) => onDateChange(event.target.value)} />
+        <div className="report-date-list">
+          {recentDates.map((date) => (
+            <button className={date === selectedDate ? "active" : ""} type="button" key={date} onClick={() => onDateChange(date)}>
+              {date}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="metric-grid compact">
+        <div className="metric-card"><span>시그널</span><strong>{diagnostics?.signals_count || 0}</strong></div>
+        <div className="metric-card"><span>성과 갱신</span><strong>{diagnostics?.forward_count || 0}</strong></div>
+        <div className="metric-card"><span>스캔 상태</span><strong>{diagnostics?.scan?.status || "-"}</strong></div>
+        <div className="metric-card"><span>저장 후보</span><strong>{diagnostics?.scan?.signals_count || 0}</strong></div>
+      </div>
+      <section>
+        <h3>탈락 사유 TOP</h3>
+        <MiniTable
+          rows={(diagnostics?.reject_counts || []).slice(0, 12)}
+          columns={["reason", "reason_code", "count"]}
+          emptyLabel="탈락 사유 로그 없음"
+        />
+      </section>
+      <section>
+        <h3>점수 구간별 사후성과</h3>
+        <MiniTable
+          rows={bucketRows}
+          columns={["bucket", "count", "ret3", "win3", "ret5", "win5", "ret7", "win7", "dd7"]}
+          emptyLabel="사후성과 데이터 없음"
+        />
+      </section>
+      <section>
+        <h3>후보별 사후성과</h3>
+        <MiniTable
+          rows={forwardRows}
+          columns={["code", "name", "score", "bucket", "entry", "r3", "ru3", "dd3", "r5", "r7"]}
+          emptyLabel="후보별 사후성과 없음"
+        />
+      </section>
+    </section>
+  );
+}
 
 export function BacktestPanel({
   result,
@@ -335,4 +430,12 @@ function formatAge(seconds?: number | null) {
   if (seconds < 60) return `${seconds}초`;
   if (seconds < 3600) return `${Math.round(seconds / 60)}분`;
   return `${Math.round(seconds / 3600)}시간`;
+}
+
+function formatPctValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "-";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return formatCell(value);
+  const sign = numeric > 0 ? "+" : "";
+  return `${sign}${numeric.toFixed(2)}%`;
 }
