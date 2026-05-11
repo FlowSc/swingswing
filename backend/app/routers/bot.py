@@ -15,7 +15,7 @@ from app.services.ai_report import (
     queue_ai_report,
 )
 from app.services.memberships import require_admin_access, require_live_trading_access, require_report_access
-from app.services.scanner import finalize_chunked_scan, get_scan_market_status, prepare_chunked_scan_state, process_scan_chunk
+from app.services.scanner import finalize_chunked_scan, get_scan_market_status, prepare_chunked_scan_state, process_scan_chunk, update_signal_forward_returns
 from app.services.strategy_settings import get_strategy_settings, save_strategy_settings
 from app.services.supabase_rest import SupabaseRest
 from app.services.telegram import send_telegram_message
@@ -174,6 +174,13 @@ async def scan_step(scan_run_id: int, user: CurrentUser = Depends(get_current_us
 async def latest_scan_run(user: CurrentUser = Depends(get_current_user)) -> dict | None:
     rows = await SupabaseRest().select("scan_runs", order="created_at.desc", limit=1)
     return rows[0] if rows else None
+
+
+@router.post("/signals/forward-returns/update")
+async def update_forward_returns(user: CurrentUser = Depends(get_current_user)) -> dict:
+    await require_admin_access(user.id, user.email)
+    updated = await update_signal_forward_returns()
+    return {"updated": updated, "message": "Signal forward returns updated."}
 
 
 @router.post("/telegram/shared-notice")

@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from app.core.config import get_settings
 from app.services.broker_credentials import list_enabled_broker_credentials
 from app.services.ai_report import process_queued_ai_reports
-from app.services.scanner import get_scan_market_status, scan_and_store_for_user
+from app.services.scanner import get_scan_market_status, scan_and_store_for_user, update_signal_forward_returns
 from app.services.supabase_rest import SupabaseRest
 from app.services.telegram import send_telegram_message_with_bot
 from app.services.watch_jobs import enqueue_watch_jobs, is_retryable_error, process_watch_jobs
@@ -29,6 +29,11 @@ async def daily_scan_job() -> None:
     if not admin:
         return
     await scan_and_store_for_user(admin["id"])
+
+
+async def signal_forward_returns_job() -> None:
+    updated = await update_signal_forward_returns()
+    logger.warning("Signal forward returns updated: %s", updated)
 
 
 async def intraday_watch_job() -> None:
@@ -124,6 +129,7 @@ def start_scheduler() -> None:
     timezone = ZoneInfo(settings.timezone)
     scheduler = AsyncIOScheduler(timezone=timezone)
     scheduler.add_job(daily_scan_job, "cron", day_of_week="mon-fri", hour=13, minute=30)
+    scheduler.add_job(signal_forward_returns_job, "cron", day_of_week="mon-fri", hour=16, minute=5, max_instances=1, coalesce=True)
     scheduler.add_job(intraday_watch_job, "cron", day_of_week="mon-fri", hour="9-15", minute="*/5", max_instances=1, coalesce=True)
     scheduler.add_job(
         realtime_position_watch_job,
