@@ -10,6 +10,7 @@ import FinanceDataReader as fdr
 from app.core.config import get_settings
 from app.services.kis import (
     client_from_credentials,
+    extract_cash,
     extract_orderable_cash,
     extract_psbl_order_cash,
     extract_total_equity,
@@ -83,6 +84,7 @@ REASON_LABELS = {
     "SizingBelowMinOrder": "계산된 주문금액이 최소 주문금액보다 작음",
     "SizingInvalidPrice": "진입가 또는 손절가가 비정상",
     "OrderableCashExceeded": "주문가능금액 초과",
+    "NoBuySlots": "신규 매수 슬롯 없음",
     "StrategySellCooldown": "매수 직후 전략 매도 쿨다운",
     "DailyLossLimit": "하루 손실 한도 도달",
     "UnrealizedLossLimit": "미실현손실 한도 도달",
@@ -238,6 +240,25 @@ def decision_reason_detail(reason: str, signal: dict, *, price: int | None = Non
         return f"KIS 현재가 값이 {current_price:,}원으로 비정상이라 제외했습니다."
     if reason == "VolatilityInterruption":
         return "KIS 현재가 응답에서 VI 발동 상태로 확인되어 신규 매수를 막았습니다."
+    if reason == "DailyLossLimit":
+        realized_loss = int(float(raw.get("daily_realized_loss") or raw.get("realized_loss") or 0))
+        limit_amount = int(float(raw.get("daily_loss_limit_amount") or raw.get("limit_amount") or 0))
+        return f"오늘 실현손실 {realized_loss:,}원이 하루 손실 한도 {limit_amount:,}원에 도달해 신규 매수를 중단했습니다."
+    if reason == "UnrealizedLossLimit":
+        unrealized_loss = int(float(raw.get("unrealized_loss") or 0))
+        limit_amount = int(float(raw.get("unrealized_loss_limit_amount") or raw.get("limit_amount") or 0))
+        return f"보유 종목 미실현손실 {unrealized_loss:,}원이 한도 {limit_amount:,}원에 도달해 신규 매수를 중단했습니다."
+    if reason == "MarketCrashFilter":
+        market_return = raw.get("market_intraday_return_pct") or raw.get("market_return_pct")
+        limit_pct = raw.get("market_crash_limit_pct")
+        if market_return is not None and limit_pct is not None:
+            return f"코스피 당일 수익률 {float(market_return) * 100:.2f}%가 신규 매수 차단 기준 {float(limit_pct) * 100:.2f}% 이하라 제외했습니다."
+        return "시장 급락 신규 매수 차단 조건이 켜져 있어 신규 매수를 중단했습니다."
+    if reason == "NoBuySlots":
+        return (
+            "하루 신규 매수 한도, 최대 보유 종목 수, 주문가능금액 기준으로 남은 신규 매수 슬롯이 없어 "
+            "오늘 후보를 추가 매수하지 않았습니다."
+        )
     return reason_label(reason)
 
 
@@ -618,6 +639,26 @@ async def insert_decision_log(
         )
     except RuntimeError as exc:
         logger.warning("Failed to insert trade decision log: code=%s reason=%s error=%s", signal.get("code"), reason, exc)
+
+
+async def insert_global_skip_logs(
+    user_id: str,
+    broker_account_id: str | None,
+    signals: list[dict],
+    reason: str,
+    *,
+    raw: dict | None = None,
+    limit: int = 30,
+) -> None:
+    for signal in signals[:limit]:
+        await insert_decision_log(
+            user_id,
+            broker_account_id,
+            "SKIP",
+            signal,
+            reason,
+            raw=raw,
+        )
 
 
 async def open_positions(user_id: str, broker_account_id: str | None) -> list[dict]:
@@ -1351,20 +1392,42 @@ async def enter_positions(
         logger.warning("Watcher enter skipped: no shared signals user_id=%s account_id=%s", user_id, broker_account_id)
         return []
 
+    cash = extract_cash(balance)
     orderable_cash = int((diagnostics or {}).get("orderable_cash") or await fetch_orderable_cash(client, balance))
     total_equity = extract_total_equity(balance)
     strategy = await get_strategy_settings(user_id)
     if await daily_loss_limit_reached(user_id, broker_account_id, total_equity, strategy, diagnostics):
+        await insert_global_skip_logs(
+            user_id,
+            broker_account_id,
+            signals,
+            "DailyLossLimit",
+            raw={"strategy": strategy, **(diagnostics or {})},
+        )
         if diagnostics is not None:
             diagnostics["skip_reason"] = "daily_loss_limit"
         logger.warning("Watcher enter skipped: daily loss limit reached user_id=%s account_id=%s", user_id, broker_account_id)
         return []
     if await unrealized_loss_limit_reached(balance, total_equity, strategy, diagnostics):
+        await insert_global_skip_logs(
+            user_id,
+            broker_account_id,
+            signals,
+            "UnrealizedLossLimit",
+            raw={"strategy": strategy, **(diagnostics or {})},
+        )
         if diagnostics is not None:
             diagnostics["skip_reason"] = "unrealized_loss_limit"
         logger.warning("Watcher enter skipped: unrealized loss limit reached user_id=%s account_id=%s", user_id, broker_account_id)
         return []
     if await market_crash_filter_triggered(strategy, diagnostics):
+        await insert_global_skip_logs(
+            user_id,
+            broker_account_id,
+            signals,
+            "MarketCrashFilter",
+            raw={"strategy": strategy, **(diagnostics or {})},
+        )
         if diagnostics is not None:
             diagnostics["skip_reason"] = "market_crash_filter"
         logger.warning("Watcher enter skipped: market crash filter triggered user_id=%s account_id=%s", user_id, broker_account_id)
@@ -1389,7 +1452,7 @@ async def enter_positions(
     if diagnostics is not None:
         diagnostics.update(
             {
-                "cash": orderable_cash,
+                "cash": cash,
                 "orderable_cash": orderable_cash,
                 "total_equity": total_equity,
                 "open_positions_count": len(open_codes),
@@ -1440,6 +1503,25 @@ async def enter_positions(
         strategy["risk_per_trade_pct"],
     )
     if daily_slots <= 0:
+        await insert_global_skip_logs(
+            user_id,
+            broker_account_id,
+            signals,
+            "NoBuySlots",
+            raw={
+                "strategy": strategy,
+                "orderable_cash": orderable_cash,
+                "open_positions_count": len(open_codes),
+                "kis_holdings_count": len(kis_codes),
+                "pending_orders_count": len(pending_codes),
+                "today_entry_count": len(today_codes),
+                "today_pending_buy_count": len(pending_buy_codes),
+                "remaining_daily_slots": remaining_daily_slots,
+                "available_slots": available_slots,
+                "affordable_slots": affordable_slots,
+                "daily_slots": daily_slots,
+            },
+        )
         if diagnostics is not None:
             diagnostics["skip_reason"] = "no_buy_slots"
         logger.warning("Watcher enter skipped: no buy slots user_id=%s account_id=%s", user_id, broker_account_id)
@@ -1649,8 +1731,9 @@ async def run_watch_tick_for_user(credentials: dict, *, test_mode: bool = False,
     try:
         diagnostics["stage"] = "initial_balance"
         balance = await client.get_balance()
+        cash = extract_cash(balance)
         orderable_cash = await fetch_orderable_cash(client, balance)
-        diagnostics["cash"] = orderable_cash
+        diagnostics["cash"] = cash
         diagnostics["orderable_cash"] = orderable_cash
         diagnostics["total_equity"] = extract_total_equity(balance)
         diagnostics["kis_holdings_count"] = len(kis_holding_codes(balance))
@@ -1670,8 +1753,9 @@ async def run_watch_tick_for_user(credentials: dict, *, test_mode: bool = False,
 
         diagnostics["stage"] = "post_manage_balance"
         balance = await client.get_balance()
+        cash = extract_cash(balance)
         orderable_cash = await fetch_orderable_cash(client, balance)
-        diagnostics["cash"] = orderable_cash
+        diagnostics["cash"] = cash
         diagnostics["orderable_cash"] = orderable_cash
         diagnostics["total_equity"] = extract_total_equity(balance)
         diagnostics["kis_holdings_count"] = len(kis_holding_codes(balance))

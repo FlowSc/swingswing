@@ -577,10 +577,12 @@ def extract_orderable_cash(balance: dict[str, Any]) -> int:
 def extract_psbl_order_cash(payload: dict[str, Any]) -> int:
     output = payload.get("output") or {}
     raw_value = (
-        output.get("ord_psbl_cash")
-        or output.get("ORD_PSBL_CASH")
+        output.get("max_buy_amt")
+        or output.get("MAX_BUY_AMT")
         or output.get("nrcvb_buy_amt")
         or output.get("NRCVB_BUY_AMT")
+        or output.get("ord_psbl_cash")
+        or output.get("ORD_PSBL_CASH")
         or "0"
     )
     try:
