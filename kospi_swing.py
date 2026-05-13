@@ -50,11 +50,15 @@ SAVE_JSON = True
 HOLD_MIN_DAYS = 3
 HOLD_PREFERRED_DAYS = 7
 HOLD_MAX_DAYS = 15
-EXCLUDED_NAME_KEYWORDS = ("스팩", "리츠", "우")
+EXCLUDED_NAME_KEYWORDS = ("스팩", "리츠")
+PREFERRED_SHARE_SUFFIXES = ("우", "우B", "우C")
 
 
 def is_excluded_name(name: str) -> bool:
-    return any(keyword in name for keyword in EXCLUDED_NAME_KEYWORDS)
+    normalized = str(name or "").strip()
+    if any(keyword in normalized for keyword in EXCLUDED_NAME_KEYWORDS):
+        return True
+    return normalized.endswith(PREFERRED_SHARE_SUFFIXES)
 
 
 def calc_rsi(close: pd.Series, period: int = 14) -> pd.Series:
@@ -483,7 +487,7 @@ def main() -> None:
                     {"Item": "Volume rule", "Detail": f"Today's volume at least {MIN_VOLUME_SPIKE_RATIO:.1f}x previous 5-day average gets score; {STRONG_VOLUME_SPIKE_RATIO:.1f}x gets extra score"},
                     {"Item": "Volume hard rule", "Detail": f"Today's volume must be at least {MIN_VOLUME_RATIO_HARD:.1f}x previous 5-day average"},
                     {"Item": "Liquidity rule", "Detail": f"Exclude stocks below {MIN_PRICE:,} KRW or 20-day average trading value below {MIN_TRADING_VALUE_20D:,} KRW"},
-                    {"Item": "Name exclusion rule", "Detail": f"Exclude names containing {', '.join(EXCLUDED_NAME_KEYWORDS)}"},
+                    {"Item": "Name exclusion rule", "Detail": "Exclude names containing 스팩/리츠 and preferred-share suffixes 우/우B/우C"},
                     {"Item": "Market rule", "Detail": "KOSPI index close must be above its 5-day moving average"},
                     {"Item": "Universe rule", "Detail": f"KOSPI top {KOSPI_MARKET_CAP_LIMIT} by market cap plus KOSDAQ150 when FinanceDataReader supports it"},
                 ]

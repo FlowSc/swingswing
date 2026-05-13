@@ -55,7 +55,8 @@ HOLD_PREFERRED_DAYS = 7
 HOLD_MAX_DAYS = 15
 FORWARD_RETURN_HORIZONS = (3, 5, 7, 15)
 FORWARD_RETURN_UPDATE_LIMIT = 300
-EXCLUDED_NAME_KEYWORDS = ("스팩", "리츠", "우")
+EXCLUDED_NAME_KEYWORDS = ("스팩", "리츠")
+PREFERRED_SHARE_SUFFIXES = ("우", "우B", "우C")
 
 
 def get_scan_market_status(today: date | None = None) -> dict:
@@ -108,7 +109,10 @@ def get_scan_market_status(today: date | None = None) -> dict:
 
 
 def is_excluded_name(name: str) -> bool:
-    return any(keyword in name for keyword in EXCLUDED_NAME_KEYWORDS)
+    normalized = str(name or "").strip()
+    if any(keyword in normalized for keyword in EXCLUDED_NAME_KEYWORDS):
+        return True
+    return normalized.endswith(PREFERRED_SHARE_SUFFIXES)
 
 
 def record_reject(reject_counts: dict[str, int] | None, reason: str) -> None:
