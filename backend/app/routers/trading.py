@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date, datetime
 import logging
 from zoneinfo import ZoneInfo
@@ -11,6 +12,7 @@ from app.core.config import get_settings
 from app.services.broker_credentials import get_broker_credentials
 from app.services.backtest import finalize_backtest_state, prepare_backtest_state, process_backtest_chunk, run_shared_signal_backtest
 from app.services.memberships import require_admin_access
+from app.services.scanner import analyze_top_market_cap_stocks
 from app.services.supabase_rest import SupabaseRest
 from app.services.watcher import sort_signals_for_autotrading
 
@@ -128,6 +130,20 @@ def translate_scan_reject_reason(reason: str) -> str:
         "data_error": "데이터 조회/처리 오류",
     }
     return labels.get(reason, reason)
+
+
+def translate_top_market_cap_analysis(rows: list[dict]) -> list[dict]:
+    result: list[dict] = []
+    for row in rows:
+        reason_code = row.get("reject_reason_code")
+        result.append(
+            {
+                **row,
+                "status": "통과" if row.get("passed") else "탈락",
+                "reject_reason": translate_scan_reject_reason(str(reason_code)) if reason_code else "-",
+            }
+        )
+    return result
 
 
 @router.get("/signals/today")
@@ -413,6 +429,9 @@ async def daily_diagnostics(
         "signals_count": len(signals),
         "forward_count": len(enriched_forward),
         "reject_counts": reject_count_rows(scan),
+        "top_market_cap_analysis": translate_top_market_cap_analysis(
+            await asyncio.to_thread(analyze_top_market_cap_stocks, datetime.fromisoformat(trade_date).date(), 10)
+        ),
         "score_buckets": summarize_forward_buckets(enriched_forward),
         "forward_returns": enriched_forward,
     }

@@ -278,6 +278,7 @@ export type DailyDiagnostics = {
     reason: string;
     count: number;
   }>;
+  top_market_cap_analysis: Array<Record<string, unknown>>;
   score_buckets: Array<Record<string, unknown>>;
   forward_returns: Array<Record<string, unknown>>;
 };

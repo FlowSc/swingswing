@@ -480,6 +480,131 @@ def market_return_20d(base_date: date) -> float:
     return float(close.iloc[-1] / close.iloc[-21] - 1) * 100
 
 
+def top_market_cap_universe(limit: int = 10) -> list[dict]:
+    listing = fdr.StockListing("KOSPI")
+    if listing is None or listing.empty:
+        return []
+    frame = listing.copy()
+    if "Code" not in frame.columns and "Symbol" in frame.columns:
+        frame["Code"] = frame["Symbol"]
+    if "Name" not in frame.columns:
+        frame["Name"] = frame["Code"]
+    if "Marcap" not in frame.columns:
+        frame["Marcap"] = 0
+    frame["Code"] = frame["Code"].astype(str).str.zfill(6)
+    frame = frame.sort_values("Marcap", ascending=False).head(limit)
+    return [
+        {
+            "rank": index + 1,
+            "code": str(row.get("Code") or "").zfill(6),
+            "name": row.get("Name"),
+            "market_cap": int(float(row.get("Marcap") or 0)),
+        }
+        for index, (_, row) in enumerate(frame.iterrows())
+    ]
+
+
+def _indicator_snapshot(frame: pd.DataFrame, market_ret_20d: float) -> dict:
+    prepared = prepare_frame(frame).dropna()
+    if prepared.empty:
+        return {}
+    last = prepared.iloc[-1]
+    prev = prepared.iloc[-2] if len(prepared) >= 2 else last
+    close = float(last["Close"])
+    open_ = float(last["Open"])
+    high = float(last["High"])
+    vol_prev5 = float(last["VolPrev5"])
+    trading_value = float(last["TradingValue"])
+    trading_value20 = float(last["TradingValue20"])
+    tenkan = float(last["Tenkan"])
+    kijun = float(last["Kijun"])
+    ret_20d = float(last["Ret_20D"])
+    return {
+        "latest_date": pd.Timestamp(prepared.index[-1]).date().isoformat(),
+        "close": round(close, 2),
+        "score": None,
+        "rsi": round(float(last["RSI14"]), 2),
+        "ret_5d_pct": round(float(last["Ret_5D"]), 2),
+        "ret_20d_pct": round(ret_20d, 2),
+        "market_ret_20d_pct": round(market_ret_20d, 2),
+        "relative_strength_20d_pct": round(ret_20d - market_ret_20d, 2),
+        "tenkan": round(tenkan, 2),
+        "kijun": round(kijun, 2),
+        "tenkan_above_kijun": tenkan > kijun,
+        "distance_to_kijun_pct": round((close - kijun) / kijun * 100, 2) if kijun > 0 else None,
+        "bb_expansion_pct": round(float(last["BBExpansionPct"]), 2),
+        "volume_spike_ratio": round(float(last["Volume"]) / vol_prev5, 2) if vol_prev5 > 0 else None,
+        "trading_value_spike_ratio": round(trading_value / trading_value20, 2) if trading_value20 > 0 else None,
+        "intraday_return_pct": round((close / open_ - 1) * 100, 2) if open_ > 0 else None,
+        "pullback_from_day_high_pct": round((close / high - 1) * 100, 2) if high > 0 else None,
+        "prev_close": round(float(prev["Close"]), 2),
+    }
+
+
+def analyze_top_market_cap_stocks(trade_date: date, limit: int = 10) -> list[dict]:
+    market_ok = kospi_market_filter_ok(trade_date)
+    market_ret = market_return_20d(trade_date)
+    start = (datetime.combine(trade_date, datetime.min.time()) - timedelta(days=420)).strftime("%Y-%m-%d")
+    end = (trade_date + timedelta(days=1)).strftime("%Y-%m-%d")
+    rows: list[dict] = []
+    for item in top_market_cap_universe(limit):
+        code = item["code"]
+        name = str(item.get("name") or code)
+        reject_counts: dict[str, int] = {}
+        try:
+            frame = fdr.DataReader(code, start=start, end=end)
+            result = score_swing_setup(
+                frame,
+                code,
+                name,
+                market_filter_ok=market_ok,
+                universe="KOSPI_TOP10",
+                market_ret_20d=market_ret,
+                core_universe=True,
+                core_universe_type="KOSPI_TOP10",
+                trade_date=trade_date,
+                reject_counts=reject_counts,
+            )
+            snapshot = _indicator_snapshot(frame, market_ret)
+            if result:
+                snapshot.update(
+                    {
+                        "close": result.get("Entry"),
+                        "score": result.get("Score"),
+                        "rsi": result.get("RSI14"),
+                        "ret_5d_pct": result.get("Ret_5D(%)"),
+                        "ret_20d_pct": result.get("Ret_20D(%)"),
+                        "market_ret_20d_pct": result.get("MarketRet_20D(%)"),
+                        "relative_strength_20d_pct": result.get("RelativeStrength_20D(%)"),
+                        "tenkan": result.get("Tenkan"),
+                        "kijun": result.get("Kijun"),
+                        "tenkan_above_kijun": bool(float(result.get("Tenkan") or 0) > float(result.get("Kijun") or 0)),
+                        "distance_to_kijun_pct": result.get("DistanceToKijun(%)"),
+                        "bb_expansion_pct": result.get("BBExpansion(%)"),
+                        "volume_spike_ratio": result.get("VolumeSpikeRatio"),
+                        "trading_value_spike_ratio": result.get("TradingValueSpikeRatio"),
+                        "intraday_return_pct": result.get("IntradayReturn(%)"),
+                        "pullback_from_day_high_pct": result.get("PullbackFromDayHigh(%)"),
+                        "stop_pct": result.get("StopPct"),
+                        "reasons": result.get("Reasons"),
+                    }
+                )
+            reason_code = next(iter(reject_counts), None)
+            rows.append(
+                {
+                    **item,
+                    **snapshot,
+                    "passed": bool(result),
+                    "reject_reason_code": reason_code,
+                    "reject_reason": reason_code,
+                    "market_filter_passed": market_ok,
+                }
+            )
+        except Exception as exc:
+            rows.append({**item, "passed": False, "reject_reason_code": "data_error", "reject_reason": "data_error", "error": str(exc)[:300]})
+    return rows
+
+
 def _company_profile_from_row(row: pd.Series, universe: str) -> dict:
     return company_profile_from_row(row, universe)
 

@@ -45,6 +45,23 @@ export function DiagnosticsPanel({
     "7일 수익": formatPctValue(row.return_7d_pct),
     "15일 수익": formatPctValue(row.return_15d_pct),
   }));
+  const topMarketCapRows = (diagnostics?.top_market_cap_analysis || []).map((row) => ({
+    "순위": row.rank,
+    "종목코드": row.code,
+    "종목명": row.name,
+    "상태": row.status,
+    "탈락 사유": row.reject_reason,
+    "점수": row.score ?? "-",
+    "종가": row.close,
+    "RSI": row.rsi,
+    "20일 수익": formatPctValue(row.ret_20d_pct),
+    "시장대비": formatPctValue(row.relative_strength_20d_pct),
+    "전환>기준": row.tenkan_above_kijun ? "예" : "아니오",
+    "볼린저 확장": formatPctValue(row.bb_expansion_pct),
+    "거래량 배율": formatRatio(row.volume_spike_ratio),
+    "거래대금 배율": formatRatio(row.trading_value_spike_ratio),
+    "당일 등락": formatPctValue(row.intraday_return_pct),
+  }));
 
   return (
     <section className="panel data-panel diagnostics-panel">
@@ -79,6 +96,14 @@ export function DiagnosticsPanel({
           rows={(diagnostics?.reject_counts || []).slice(0, 12)}
           columns={["reason", "reason_code", "count"]}
           emptyLabel="탈락 사유 로그 없음"
+        />
+      </section>
+      <section>
+        <h3>시가총액 상위 10개 진단</h3>
+        <MiniTable
+          rows={topMarketCapRows}
+          columns={["순위", "종목코드", "종목명", "상태", "탈락 사유", "점수", "종가", "RSI", "20일 수익", "시장대비", "전환>기준", "볼린저 확장", "거래량 배율", "거래대금 배율", "당일 등락"]}
+          emptyLabel="상위 10개 진단 없음"
         />
       </section>
       <section>
@@ -442,6 +467,13 @@ function formatPctValue(value: unknown) {
   if (!Number.isFinite(numeric)) return formatCell(value);
   const sign = numeric > 0 ? "+" : "";
   return `${sign}${numeric.toFixed(2)}%`;
+}
+
+function formatRatio(value: unknown) {
+  if (value === null || value === undefined || value === "") return "-";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return formatCell(value);
+  return `${numeric.toFixed(2)}배`;
 }
 
 function formatScoreBucket(value: unknown) {
