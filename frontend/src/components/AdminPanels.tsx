@@ -19,31 +19,31 @@ export function DiagnosticsPanel({
 }) {
   const recentDates = dates.slice(0, 12);
   const bucketRows = (diagnostics?.score_buckets || []).map((row) => ({
-    bucket: row.bucket,
-    count: row.count,
-    ret3: formatPctValue(row.avg_return_3d_pct),
-    win3: formatPctValue(row.win_rate_3d_pct),
-    ret5: formatPctValue(row.avg_return_5d_pct),
-    win5: formatPctValue(row.win_rate_5d_pct),
-    ret7: formatPctValue(row.avg_return_7d_pct),
-    win7: formatPctValue(row.win_rate_7d_pct),
-    dd7: formatPctValue(row.avg_drawdown_7d_pct),
-    ret15: formatPctValue(row.avg_return_15d_pct),
-    win15: formatPctValue(row.win_rate_15d_pct),
-    dd15: formatPctValue(row.avg_drawdown_15d_pct),
+    "점수 구간": formatScoreBucket(row.bucket),
+    "후보 수": row.count,
+    "3일 평균수익": formatPctValue(row.avg_return_3d_pct),
+    "3일 승률": formatPctValue(row.win_rate_3d_pct),
+    "5일 평균수익": formatPctValue(row.avg_return_5d_pct),
+    "5일 승률": formatPctValue(row.win_rate_5d_pct),
+    "7일 평균수익": formatPctValue(row.avg_return_7d_pct),
+    "7일 승률": formatPctValue(row.win_rate_7d_pct),
+    "7일 최대하락": formatPctValue(row.avg_drawdown_7d_pct),
+    "15일 평균수익": formatPctValue(row.avg_return_15d_pct),
+    "15일 승률": formatPctValue(row.win_rate_15d_pct),
+    "15일 최대하락": formatPctValue(row.avg_drawdown_15d_pct),
   }));
   const forwardRows = (diagnostics?.forward_returns || []).slice(0, 30).map((row) => ({
-    code: row.code,
-    name: row.name,
-    score: row.score,
-    bucket: row.score_bucket,
-    entry: row.entry,
-    r3: formatPctValue(row.return_3d_pct),
-    ru3: formatPctValue(row.max_runup_3d_pct),
-    dd3: formatPctValue(row.max_drawdown_3d_pct),
-    r5: formatPctValue(row.return_5d_pct),
-    r7: formatPctValue(row.return_7d_pct),
-    r15: formatPctValue(row.return_15d_pct),
+    "종목코드": row.code,
+    "종목명": row.name,
+    "점수": row.score,
+    "점수 구간": formatScoreBucket(row.score_bucket),
+    "진입가": row.entry,
+    "3일 수익": formatPctValue(row.return_3d_pct),
+    "3일 최고상승": formatPctValue(row.max_runup_3d_pct),
+    "3일 최대하락": formatPctValue(row.max_drawdown_3d_pct),
+    "5일 수익": formatPctValue(row.return_5d_pct),
+    "7일 수익": formatPctValue(row.return_7d_pct),
+    "15일 수익": formatPctValue(row.return_15d_pct),
   }));
 
   return (
@@ -51,7 +51,7 @@ export function DiagnosticsPanel({
       <div className="data-panel-head">
         <div>
           <h2>스캔 진단</h2>
-          <p className="panel-subtitle">일별 후보 탈락 사유와 3/5/7거래일 사후성과를 확인합니다.</p>
+          <p className="panel-subtitle">일별 후보 탈락 사유와 점수대별 이후 수익률, 승률, 하락폭을 확인합니다.</p>
         </div>
         <button className="ghost small" type="button" disabled={pending || !selectedDate} onClick={onRefresh}>
           {pending ? "갱신 중" : "새로고침"}
@@ -85,7 +85,7 @@ export function DiagnosticsPanel({
         <h3>점수 구간별 사후성과</h3>
         <MiniTable
           rows={bucketRows}
-          columns={["bucket", "count", "ret3", "win3", "ret5", "win5", "ret7", "win7", "dd7", "ret15", "win15", "dd15"]}
+          columns={["점수 구간", "후보 수", "3일 평균수익", "3일 승률", "5일 평균수익", "5일 승률", "7일 평균수익", "7일 승률", "7일 최대하락", "15일 평균수익", "15일 승률", "15일 최대하락"]}
           emptyLabel="사후성과 데이터 없음"
         />
       </section>
@@ -93,7 +93,7 @@ export function DiagnosticsPanel({
         <h3>후보별 사후성과</h3>
         <MiniTable
           rows={forwardRows}
-          columns={["code", "name", "score", "bucket", "entry", "r3", "ru3", "dd3", "r5", "r7", "r15"]}
+          columns={["종목코드", "종목명", "점수", "점수 구간", "진입가", "3일 수익", "3일 최고상승", "3일 최대하락", "5일 수익", "7일 수익", "15일 수익"]}
           emptyLabel="후보별 사후성과 없음"
         />
       </section>
@@ -442,4 +442,15 @@ function formatPctValue(value: unknown) {
   if (!Number.isFinite(numeric)) return formatCell(value);
   const sign = numeric > 0 ? "+" : "";
   return `${sign}${numeric.toFixed(2)}%`;
+}
+
+function formatScoreBucket(value: unknown) {
+  const bucket = String(value || "");
+  const labels: Record<string, string> = {
+    "18+": "18점 이상",
+    "15-17.99": "15-18점 미만",
+    "12-14.99": "12-15점 미만",
+    "<12": "12점 미만",
+  };
+  return labels[bucket] || bucket || "-";
 }
