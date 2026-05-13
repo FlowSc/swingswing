@@ -683,6 +683,11 @@ async def finalize_chunked_scan(user_id: str, state: dict, telegram_chat_id: str
 
 
 def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
+    state = scan_kospi_signal_state_sync(today)
+    return sort_top_signals(list(state.get("candidates") or []))
+
+
+def scan_kospi_signal_state_sync(today: date | None = None) -> dict:
     state = prepare_chunked_scan_state_sync(today)
     results: list[dict] = []
     reject_counts: dict[str, int] = {}
@@ -714,7 +719,15 @@ def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
             continue
 
     logger.warning("Signal scan scoring completed: scanned=%s candidates=%s rejects=%s", total, len(results), reject_counts)
-    return sort_top_signals(results)
+    return {
+        **state,
+        "offset": total,
+        "total": total,
+        "candidates": results,
+        "reject_counts": reject_counts,
+        "data_error_count": int(reject_counts.get("data_error") or 0),
+        "done": True,
+    }
 
 
 async def scan_kospi_signals(today: date | None = None) -> list[dict]:
@@ -864,6 +877,7 @@ def format_top_signals_message(signals: list[dict], trade_date: date) -> str:
 
 async def scan_and_store_for_user(user_id: str, telegram_chat_id: str | None = None) -> dict:
     trade_date = datetime.now(ZoneInfo(get_settings().timezone)).date()
+    started_at = datetime.now(ZoneInfo(get_settings().timezone)).isoformat()
     market_status = get_scan_market_status(trade_date)
     if not market_status["is_open"]:
         logger.warning("Signal scan skipped: %s", market_status)
@@ -874,11 +888,12 @@ async def scan_and_store_for_user(user_id: str, telegram_chat_id: str | None = N
             "trade_date": trade_date.isoformat(),
             "market_status": market_status,
         }
-    signals = await scan_kospi_signals(trade_date)
+    state = await asyncio.to_thread(scan_kospi_signal_state_sync, trade_date)
+    signals = sort_top_signals(list(state.get("candidates") or []))
     shared_saved = await save_shared_signals(signals, trade_date)
     telegram_sent = await send_shared_signal_message(format_top_signals_message(signals, trade_date), telegram_chat_id)
     report_queued = await send_daily_signal_report(signals, trade_date)
-    return {
+    final_result = {
         "trade_date": trade_date.isoformat(),
         "signals": len(signals),
         "saved": 0,
@@ -886,3 +901,18 @@ async def scan_and_store_for_user(user_id: str, telegram_chat_id: str | None = N
         "telegram_sent": telegram_sent,
         "ai_report_queued": report_queued,
     }
+    await SupabaseRest().insert(
+        "scan_runs",
+        {
+            "requested_by": user_id,
+            "status": "completed",
+            "trade_date": trade_date.isoformat(),
+            "signals_count": len(signals),
+            "shared_saved": shared_saved,
+            "result": {**state, "candidates": signals, "final": final_result},
+            "universe_scope": state.get("universe_scope"),
+            "started_at": started_at,
+            "finished_at": datetime.now(ZoneInfo(get_settings().timezone)).isoformat(),
+        },
+    )
+    return final_result
