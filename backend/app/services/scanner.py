@@ -811,6 +811,119 @@ async def finalize_chunked_scan(user_id: str, state: dict, telegram_chat_id: str
     }
 
 
+def _now_iso() -> str:
+    return datetime.now(ZoneInfo(get_settings().timezone)).isoformat()
+
+
+async def start_or_resume_chunked_scan(user_id: str, trade_date: date | None = None, universe_scope: str = SCAN_UNIVERSE_ALL) -> dict:
+    target_date = trade_date or datetime.now(ZoneInfo(get_settings().timezone)).date()
+    scope = SCAN_UNIVERSE_ALL if universe_scope == SCAN_UNIVERSE_ALL else SCAN_UNIVERSE_LIMITED
+    market_status = get_scan_market_status(target_date)
+    if not market_status["is_open"]:
+        logger.warning("Signal scan skipped: %s", market_status)
+        return {
+            "skipped": True,
+            "reason": market_status["reason"],
+            "message": market_status["message"],
+            "trade_date": target_date.isoformat(),
+            "market_status": market_status,
+        }
+
+    rest = SupabaseRest()
+    existing = await rest.select(
+        "scan_runs",
+        filters={
+            "trade_date": f"eq.{target_date.isoformat()}",
+            "status": "eq.running",
+            "universe_scope": f"eq.{scope}",
+        },
+        order="created_at.desc",
+        limit=1,
+    )
+    if existing:
+        return existing[0]
+
+    state = await prepare_chunked_scan_state(target_date, scope)
+    rows = await rest.insert(
+        "scan_runs",
+        {
+            "requested_by": user_id,
+            "status": "running",
+            "trade_date": state["trade_date"],
+            "result": state,
+            "universe_scope": state["universe_scope"],
+            "started_at": _now_iso(),
+        },
+    )
+    return rows[0]
+
+
+async def run_chunked_scan_to_completion(
+    user_id: str,
+    scan_run: dict,
+    telegram_chat_id: str | None = None,
+    *,
+    max_chunks: int | None = None,
+) -> dict:
+    rest = SupabaseRest()
+    scan_run_id = scan_run["id"]
+    state = scan_run.get("result") or {}
+    chunks_processed = 0
+
+    while not state.get("done"):
+        if max_chunks is not None and chunks_processed >= max_chunks:
+            return scan_run
+        try:
+            state = await process_scan_chunk(state)
+        except Exception as exc:
+            patched = await rest.patch(
+                "scan_runs",
+                filters={"id": f"eq.{scan_run_id}"},
+                payload={"status": "failed", "error": str(exc), "finished_at": _now_iso(), "result": state},
+            )
+            return patched[0]
+
+        chunks_processed += 1
+        if state["done"]:
+            try:
+                final_result = await finalize_chunked_scan(user_id, state, telegram_chat_id)
+                patched = await rest.patch(
+                    "scan_runs",
+                    filters={"id": f"eq.{scan_run_id}"},
+                    payload={
+                        "status": "completed",
+                        "trade_date": final_result["trade_date"],
+                        "signals_count": final_result["signals"],
+                        "shared_saved": final_result["shared_saved"],
+                        "result": {**state, "final": final_result},
+                        "error": None,
+                        "finished_at": _now_iso(),
+                    },
+                )
+                return patched[0]
+            except Exception as exc:
+                patched = await rest.patch(
+                    "scan_runs",
+                    filters={"id": f"eq.{scan_run_id}"},
+                    payload={"status": "failed", "error": str(exc), "finished_at": _now_iso(), "result": state},
+                )
+                return patched[0]
+
+        patched = await rest.patch(
+            "scan_runs",
+            filters={"id": f"eq.{scan_run_id}"},
+            payload={
+                "status": "running",
+                "signals_count": len(state.get("candidates") or []),
+                "result": state,
+                "error": None,
+            },
+        )
+        scan_run = patched[0]
+
+    return scan_run
+
+
 def scan_kospi_signals_sync(today: date | None = None) -> list[dict]:
     state = scan_kospi_signal_state_sync(today)
     return sort_top_signals(list(state.get("candidates") or []))
@@ -1006,42 +1119,19 @@ def format_top_signals_message(signals: list[dict], trade_date: date) -> str:
 
 async def scan_and_store_for_user(user_id: str, telegram_chat_id: str | None = None) -> dict:
     trade_date = datetime.now(ZoneInfo(get_settings().timezone)).date()
-    started_at = datetime.now(ZoneInfo(get_settings().timezone)).isoformat()
-    market_status = get_scan_market_status(trade_date)
-    if not market_status["is_open"]:
-        logger.warning("Signal scan skipped: %s", market_status)
-        return {
-            "skipped": True,
-            "reason": market_status["reason"],
-            "message": market_status["message"],
-            "trade_date": trade_date.isoformat(),
-            "market_status": market_status,
-        }
-    state = await asyncio.to_thread(scan_kospi_signal_state_sync, trade_date)
-    signals = sort_top_signals(list(state.get("candidates") or []))
-    shared_saved = await save_shared_signals(signals, trade_date)
-    telegram_sent = await send_shared_signal_message(format_top_signals_message(signals, trade_date), telegram_chat_id)
-    report_queued = await send_daily_signal_report(signals, trade_date)
-    final_result = {
+    scan_run = await start_or_resume_chunked_scan(user_id, trade_date, SCAN_UNIVERSE_ALL)
+    if scan_run.get("skipped"):
+        return scan_run
+    completed = await run_chunked_scan_to_completion(user_id, scan_run, telegram_chat_id)
+    result = completed.get("result") if isinstance(completed.get("result"), dict) else {}
+    final = result.get("final") if isinstance(result.get("final"), dict) else None
+    if final:
+        return final
+    return {
         "trade_date": trade_date.isoformat(),
-        "signals": len(signals),
+        "signals": completed.get("signals_count") or 0,
         "saved": 0,
-        "shared_saved": shared_saved,
-        "telegram_sent": telegram_sent,
-        "ai_report_queued": report_queued,
+        "shared_saved": completed.get("shared_saved") or 0,
+        "status": completed.get("status"),
+        "error": completed.get("error"),
     }
-    await SupabaseRest().insert(
-        "scan_runs",
-        {
-            "requested_by": user_id,
-            "status": "completed",
-            "trade_date": trade_date.isoformat(),
-            "signals_count": len(signals),
-            "shared_saved": shared_saved,
-            "result": {**state, "candidates": signals, "final": final_result},
-            "universe_scope": state.get("universe_scope"),
-            "started_at": started_at,
-            "finished_at": datetime.now(ZoneInfo(get_settings().timezone)).isoformat(),
-        },
-    )
-    return final_result

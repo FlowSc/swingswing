@@ -15,7 +15,7 @@ from app.services.ai_report import (
     queue_ai_report,
 )
 from app.services.memberships import require_admin_access, require_live_trading_access, require_report_access
-from app.services.scanner import finalize_chunked_scan, get_scan_market_status, prepare_chunked_scan_state, process_scan_chunk, update_signal_forward_returns
+from app.services.scanner import finalize_chunked_scan, get_scan_market_status, process_scan_chunk, start_or_resume_chunked_scan, update_signal_forward_returns
 from app.services.strategy_settings import get_strategy_settings, save_strategy_settings
 from app.services.supabase_rest import SupabaseRest
 from app.services.telegram import send_telegram_message
@@ -89,26 +89,15 @@ async def scan(
             "message": market_status["message"],
             "market_status": market_status,
         }
-    state = await prepare_chunked_scan_state(universe_scope=universe_scope)
-    rows = await SupabaseRest().insert(
-        "scan_runs",
-        {
-            "requested_by": user.id,
-            "status": "running",
-            "trade_date": state["trade_date"],
-            "result": state,
-            "universe_scope": state["universe_scope"],
-            "started_at": now_iso(),
-        },
-    )
-    scan_run = rows[0]
+    scan_run = await start_or_resume_chunked_scan(user.id, universe_scope=universe_scope)
+    state = scan_run.get("result") or {}
     scan_run_id = scan_run["id"]
     return {
         "queued": True,
         "scan_run_id": scan_run_id,
-        "offset": state["offset"],
-        "total": state["total"],
-        "universe_scope": state["universe_scope"],
+        "offset": state.get("offset") or 0,
+        "total": state.get("total") or 0,
+        "universe_scope": state.get("universe_scope") or scan_run.get("universe_scope"),
         "message": "Signal scan initialized. Continue with scan step API.",
     }
 
@@ -172,7 +161,25 @@ async def scan_step(scan_run_id: int, user: CurrentUser = Depends(get_current_us
 
 @router.get("/scan-runs/latest")
 async def latest_scan_run(user: CurrentUser = Depends(get_current_user)) -> dict | None:
-    rows = await SupabaseRest().select("scan_runs", order="created_at.desc", limit=1)
+    today = datetime.now(ZoneInfo(get_settings().timezone)).date().isoformat()
+    rest = SupabaseRest()
+    rows = await rest.select(
+        "scan_runs",
+        filters={"trade_date": f"eq.{today}", "status": "eq.running", "universe_scope": "eq.all"},
+        order="created_at.desc",
+        limit=1,
+    )
+    if rows:
+        return rows[0]
+    rows = await rest.select(
+        "scan_runs",
+        filters={"trade_date": f"eq.{today}", "status": "eq.running"},
+        order="created_at.desc",
+        limit=1,
+    )
+    if rows:
+        return rows[0]
+    rows = await rest.select("scan_runs", order="created_at.desc", limit=1)
     return rows[0] if rows else None
 
 
