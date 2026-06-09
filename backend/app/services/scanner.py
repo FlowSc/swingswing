@@ -18,7 +18,7 @@ from app.services.telegram import send_telegram_message, send_telegram_message_w
 
 logger = logging.getLogger(__name__)
 TOP_N = 30
-SCAN_CHUNK_SIZE = 100
+SCAN_CHUNK_SIZE = 50
 MIN_VOLUME_20D = 20000
 MIN_PRICE = 1000
 MIN_TRADING_VALUE_20D = 300_000_000

@@ -34,6 +34,37 @@ async function request<T>(path: string, session: Session, options: RequestInit =
   return response.json() as Promise<T>;
 }
 
+async function requestWithNetworkRetry<T>(
+  path: string,
+  session: Session,
+  options: RequestInit = {},
+  maxAttempts = 3,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await request<T>(path, session, options);
+    } catch (error) {
+      lastError = error;
+      if (!isNetworkFetchError(error) || attempt >= maxAttempts) {
+        throw error;
+      }
+      await sleep(1000 * attempt);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+function isNetworkFetchError(error: unknown): boolean {
+  if (!(error instanceof TypeError)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes("failed to fetch") || message.includes("networkerror") || message.includes("load failed");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 async function currentAccessToken(fallbackSession: Session): Promise<string> {
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token || fallbackSession.access_token;
@@ -420,7 +451,8 @@ export const api = {
     request<StrategySettings>("/bot/strategy", session, { method: "PUT", body: JSON.stringify(payload) }),
   scan: (session: Session, universeScope: "limited" | "all" = "all") =>
     request<ScanStartResult>(`/bot/scan?universe_scope=${encodeURIComponent(universeScope)}`, session, { method: "POST" }),
-  scanStep: (session: Session, scanRunId: number) => request<ScanRun>(`/bot/scan-runs/${scanRunId}/step`, session, { method: "POST" }),
+  scanStep: (session: Session, scanRunId: number) =>
+    requestWithNetworkRetry<ScanRun>(`/bot/scan-runs/${scanRunId}/step`, session, { method: "POST" }),
   latestScanRun: (session: Session) => request<ScanRun | null>("/bot/scan-runs/latest", session),
   sendSharedTelegramNotice: (session: Session, message: string) =>
     request<{ sent: boolean; message: string }>("/bot/telegram/shared-notice", session, { method: "POST", body: JSON.stringify({ message }) }),
